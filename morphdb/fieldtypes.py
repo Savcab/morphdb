@@ -10,7 +10,7 @@ data and we would rather coerce than reject when the intent is unambiguous.
 
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .errors import bad_request
 
@@ -18,8 +18,14 @@ FIELD_TYPES = {"string", "number", "boolean", "json", "datetime"}
 
 # Field names must be safe SQL/JSON identifiers: they are interpolated into
 # json_extract paths (e.g. "$.title") and ORDER BY clauses, so restricting them
-# to this charset closes any injection vector at the source.
-_FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# to this charset closes any injection vector at the source. Anchor with \Z (not
+# $, which also matches just before a trailing newline) so "city\n" is rejected.
+_FIELD_NAME_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9_]*\Z")
+_NUMERIC_STR_RE = re.compile(r"\A-?\d+(\.\d+)?\Z")
+
+# Canonical datetime form: fixed-width UTC ISO-8601 so lexical ordering equals
+# chronological ordering and all equivalent representations collapse to one.
+_DT_CANON = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
 def normalize_field_def(name, raw):
@@ -73,26 +79,67 @@ def normalize_fields(fields):
     return out
 
 
+def _canonical_dt(dtobj):
+    """Render a datetime as the canonical fixed-width UTC ISO string.
+
+    Naive datetimes are assumed to be UTC; aware ones are converted to UTC.
+    """
+    if dtobj.tzinfo is None:
+        dtobj = dtobj.replace(tzinfo=timezone.utc)
+    return dtobj.astimezone(timezone.utc).strftime(_DT_CANON)
+
+
+def _epoch_to_canonical(field, value):
+    try:
+        return _canonical_dt(datetime.fromtimestamp(float(value), tz=timezone.utc))
+    except (OverflowError, OSError, ValueError):
+        raise bad_request(f"Field '{field}': epoch value {value!r} is out of range.")
+
+
 def _parse_datetime(field, value):
-    """Validate a datetime string and return it in ISO-8601 form, or raise."""
+    """Validate a datetime string and return it in canonical UTC ISO form.
+
+    Accepts ISO-8601 (with or without 'Z'/offset), a few common formats, and a
+    bare numeric string treated as epoch seconds (so query values can match the
+    epoch-seconds write path).
+    """
     s = value.strip()
     if not s:
         raise bad_request(f"Field '{field}': empty datetime string.")
+    if _NUMERIC_STR_RE.match(s):
+        return _epoch_to_canonical(field, s)
     iso = s[:-1] + "+00:00" if s.endswith("Z") else s
     try:
-        datetime.fromisoformat(iso)
-        return s  # already valid ISO-8601; keep caller's form
+        return _canonical_dt(datetime.fromisoformat(iso))
     except ValueError:
         pass
     for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
                 "%Y-%m-%d %H:%M:%S", "%Y/%m/%d", "%m/%d/%Y"):
         try:
-            return datetime.strptime(s, fmt).isoformat()
+            return _canonical_dt(datetime.strptime(s, fmt))
         except ValueError:
             continue
     raise bad_request(
         f"Field '{field}': '{value}' is not a valid date/datetime (use ISO-8601)."
     )
+
+
+def _reject_non_finite(field, value):
+    """Recursively reject NaN/Infinity inside a json value.
+
+    json.dumps would otherwise emit bare NaN/Infinity tokens (invalid JSON) that
+    poison every later read of the row, so we forbid them at write time.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        raise bad_request(
+            f"Field '{field}': json values may not contain NaN or Infinity."
+        )
+    if isinstance(value, dict):
+        for v in value.values():
+            _reject_non_finite(field, v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _reject_non_finite(field, v)
 
 
 def coerce_value(field, value, ftype):
@@ -150,15 +197,11 @@ def coerce_value(field, value, ftype):
         raise bad_request(f"Field '{field}' expects a boolean, got {value!r}.")
 
     if ftype == "datetime":
-        # Normalize to an ISO-8601 string. Accept epoch seconds or an ISO string;
-        # reject values that are not real dates so the column stays sortable.
+        # Normalize to a canonical UTC ISO string. Accept epoch seconds or an ISO
+        # string; reject values that are not real dates so the column stays
+        # sortable/comparable.
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            try:
-                return datetime.utcfromtimestamp(value).isoformat() + "Z"
-            except (OverflowError, OSError, ValueError):
-                raise bad_request(
-                    f"Field '{field}': epoch value {value!r} is out of range."
-                )
+            return _epoch_to_canonical(field, value)
         if isinstance(value, str):
             return _parse_datetime(field, value)
         raise bad_request(
@@ -166,7 +209,9 @@ def coerce_value(field, value, ftype):
         )
 
     if ftype == "json":
-        # Any JSON-serializable value is fine; the store will json.dumps it.
+        # Any JSON-serializable value is fine, except non-finite floats which
+        # are not valid JSON and would poison later reads.
+        _reject_non_finite(field, value)
         return value
 
     raise bad_request(f"Field '{field}' has unhandled type '{ftype}'.")

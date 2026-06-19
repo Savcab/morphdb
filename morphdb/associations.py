@@ -63,8 +63,9 @@ def upsert_association_schema(name, from_type, to_type, forward_name,
             raise bad_request(
                 "symmetric associations must be one_to_one or many_to_many."
             )
-        if not inverse_name:
-            inverse_name = forward_name
+        # A symmetric edge has a single traversal label; force inverse_name to
+        # match forward_name so there is no dead label that matches nothing.
+        inverse_name = forward_name
     for label, val in (("forward_name", forward_name), ("inverse_name", inverse_name)):
         if not isinstance(val, str) or not val.strip():
             raise bad_request(f"'{label}' must be a non-empty string.")
@@ -95,10 +96,38 @@ def upsert_association_schema(name, from_type, to_type, forward_name,
                 (name, from_type, to_type, forward_name, inverse_name,
                  cardinality, int(symmetric), ts, ts),
             )
+        if symmetric:
+            _canonicalize_symmetric_edges(c, name)
         row = c.execute(
             "SELECT * FROM association_schemas WHERE name = ?", (name,)
         ).fetchone()
     return _row_to_assoc_schema(row)
+
+
+def _canonicalize_symmetric_edges(c, name):
+    """Rewrite existing edges of a now-symmetric association into canonical
+    (sorted) order and drop reverse duplicates. One-time cost on the schema
+    edit; keeps the "counted once / deduped either order" invariant for edges
+    created before the type was flipped to symmetric.
+    """
+    rows = c.execute(
+        "SELECT from_guid, to_guid, created_at FROM associations WHERE assoc_name=?",
+        (name,),
+    ).fetchall()
+    canon = {}
+    for r in rows:
+        a, b = sorted((r["from_guid"], r["to_guid"]))
+        key = (a, b)
+        prev = canon.get(key)
+        if prev is None or r["created_at"] < prev:
+            canon[key] = r["created_at"]
+    c.execute("DELETE FROM associations WHERE assoc_name=?", (name,))
+    for (a, b), created in canon.items():
+        c.execute(
+            "INSERT INTO associations (assoc_name, from_guid, to_guid, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (name, a, b, created),
+        )
 
 
 def get_association_schema(name, required=False):
@@ -298,6 +327,12 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
     # Confirm the object exists for a clean error.
     if c.execute("SELECT 1 FROM objects WHERE guid = ?", (guid,)).fetchone() is None:
         raise not_found(f"No object with guid '{guid}'.")
+
+    if direction not in (None, "", "forward", "outgoing", "inverse",
+                         "incoming", "symmetric"):
+        raise bad_request(
+            f"Unknown direction '{direction}'. Use 'forward' or 'inverse'."
+        )
 
     # Validate filters so a typo'd name/relation errors instead of silently
     # returning an empty list (consistent with field-filter validation).

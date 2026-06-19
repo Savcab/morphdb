@@ -15,7 +15,8 @@ from .errors import bad_request, not_found
 from .fieldtypes import normalize_fields
 from .util import now_iso
 
-_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# \Z (not $) so a trailing newline cannot sneak through (e.g. "task\n").
+_NAME_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9_]*\Z")
 
 
 def _validate_type_name(name):

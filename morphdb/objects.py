@@ -164,6 +164,29 @@ def _coerce_filter_value(field, op, raw, ftype):
     return coerce_value(field, raw, ftype)
 
 
+def _field_expr(field, fdef, params):
+    """SQL expression for a field that mirrors read-time projection.
+
+    - Numbers: ignore stored values that are not actually numeric (so a stale
+      value left by a retype reads as null on both the read and query paths).
+    - Defaults: COALESCE in the field's default so a defaulted value is
+      queryable/sortable exactly as it reads, without rewriting stored rows.
+
+    Any parameters the expression needs (the default) are appended to ``params``
+    in evaluation order, so the caller must add comparison params *after*.
+    """
+    raw = f"json_extract(data, '$.{field}')"
+    if fdef["type"] == "number":
+        base = f"(CASE WHEN typeof({raw}) IN ('integer','real') THEN {raw} END)"
+    else:
+        base = raw
+    default = fdef.get("default")
+    if default is not None:
+        params.append(default)
+        return f"COALESCE({base}, ?)"
+    return base
+
+
 def _build_where(filters, fields):
     """Translate a ``{key: value}`` filter mapping into a SQL WHERE fragment.
 
@@ -174,14 +197,25 @@ def _build_where(filters, fields):
     params = []
     for key, raw in filters.items():
         field, op = _parse_filter_key(key, fields)
-        ftype = fields[field]["type"]
+        fdef = fields[field]
+        ftype = fdef["type"]
         val = _coerce_filter_value(field, op, raw, ftype)
-        expr = f"json_extract(data, '$.{field}')"
+
+        # Empty IN matches nothing; handle before building expr so we don't emit
+        # an orphan default parameter.
+        if op == "in" and not val:
+            clauses.append("0")
+            continue
+
+        # expr is used exactly once per clause (so its COALESCE default, if any,
+        # maps to exactly one bound parameter).
+        expr = _field_expr(field, fdef, params)
         if op == "eq":
             clauses.append(f"{expr} = ?")
             params.append(val)
         elif op == "ne":
-            clauses.append(f"({expr} IS NULL OR {expr} != ?)")
+            # Null-safe inequality: also matches rows where the value is null.
+            clauses.append(f"{expr} IS NOT ?")
             params.append(val)
         elif op == "gt":
             clauses.append(f"{expr} > ?")
@@ -203,17 +237,11 @@ def _build_where(filters, fields):
             clauses.append(f"{expr} LIKE ? ESCAPE '\\'")
             params.append(f"%{esc}%")
         elif op == "in":
-            if not val:
-                clauses.append("0")  # empty IN matches nothing
-            else:
-                qmarks = ",".join("?" * len(val))
-                clauses.append(f"{expr} IN ({qmarks})")
-                params.extend(val)
+            qmarks = ",".join("?" * len(val))
+            clauses.append(f"{expr} IN ({qmarks})")
+            params.extend(val)
         elif op == "exists":
-            if val:
-                clauses.append(f"{expr} IS NOT NULL")
-            else:
-                clauses.append(f"{expr} IS NULL")
+            clauses.append(f"{expr} IS NOT NULL" if val else f"{expr} IS NULL")
     return clauses, params
 
 
@@ -232,14 +260,18 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
 
     order_sql = "DESC" if str(order).lower() == "desc" else "ASC"
     # Always append `guid ASC` as a deterministic tie-break so pagination is
-    # stable even when the primary sort key has duplicate values.
+    # stable even when the primary sort key has duplicate values. The sort key
+    # uses the same projection-aware expression as filters/reads so it orders by
+    # the values the client actually sees (defaults included).
+    sort_params = []
     if sort:
         if sort in ("_created_at", "_updated_at", "_guid"):
             col = {"_created_at": "created_at", "_updated_at": "updated_at",
                    "_guid": "guid"}[sort]
             order_clause = f"{col} {order_sql}, guid ASC"
         elif sort in fields:
-            order_clause = f"json_extract(data, '$.{sort}') {order_sql}, guid ASC"
+            sort_expr = _field_expr(sort, fields[sort], sort_params)
+            order_clause = f"{sort_expr} {order_sql}, guid ASC"
         else:
             raise bad_request(f"Cannot sort on unknown field '{sort}'.")
     else:
@@ -261,7 +293,7 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
     rows = c.execute(
         f"SELECT * FROM objects WHERE {where} ORDER BY {order_clause} "
         f"LIMIT ? OFFSET ?",
-        params + [limit, offset],
+        params + sort_params + [limit, offset],
     ).fetchall()
 
     return {

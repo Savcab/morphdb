@@ -60,10 +60,15 @@ class Handler(BaseHTTPRequestHandler):
             except BrokenPipeError:
                 pass
 
-    def _read_body(self):
+    def _read_raw_body(self):
+        """Read (drain) the request body for ANY method and return the bytes.
+
+        Draining regardless of method is essential: an unread body on a
+        keep-alive connection would be misparsed as the next request.
+        """
         length = self.headers.get("Content-Length")
         if not length:
-            return {}
+            return b""
         try:
             n = int(length)
         except ValueError:
@@ -72,31 +77,42 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             raise ApiError(400, "bad_request", "Invalid Content-Length header.")
         if n <= 0:
-            return {}
+            return b""
         if n > MAX_BODY:
             # Don't read a potentially huge body; close the connection so the
             # unread bytes can't be misread as the next request.
             self.close_connection = True
             raise ApiError(413, "payload_too_large",
                            f"Request body exceeds {MAX_BODY} bytes.")
-        raw = self.rfile.read(n)
+        return self.rfile.read(n)
+
+    def _parse_body(self, raw):
         if not raw:
             return {}
         try:
-            parsed = json.loads(raw.decode("utf-8"))
+            return json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError, RecursionError,
                 ValueError) as e:
             # Body was fully read, so the connection stays in sync.
             raise ApiError(400, "bad_request", f"Invalid JSON body: {e}")
-        return parsed
 
     # -- dispatch -------------------------------------------------------------
 
     def _dispatch(self):
+        # Always drain the body first, for every method, so a stray body on a
+        # GET/HEAD/OPTIONS request cannot desync a reused keep-alive connection.
+        try:
+            raw = self._read_raw_body()
+        except ApiError as e:
+            self._send_json(e.status, e.to_dict())
+            return
+
         if self.command == "OPTIONS":
             self.send_response(204)
             self._set_cors()
             self.send_header("Content-Length", "0")
+            if getattr(self, "close_connection", False):
+                self.send_header("Connection", "close")
             self.end_headers()
             return
 
@@ -108,7 +124,7 @@ class Handler(BaseHTTPRequestHandler):
         }
 
         try:
-            body = self._read_body() if self.command in _BODY_METHODS else {}
+            body = self._parse_body(raw) if self.command in _BODY_METHODS else {}
             handler, params, path_matched = router.match(self.command, path)
             if handler is None:
                 if path_matched:
