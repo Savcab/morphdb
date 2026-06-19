@@ -51,8 +51,10 @@ Field types: `string`, `number`, `boolean`, `json`, `datetime`.
 
 ## 1. Reshape the schema with the CLI (you, the agent)
 
-Use `skill/scripts/morphdb_schema.py` (set `MORPHDB_URL` or pass `--url`; default
-`http://127.0.0.1:8787`). Don't curl the schema endpoints by hand.
+Use `skill/scripts/morphdb_schema.py`. It talks to MorphDB at
+`http://127.0.0.1:8787` by default; override with the `MORPHDB_HOST` env var (a
+full URL, or a bare `host:port`) or the `--url` flag. Don't curl the schema
+endpoints by hand.
 
 ```bash
 S="python3 skill/scripts/morphdb_schema.py"      # adjust path to the skill dir
@@ -115,7 +117,10 @@ List returns `{objects, total, limit, offset}` (`total` = full filtered count).
 
 ```js
 // MorphDB object-endpoint client — paste into the frontend you build.
-const BASE = "http://127.0.0.1:8787";
+// Defaults to localhost:8787. For a non-local deploy, set window.MORPHDB_HOST
+// (a full URL or bare host:port) in a <script> before this runs.
+const MORPHDB_HOST = (typeof window !== "undefined" && window.MORPHDB_HOST) || "127.0.0.1:8787";
+const BASE = MORPHDB_HOST.includes("://") ? MORPHDB_HOST : "http://" + MORPHDB_HOST;
 
 async function db(method, path, body) {
   const res = await fetch(BASE + path, {

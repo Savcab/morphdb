@@ -26,7 +26,8 @@ Usage:
     delete-type  <type>
     set          <type> --json '{"fields":{...},"relations":{...},"merge":true}'
 
-URL defaults to $MORPHDB_URL or http://127.0.0.1:8787.
+Host defaults to http://127.0.0.1:8787; override with $MORPHDB_HOST (a full URL,
+or a bare host[:port] which assumes http) or the --url flag.
 
 Field types: string, number, boolean, json, datetime.
 Cardinalities: one_to_one, one_to_many, many_to_one, many_to_many.
@@ -42,7 +43,19 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_URL = os.environ.get("MORPHDB_URL", "http://127.0.0.1:8787")
+def _default_base():
+    """Where MorphDB is hosted: $MORPHDB_HOST, else localhost:8787.
+
+    Accepts a full URL ("https://db.example.com") or a bare host[:port]
+    ("192.168.1.5:8787"), in which case http:// is assumed.
+    """
+    host = os.environ.get("MORPHDB_HOST", "").strip()
+    if not host:
+        return "http://127.0.0.1:8787"
+    return host if "://" in host else "http://" + host
+
+
+DEFAULT_URL = _default_base()
 
 
 def _request(url, method, path, body=None):
