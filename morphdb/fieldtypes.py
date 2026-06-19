@@ -29,6 +29,10 @@ _INT_STR_RE = re.compile(r"-?\d+")
 # and are rejected rather than silently parsed as a 1970-relative timestamp.
 _EPOCH_MIN_ABS = 1e8
 
+# Max nesting depth for a json value. Kept well under Python's recursion limit
+# so a value that validates on write can always be re-parsed on read.
+MAX_JSON_DEPTH = 100
+
 # Canonical datetime form: fixed-width UTC ISO-8601 so lexical ordering equals
 # chronological ordering and all equivalent representations collapse to one.
 _DT_CANON = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -162,22 +166,28 @@ def _parse_datetime(field, value):
     )
 
 
-def _reject_non_finite(field, value):
-    """Recursively reject NaN/Infinity inside a json value.
+def _validate_json(field, value, _depth=0):
+    """Recursively validate a json value before it is stored.
 
-    json.dumps would otherwise emit bare NaN/Infinity tokens (invalid JSON) that
-    poison every later read of the row, so we forbid them at write time.
+    Rejects (a) NaN/Infinity, which json.dumps would emit as invalid JSON, and
+    (b) nesting deeper than MAX_JSON_DEPTH. Without the depth cap, a value that
+    parses on write can overflow Python's recursion limit when json.loads
+    re-parses it on read, permanently 500-ing the type's read endpoints.
     """
+    if _depth > MAX_JSON_DEPTH:
+        raise bad_request(
+            f"Field '{field}': json nesting exceeds {MAX_JSON_DEPTH} levels."
+        )
     if isinstance(value, float) and not math.isfinite(value):
         raise bad_request(
             f"Field '{field}': json values may not contain NaN or Infinity."
         )
     if isinstance(value, dict):
         for v in value.values():
-            _reject_non_finite(field, v)
+            _validate_json(field, v, _depth + 1)
     elif isinstance(value, (list, tuple)):
         for v in value:
-            _reject_non_finite(field, v)
+            _validate_json(field, v, _depth + 1)
 
 
 def coerce_value(field, value, ftype):
@@ -249,9 +259,9 @@ def coerce_value(field, value, ftype):
         )
 
     if ftype == "json":
-        # Any JSON-serializable value is fine, except non-finite floats which
-        # are not valid JSON and would poison later reads.
-        _reject_non_finite(field, value)
+        # Any JSON-serializable value is fine, except non-finite floats (invalid
+        # JSON) and excessively deep nesting (unreadable) — both poison reads.
+        _validate_json(field, value)
         return value
 
     raise bad_request(f"Field '{field}' has unhandled type '{ftype}'.")
