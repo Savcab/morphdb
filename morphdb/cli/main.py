@@ -1,17 +1,20 @@
 """``morphdb`` console-script entry point: a small process/admin CLI.
 
-    morphdb            start the server in the background (alias of `start`)
-    morphdb start      start the server in the background
-    morphdb status     show whether it is running, where, and how many apps
-    morphdb stop       stop the background server
-    morphdb run        run the server in the foreground (blocking)
-    morphdb dashboard  open the read-only admin dashboard
+    morphdb               start the server in the background (alias of `start`)
+    morphdb start         start the server in the background
+    morphdb status        show whether it is running, where, and how many apps
+    morphdb stop          stop the background server
+    morphdb logs          show the background server's log (-f to follow)
+    morphdb run           run the server in the foreground (blocking)
+    morphdb dashboard     open the read-only admin dashboard
+    morphdb install-skill install the bundled Claude Code skill
 
 ``python -m morphdb`` remains the plain foreground server (what `start` and the
 skill spawn under the hood); this CLI only wraps it.
 """
 
 import argparse
+import os
 import sys
 
 from . import dashboard, service
@@ -60,6 +63,39 @@ def cmd_stop(args):
     return 0
 
 
+def cmd_logs(args):
+    path = service.log_file()
+    if not os.path.exists(path):
+        print(f"No log yet at {path}. Has the server run? Try `morphdb start`.")
+        return 1
+    with open(path, "r", errors="replace") as f:
+        lines = f.readlines()
+    tail = lines[-args.lines:] if args.lines and args.lines > 0 else lines
+    sys.stdout.write("".join(tail))
+    if tail and not tail[-1].endswith("\n"):
+        sys.stdout.write("\n")
+    if args.follow:
+        _follow(path)
+    return 0
+
+
+def _follow(path):
+    """Stream new lines appended to the log, like `tail -f`, until Ctrl-C."""
+    import time
+    with open(path, "r", errors="replace") as f:
+        f.seek(0, os.SEEK_END)
+        try:
+            while True:
+                line = f.readline()
+                if line:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                else:
+                    time.sleep(0.3)
+        except KeyboardInterrupt:
+            pass
+
+
 def cmd_dashboard(args):
     dashboard.serve(args.db or service.default_db(), port=args.port,
                     open_browser=not args.no_open)
@@ -68,16 +104,14 @@ def cmd_dashboard(args):
 
 def cmd_install_skill(args):
     try:
-        dest = skill_mod.install_skill(project=args.project, force=args.force)
-    except FileExistsError as e:
-        print(f"Skill already installed at {e}. Re-run with --force to overwrite.")
-        return 1
+        dest, existed = skill_mod.install_skill(project=args.project)
     except (FileNotFoundError, OSError) as e:
         print(f"Could not install skill: {e}")
         return 1
-    where = "this project" if args.project else "your home (~/.claude)"
-    print(f"Installed the 'morphdb' Claude skill to {dest}\n"
-          f"  ({where}). Restart Claude Code (or reload skills) to pick it up.")
+    verb = "Updated" if existed else "Installed"
+    where = "this project" if args.project else "~/.claude"
+    print(f"{verb} the 'morphdb' Claude skill at {dest} ({where}).\n"
+          f"  Restart Claude Code (or reload skills) to pick it up.")
     return 0
 
 
@@ -112,6 +146,13 @@ def build_parser():
     sub.add_parser("stop", help="stop the background server"
                    ).set_defaults(func=cmd_stop)
 
+    sp = sub.add_parser("logs", help="show the background server's log")
+    sp.add_argument("-n", "--lines", type=int, default=200,
+                    help="number of trailing lines to show (default 200)")
+    sp.add_argument("-f", "--follow", action="store_true",
+                    help="stream new log lines until Ctrl-C")
+    sp.set_defaults(func=cmd_logs)
+
     sp = sub.add_parser("dashboard", help="open the read-only admin dashboard")
     sp.add_argument("--port", type=int, default=8788, help="dashboard port (default 8788)")
     sp.add_argument("--db", default=None, help="database to inspect (default the server's)")
@@ -119,12 +160,11 @@ def build_parser():
     sp.set_defaults(func=cmd_dashboard)
 
     sp = sub.add_parser("install-skill",
-                        help="install the MorphDB skill into Claude Code")
+                        help="install/update the bundled Claude Code skill")
     sp.add_argument("--project", nargs="?", const=".", default=None,
                     metavar="DIR",
                     help="install into a project's .claude (DIR, default cwd) "
                          "instead of ~/.claude")
-    sp.add_argument("--force", action="store_true", help="overwrite if it exists")
     sp.set_defaults(func=cmd_install_skill)
 
     return p

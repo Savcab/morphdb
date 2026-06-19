@@ -61,8 +61,9 @@ API).
 
 **Debug tip:** if the frontend can't reach the backend (connection refused, a
 `fetch` throws) and you're running locally, the server is probably down — run
-`morphdb status`, then `morphdb start` if stopped. That's the first thing to
-check when a working app suddenly stops loading or saving data.
+`morphdb status`, then `morphdb start` if stopped, and `morphdb logs` (add `-f`
+to follow) to see errors. That's the first thing to check when a working app
+suddenly stops loading or saving data.
 
 ## Mental model
 

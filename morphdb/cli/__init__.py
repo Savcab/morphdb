@@ -6,12 +6,14 @@ view. It never changes how the core stores or serves data.
 
 Commands (see :mod:`morphdb.cli.main`):
 
-    morphdb              start the server in the background (alias of `start`)
-    morphdb start        same, explicit
-    morphdb status       is it running? where? how many apps?
-    morphdb stop         stop the background server
-    morphdb run          run in the foreground (blocking; for dev)
-    morphdb dashboard    open a read-only web view of every app + its tables
+    morphdb               start the server in the background (alias of `start`)
+    morphdb start         same, explicit
+    morphdb status        is it running? where? how many apps?
+    morphdb stop          stop the background server
+    morphdb logs          show the server log (-f to follow)
+    morphdb run           run in the foreground (blocking; for dev)
+    morphdb dashboard     open a read-only web view of every app + its tables
+    morphdb install-skill install/update the bundled Claude Code skill
 
 Storage: the local server keeps data in a per-user SQLite file at
 ``~/.morphdb/data.sqlite3`` (override the file with ``--db``, or move the state

@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from morphdb import apps, db, objects, schema          # noqa: E402
 from morphdb.cli import dashboard, service              # noqa: E402
+from morphdb.cli import main as cli_main                # noqa: E402
 from morphdb.cli import skill as skill_mod              # noqa: E402
 
 
@@ -98,22 +99,53 @@ class TestDashboardGather(unittest.TestCase):
 class TestInstallSkill(unittest.TestCase):
     def test_install_copies_skill_files(self):
         d = tempfile.mkdtemp()
-        dest = skill_mod.install_skill(claude_dir=d)
+        dest, existed = skill_mod.install_skill(claude_dir=d)
+        self.assertFalse(existed)
         self.assertTrue(os.path.isfile(os.path.join(dest, "SKILL.md")))
         self.assertTrue(os.path.isfile(
             os.path.join(dest, "scripts", "morphdb_schema.py")))
-        # name + location
-        self.assertEqual(os.path.basename(dest), "morphdb")
         self.assertEqual(dest, os.path.join(d, "skills", "morphdb"))
 
-    def test_refuses_without_force_then_overwrites(self):
+    def test_reinstall_is_idempotent(self):
         d = tempfile.mkdtemp()
         skill_mod.install_skill(claude_dir=d)
-        with self.assertRaises(FileExistsError):
-            skill_mod.install_skill(claude_dir=d)
-        # force overwrites cleanly
-        dest = skill_mod.install_skill(claude_dir=d, force=True)
+        dest, existed = skill_mod.install_skill(claude_dir=d)   # re-run overwrites
+        self.assertTrue(existed)
         self.assertTrue(os.path.isfile(os.path.join(dest, "SKILL.md")))
+
+
+class TestLogs(unittest.TestCase):
+    def setUp(self):
+        self._old = os.environ.get("MORPHDB_HOME")
+        self.tmp = tempfile.mkdtemp()
+        os.environ["MORPHDB_HOME"] = self.tmp
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("MORPHDB_HOME", None)
+        else:
+            os.environ["MORPHDB_HOME"] = self._old
+
+    def _run(self, argv):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli_main.main(argv)
+        return rc, buf.getvalue()
+
+    def test_missing_log(self):
+        rc, out = self._run(["logs"])
+        self.assertEqual(rc, 1)
+        self.assertIn("No log yet", out)
+
+    def test_shows_tail(self):
+        with open(service.log_file(), "w") as f:
+            f.write("line1\nline2\nline3\n")
+        rc, out = self._run(["logs", "-n", "2"])
+        self.assertEqual(rc, 0)
+        self.assertIn("line3", out)
+        self.assertNotIn("line1", out)
 
 
 if __name__ == "__main__":

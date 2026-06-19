@@ -78,7 +78,8 @@ via a pid file under the state dir.
 | `morphdb` or `morphdb start` | Start the server in the background (returns immediately). |
 | `morphdb status` | Is it running? URL, pid, health, and app count. |
 | `morphdb stop` | Stop the background server. |
-| `morphdb run` | Run in the **foreground** (blocking) instead — handy for watching logs. |
+| `morphdb logs` | Show the background server's log (`-n N` lines, `-f` to follow). |
+| `morphdb run` | Run in the **foreground** (blocking) instead. |
 | `morphdb dashboard` | Open a read-only web view of every app and its tables. |
 | `morphdb install-skill` | Install the bundled Claude Code skill (below). |
 | `morphdb --version` | Print the version. |
@@ -108,10 +109,12 @@ site:
 morphdb install-skill                  # -> ~/.claude/skills/morphdb (all projects)
 morphdb install-skill --project        # -> ./.claude/skills/morphdb (current project)
 morphdb install-skill --project DIR    # -> DIR/.claude/skills/morphdb
-morphdb install-skill --force          # overwrite an existing copy
 ```
 
-Restart Claude Code afterward to pick it up.
+It installs the skill **bundled in the installed package** (not live from
+GitHub) and is **idempotent** — re-running overwrites with the current version.
+To get the newest skill, `pip install -U morphdb` first, then re-run. Restart
+Claude Code afterward to pick it up.
 
 ## Why
 
