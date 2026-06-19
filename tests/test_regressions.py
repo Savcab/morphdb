@@ -189,13 +189,16 @@ class TestDefaultsQueryable(Base):
 
 
 class TestRetypeReadView(Base):
-    def test_retype_number_to_string_reads_as_string(self):
+    def test_retype_does_not_rewrite_stored_value(self):
+        # Stored values are returned as-is; retyping changes validation for
+        # future writes only and does not reinterpret existing data. (This keeps
+        # reads and queries in lockstep — see the round-2 divergence findings.)
         self.post("/schemas/objects", {"name": "t", "fields": {"v": "number"}})
         st, b, _ = self.post("/objects/t", {"v": 42})
         guid = b["_guid"]
         req("PUT", "/schemas/objects/t", {"merge": True, "fields": {"v": "string"}})
         st, b2, _ = self.get(f"/objects/t/{guid}")
-        self.assertEqual(b2["v"], "42")  # coerced to current type on read
+        self.assertEqual(b2["v"], 42)  # returned exactly as stored
 
 
 class TestLimitOffset(Base):

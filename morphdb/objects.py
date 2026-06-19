@@ -164,27 +164,42 @@ def _coerce_filter_value(field, op, raw, ftype):
     return coerce_value(field, raw, ftype)
 
 
+_INT64_MAX = 2 ** 63 - 1
+_INT64_MIN = -(2 ** 63)
+
+
+def _safe_bind(v):
+    """Make a value safe to bind as a SQLite parameter.
+
+    Python ints outside the signed-64-bit range cannot be bound (sqlite3 raises
+    OverflowError). Such magnitudes are beyond SQLite's integer precision
+    anyway, so we bind them as floats rather than 500 on a client value.
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int) and (v > _INT64_MAX or v < _INT64_MIN):
+        return float(v)
+    return v
+
+
 def _field_expr(field, fdef, params):
-    """SQL expression for a field that mirrors read-time projection.
+    """SQL expression for a field that mirrors read-time projection exactly.
 
-    - Numbers: ignore stored values that are not actually numeric (so a stale
-      value left by a retype reads as null on both the read and query paths).
-    - Defaults: COALESCE in the field's default so a defaulted value is
-      queryable/sortable exactly as it reads, without rewriting stored rows.
+    Reads return the stored value as-is and fall back to the default only when
+    the key is *absent* from the blob. We reproduce that with json_type (which
+    is NULL for a missing path but 'null' for a stored JSON null), so a stored
+    null is never replaced by the default — keeping reads and queries in lockstep.
 
-    Any parameters the expression needs (the default) are appended to ``params``
+    Any parameter the expression needs (the default) is appended to ``params``
     in evaluation order, so the caller must add comparison params *after*.
     """
     raw = f"json_extract(data, '$.{field}')"
-    if fdef["type"] == "number":
-        base = f"(CASE WHEN typeof({raw}) IN ('integer','real') THEN {raw} END)"
-    else:
-        base = raw
     default = fdef.get("default")
     if default is not None:
-        params.append(default)
-        return f"COALESCE({base}, ?)"
-    return base
+        params.append(_safe_bind(default))
+        return (f"(CASE WHEN json_type(data, '$.{field}') IS NULL "
+                f"THEN ? ELSE {raw} END)")
+    return raw
 
 
 def _build_where(filters, fields):
@@ -212,23 +227,23 @@ def _build_where(filters, fields):
         expr = _field_expr(field, fdef, params)
         if op == "eq":
             clauses.append(f"{expr} = ?")
-            params.append(val)
+            params.append(_safe_bind(val))
         elif op == "ne":
             # Null-safe inequality: also matches rows where the value is null.
             clauses.append(f"{expr} IS NOT ?")
-            params.append(val)
+            params.append(_safe_bind(val))
         elif op == "gt":
             clauses.append(f"{expr} > ?")
-            params.append(val)
+            params.append(_safe_bind(val))
         elif op == "gte":
             clauses.append(f"{expr} >= ?")
-            params.append(val)
+            params.append(_safe_bind(val))
         elif op == "lt":
             clauses.append(f"{expr} < ?")
-            params.append(val)
+            params.append(_safe_bind(val))
         elif op == "lte":
             clauses.append(f"{expr} <= ?")
-            params.append(val)
+            params.append(_safe_bind(val))
         elif op == "contains":
             # Escape LIKE metacharacters so the match is a literal substring,
             # not a wildcard pattern.
@@ -239,7 +254,7 @@ def _build_where(filters, fields):
         elif op == "in":
             qmarks = ",".join("?" * len(val))
             clauses.append(f"{expr} IN ({qmarks})")
-            params.extend(val)
+            params.extend(_safe_bind(v) for v in val)
         elif op == "exists":
             clauses.append(f"{expr} IS NOT NULL" if val else f"{expr} IS NULL")
     return clauses, params
@@ -258,7 +273,10 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
     params.extend(fp)
     where = " AND ".join(clauses)
 
-    order_sql = "DESC" if str(order).lower() == "desc" else "ASC"
+    order_l = str(order).lower()
+    if order_l not in ("asc", "desc"):
+        raise bad_request(f"Invalid order '{order}'. Use 'asc' or 'desc'.")
+    order_sql = "DESC" if order_l == "desc" else "ASC"
     # Always append `guid ASC` as a deterministic tie-break so pagination is
     # stable even when the primary sort key has duplicate values. The sort key
     # uses the same projection-aware expression as filters/reads so it orders by
@@ -270,6 +288,8 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
                    "_guid": "guid"}[sort]
             order_clause = f"{col} {order_sql}, guid ASC"
         elif sort in fields:
+            if fields[sort]["type"] == "json":
+                raise bad_request(f"Cannot sort on json field '{sort}'.")
             sort_expr = _field_expr(sort, fields[sort], sort_params)
             order_clause = f"{sort_expr} {order_sql}, guid ASC"
         else:

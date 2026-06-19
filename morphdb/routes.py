@@ -133,7 +133,8 @@ def _assoc_schema_args(body):
         # forward_name); validated in the logic layer otherwise.
         inverse_name=body.get("inverse_name"),
         cardinality=body.get("cardinality"),
-        symmetric=bool(body.get("symmetric", False)),
+        # Pass through raw; the logic layer parses it (bool("false") is True!).
+        symmetric=body.get("symmetric", False),
     )
 
 
@@ -215,6 +216,8 @@ def delete_object(req):
 
 @router.route("GET", "/objects/{type}/{guid}/associations")
 def object_associations_typed(req):
+    # Type-check the {type} segment for consistency with GET /objects/{type}/{guid}.
+    objs.get_object(req.params["guid"], object_type=req.params["type"])
     return _read_associations(req, req.params["guid"])
 
 

@@ -21,7 +21,13 @@ FIELD_TYPES = {"string", "number", "boolean", "json", "datetime"}
 # to this charset closes any injection vector at the source. Anchor with \Z (not
 # $, which also matches just before a trailing newline) so "city\n" is rejected.
 _FIELD_NAME_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9_]*\Z")
-_NUMERIC_STR_RE = re.compile(r"\A-?\d+(\.\d+)?\Z")
+_NUM_STR_RE = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?")
+_INT_STR_RE = re.compile(r"-?\d+")
+
+# A bare numeric datetime string is treated as epoch seconds only above this
+# magnitude (~1973); smaller bare numbers like "2024" are ambiguous (a year?)
+# and are rejected rather than silently parsed as a 1970-relative timestamp.
+_EPOCH_MIN_ABS = 1e8
 
 # Canonical datetime form: fixed-width UTC ISO-8601 so lexical ordering equals
 # chronological ordering and all equivalent representations collapse to one.
@@ -75,6 +81,13 @@ def normalize_fields(fields):
                 f"Invalid field name '{name}'. Use a letter followed by letters, "
                 "digits, or underscores (e.g. 'title', 'due_date')."
             )
+        if "__" in name:
+            # '__' is the filter operator separator (e.g. field__gt); a field
+            # name containing it would be unqueryable, so forbid it.
+            raise bad_request(
+                f"Field name '{name}' may not contain '__' (reserved for filter "
+                "operators like field__gt)."
+            )
         out[name] = normalize_field_def(name, raw)
     return out
 
@@ -106,9 +119,16 @@ def _parse_datetime(field, value):
     s = value.strip()
     if not s:
         raise bad_request(f"Field '{field}': empty datetime string.")
-    if _NUMERIC_STR_RE.match(s):
+    # Treat a bare number as epoch seconds only if it's large enough to be an
+    # unambiguous timestamp; otherwise fall through (and likely 400) so a value
+    # like "2024" isn't silently turned into a 1970 instant.
+    if _NUM_STR_RE.fullmatch(s) and abs(float(s)) >= _EPOCH_MIN_ABS:
         return _epoch_to_canonical(field, s)
     iso = s[:-1] + "+00:00" if s.endswith("Z") else s
+    # Python 3.10 fromisoformat accepts only 3/6-digit fractional seconds;
+    # truncate longer (nano/micro) fractions to 6 digits so valid ISO-8601
+    # timestamps from Go/Java/JS are accepted.
+    iso = re.sub(r"(\.\d{6})\d+", r"\1", iso)
     try:
         return _canonical_dt(datetime.fromisoformat(iso))
     except ValueError:
@@ -165,12 +185,14 @@ def coerce_value(field, value, ftype):
         if isinstance(value, (int, float)):
             num = value
         elif isinstance(value, str):
-            try:
-                f = float(value)
-            except ValueError:
+            s = value.strip()
+            if not _NUM_STR_RE.fullmatch(s):
+                # Reject anything that isn't a plain decimal/exponent number,
+                # including Python-only forms like underscore separators.
                 raise bad_request(f"Field '{field}' expects a number, got {value!r}.")
-            num = (int(f) if f.is_integer() and "." not in value
-                   and "e" not in value.lower() else f)
+            # Parse integer strings with int() (not float()) to preserve exact
+            # value for magnitudes beyond float's 53-bit mantissa.
+            num = int(s) if _INT_STR_RE.fullmatch(s) else float(s)
         else:
             raise bad_request(
                 f"Field '{field}' expects a number, got {type(value).__name__}."
@@ -227,18 +249,13 @@ def project_data(stored, fields):
     """
     out = {}
     for name, fdef in fields.items():
+        # Stored values are returned exactly as written; the default fills in
+        # only for a key that is absent from the blob (not for a stored null).
+        # Querying mirrors this precisely (see objects._field_expr), so reads and
+        # queries never disagree. Schema edits affect validation of future writes
+        # only — existing values are not rewritten or reinterpreted.
         if name in stored:
-            value = stored[name]
-            # Re-coerce to the field's *current* type so a read never returns a
-            # value that violates the live schema (e.g. after a field is retyped).
-            # Best-effort: if the old value cannot be coerced, fall back to the
-            # default rather than leaking a wrongly-typed value.
-            if value is not None and fdef["type"] != "json":
-                try:
-                    value = coerce_value(name, value, fdef["type"])
-                except Exception:
-                    value = fdef.get("default")
-            out[name] = value
+            out[name] = stored[name]
         else:
             out[name] = fdef.get("default")
     return out

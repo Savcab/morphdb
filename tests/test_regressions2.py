@@ -153,12 +153,16 @@ class TestProjectionAwareQueries(Base):
         self.assertEqual(self.total("/objects/d?status=open"), 1)
         self.assertEqual(self.total("/objects/d?status__exists=true"), 1)
 
-    def test_retype_uncoercible_not_false_matched(self):
-        self.post("/schemas/objects", {"name": "r", "fields": {"v": "string"}})
-        self.post("/objects/r", {"v": "hello"})
-        req("PUT", "/schemas/objects/r", {"merge": True, "fields": {"v": "number"}})
-        # read projects null; a numeric range filter must NOT match it
-        self.assertEqual(self.total("/objects/r?v__gt=0"), 0)
+    def test_stored_null_not_replaced_by_default_in_query(self):
+        # A present-but-null value must read as null AND query as null — the
+        # default fills only ABSENT keys, in both the read and query paths.
+        self.post("/schemas/objects", {
+            "name": "z",
+            "fields": {"status": {"type": "string", "default": "open"}}})
+        st, b, _ = self.post("/objects/z", {"status": None})  # explicit null
+        self.assertIsNone(b["status"])                        # read: null, not 'open'
+        self.assertEqual(self.total("/objects/z?status=open"), 0)   # query agrees
+        self.assertEqual(self.total("/objects/z?status__exists=false"), 1)
 
     def test_sort_uses_projected_defaults(self):
         self.post("/schemas/objects", {"name": "s", "fields": {"rank": "number"}})

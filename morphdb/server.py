@@ -66,6 +66,14 @@ class Handler(BaseHTTPRequestHandler):
         Draining regardless of method is essential: an unread body on a
         keep-alive connection would be misparsed as the next request.
         """
+        te = self.headers.get("Transfer-Encoding", "")
+        if te and te.strip().lower() != "identity":
+            # We don't decode chunked bodies; we also can't know their length to
+            # drain them, so close the connection to avoid a keep-alive desync.
+            self.close_connection = True
+            raise ApiError(400, "bad_request",
+                           "Transfer-Encoding is not supported; send a body with "
+                           "Content-Length.")
         length = self.headers.get("Content-Length")
         if not length:
             return b""

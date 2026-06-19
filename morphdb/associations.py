@@ -50,7 +50,11 @@ def upsert_association_schema(name, from_type, to_type, forward_name,
         raise bad_request(
             f"Unknown cardinality '{cardinality}'. One of {sorted(CARDINALITIES)}."
         )
-    symmetric = bool(symmetric)
+    # Robust boolean parse: bool("false") is truthy in Python, so don't use it.
+    if isinstance(symmetric, str):
+        symmetric = symmetric.strip().lower() in ("true", "1", "yes", "on")
+    else:
+        symmetric = bool(symmetric)
     if symmetric:
         # A symmetric relationship is mutual (friends, peers): the edge A–B is
         # the same as B–A. It only makes sense within one type, and a single
@@ -98,10 +102,47 @@ def upsert_association_schema(name, from_type, to_type, forward_name,
             )
         if symmetric:
             _canonicalize_symmetric_edges(c, name)
+        _check_existing_cardinality(c, name, cardinality, symmetric)
         row = c.execute(
             "SELECT * FROM association_schemas WHERE name = ?", (name,)
         ).fetchone()
     return _row_to_assoc_schema(row)
+
+
+def _check_existing_cardinality(c, name, cardinality, symmetric):
+    """Reject a schema change whose new cardinality the existing edges violate.
+
+    Cardinality must mean something; silently keeping over-capacity edges would
+    break the invariant. The transaction rolls back on conflict, so the schema
+    change is atomic.
+    """
+    def first_over_capacity(column):
+        return c.execute(
+            f"SELECT {column} FROM associations WHERE assoc_name=? "
+            f"GROUP BY {column} HAVING COUNT(*) > 1 LIMIT 1",
+            (name,),
+        ).fetchone()
+
+    offender = None
+    if symmetric:
+        if cardinality == "one_to_one":
+            offender = c.execute(
+                "SELECT g FROM (SELECT from_guid AS g FROM associations "
+                "WHERE assoc_name=? UNION ALL SELECT to_guid FROM associations "
+                "WHERE assoc_name=?) GROUP BY g HAVING COUNT(*) > 1 LIMIT 1",
+                (name, name),
+            ).fetchone()
+    else:
+        if cardinality in ("one_to_one", "many_to_one"):
+            offender = first_over_capacity("from_guid")
+        if offender is None and cardinality in ("one_to_one", "one_to_many"):
+            offender = first_over_capacity("to_guid")
+
+    if offender is not None:
+        raise conflict(
+            f"Existing edges of '{name}' violate cardinality '{cardinality}'. "
+            "Remove the conflicting edges before changing the cardinality."
+        )
 
 
 def _canonicalize_symmetric_edges(c, name):
@@ -367,13 +408,18 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
         is_symmetric = bool(row["symmetric"])
 
         if is_symmetric:
-            # Mutual edge: one label, neighbor is simply the other endpoint.
+            # Mutual edge: one label, neighbor is the other endpoint. It has no
+            # forward/inverse direction, so only direction=symmetric keeps it.
+            if dirn in ("forward", "outgoing", "inverse", "incoming"):
+                continue
             rel = row["forward_name"]
             neighbor_guid = row["to_guid"] if is_from else row["from_guid"]
             neighbor_type = row["to_type"]  # == from_type for symmetric
             this_direction = "symmetric"
-            # direction filters don't apply to symmetric edges
         else:
+            # Directional edge: excluded when only symmetric edges are requested.
+            if dirn == "symmetric":
+                continue
             if dirn in ("forward", "outgoing") and not is_from:
                 continue
             if dirn in ("inverse", "incoming") and is_from:
