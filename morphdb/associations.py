@@ -19,7 +19,7 @@ asking a child for relation "parent" yields the parent.
 import json
 
 from . import db
-from .errors import bad_request, conflict, not_found
+from .errors import ApiError, bad_request, conflict, not_found
 from .schema import _validate_type_name, get_object_schema
 from .util import now_iso
 
@@ -34,6 +34,7 @@ def _row_to_assoc_schema(row):
         "forward_name": row["forward_name"],
         "inverse_name": row["inverse_name"],
         "cardinality": row["cardinality"],
+        "symmetric": bool(row["symmetric"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -43,12 +44,27 @@ def _row_to_assoc_schema(row):
 
 
 def upsert_association_schema(name, from_type, to_type, forward_name,
-                              inverse_name, cardinality):
+                              inverse_name, cardinality, symmetric=False):
     _validate_type_name(name)
     if cardinality not in CARDINALITIES:
         raise bad_request(
             f"Unknown cardinality '{cardinality}'. One of {sorted(CARDINALITIES)}."
         )
+    symmetric = bool(symmetric)
+    if symmetric:
+        # A symmetric relationship is mutual (friends, peers): the edge A–B is
+        # the same as B–A. It only makes sense within one type, and a single
+        # label describes both ends.
+        if from_type != to_type:
+            raise bad_request(
+                "symmetric associations require from_type == to_type."
+            )
+        if cardinality not in ("one_to_one", "many_to_many"):
+            raise bad_request(
+                "symmetric associations must be one_to_one or many_to_many."
+            )
+        if not inverse_name:
+            inverse_name = forward_name
     for label, val in (("forward_name", forward_name), ("inverse_name", inverse_name)):
         if not isinstance(val, str) or not val.strip():
             raise bad_request(f"'{label}' must be a non-empty string.")
@@ -65,17 +81,19 @@ def upsert_association_schema(name, from_type, to_type, forward_name,
         if existing:
             c.execute(
                 "UPDATE association_schemas SET from_type=?, to_type=?, "
-                "forward_name=?, inverse_name=?, cardinality=?, updated_at=? "
-                "WHERE name=?",
-                (from_type, to_type, forward_name, inverse_name, cardinality, ts, name),
+                "forward_name=?, inverse_name=?, cardinality=?, symmetric=?, "
+                "updated_at=? WHERE name=?",
+                (from_type, to_type, forward_name, inverse_name, cardinality,
+                 int(symmetric), ts, name),
             )
         else:
             c.execute(
                 "INSERT INTO association_schemas (name, from_type, to_type, "
-                "forward_name, inverse_name, cardinality, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "forward_name, inverse_name, cardinality, symmetric, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (name, from_type, to_type, forward_name, inverse_name,
-                 cardinality, ts, ts),
+                 cardinality, int(symmetric), ts, ts),
             )
         row = c.execute(
             "SELECT * FROM association_schemas WHERE name = ?", (name,)
@@ -144,6 +162,7 @@ def create_association(name, from_guid, to_guid, replace=False):
         raise bad_request("Self-referential edges (from == to) are not allowed.")
 
     schema = get_association_schema(name, required=True)
+    symmetric = schema["symmetric"]
     ts = now_iso()
 
     with db.transaction() as c:
@@ -161,6 +180,11 @@ def create_association(name, from_guid, to_guid, replace=False):
                 f"expects to_type '{schema['to_type']}'."
             )
 
+        # For symmetric relationships, A–B and B–A are the same edge: store the
+        # endpoints in a canonical (sorted) order so it is deduped naturally.
+        if symmetric and from_guid > to_guid:
+            from_guid, to_guid = to_guid, from_guid
+
         # Already exists? Idempotent return.
         exact = c.execute(
             "SELECT * FROM associations WHERE assoc_name=? AND from_guid=? AND to_guid=?",
@@ -172,20 +196,39 @@ def create_association(name, from_guid, to_guid, replace=False):
         # Cardinality conflicts: collect edges that would violate the rule.
         card = schema["cardinality"]
         conflicts = []
-        if card in ("one_to_one", "many_to_one"):
-            # the `from` side may have at most one `to`
-            conflicts += c.execute(
-                "SELECT * FROM associations WHERE assoc_name=? AND from_guid=?",
-                (name, from_guid),
-            ).fetchall()
-        if card in ("one_to_one", "one_to_many"):
-            # the `to` side may have at most one `from`
-            conflicts += c.execute(
-                "SELECT * FROM associations WHERE assoc_name=? AND to_guid=?",
-                (name, to_guid),
-            ).fetchall()
+        if symmetric:
+            # A node's degree counts edges where it appears at either end.
+            if card == "one_to_one":
+                for node in (from_guid, to_guid):
+                    conflicts += c.execute(
+                        "SELECT * FROM associations WHERE assoc_name=? AND "
+                        "(from_guid=? OR to_guid=?)",
+                        (name, node, node),
+                    ).fetchall()
+            # many_to_many: no limit.
+        else:
+            if card in ("one_to_one", "many_to_one"):
+                # the `from` side may have at most one `to`
+                conflicts += c.execute(
+                    "SELECT * FROM associations WHERE assoc_name=? AND from_guid=?",
+                    (name, from_guid),
+                ).fetchall()
+            if card in ("one_to_one", "one_to_many"):
+                # the `to` side may have at most one `from`
+                conflicts += c.execute(
+                    "SELECT * FROM associations WHERE assoc_name=? AND to_guid=?",
+                    (name, to_guid),
+                ).fetchall()
 
+        # De-duplicate conflict rows by id (symmetric one_to_one can match twice).
         if conflicts:
+            seen_ids = set()
+            uniq = []
+            for r in conflicts:
+                if r["id"] not in seen_ids:
+                    seen_ids.add(r["id"])
+                    uniq.append(r)
+            conflicts = uniq
             if not replace:
                 pretty = [
                     {"from_guid": r["from_guid"], "to_guid": r["to_guid"]}
@@ -214,6 +257,9 @@ def create_association(name, from_guid, to_guid, replace=False):
 
 
 def delete_association(name, from_guid, to_guid):
+    schema = get_association_schema(name, required=True)
+    if schema["symmetric"] and from_guid > to_guid:
+        from_guid, to_guid = to_guid, from_guid
     with db.transaction() as c:
         row = c.execute(
             "SELECT * FROM associations WHERE assoc_name=? AND from_guid=? AND to_guid=?",
@@ -235,6 +281,7 @@ def _edge_dict(row, schema):
         "forward_name": schema["forward_name"],
         "inverse_name": schema["inverse_name"],
         "cardinality": schema["cardinality"],
+        "symmetric": schema["symmetric"],
         "created_at": row["created_at"],
     }
 
@@ -252,9 +299,23 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
     if c.execute("SELECT 1 FROM objects WHERE guid = ?", (guid,)).fetchone() is None:
         raise not_found(f"No object with guid '{guid}'.")
 
+    # Validate filters so a typo'd name/relation errors instead of silently
+    # returning an empty list (consistent with field-filter validation).
+    if name and get_association_schema(name) is None:
+        raise not_found(f"No association type named '{name}'.")
+    if relation is not None:
+        valid = set()
+        for s in list_association_schemas():
+            valid.add(s["forward_name"])
+            valid.add(s["inverse_name"])
+        if relation not in valid:
+            raise bad_request(
+                f"Unknown relation '{relation}'. Known relations: {sorted(valid)}."
+            )
+
     sql = (
         "SELECT a.*, s.from_type, s.to_type, s.forward_name, s.inverse_name, "
-        "s.cardinality FROM associations a "
+        "s.cardinality, s.symmetric FROM associations a "
         "JOIN association_schemas s ON a.assoc_name = s.name "
         "WHERE (a.from_guid = ? OR a.to_guid = ?)"
     )
@@ -268,21 +329,30 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
     out = []
     for row in c.execute(sql, params).fetchall():
         is_from = row["from_guid"] == guid
-        if dirn in ("forward", "outgoing") and not is_from:
-            continue
-        if dirn in ("inverse", "incoming") and is_from:
-            continue
+        is_symmetric = bool(row["symmetric"])
 
-        if is_from:
+        if is_symmetric:
+            # Mutual edge: one label, neighbor is simply the other endpoint.
             rel = row["forward_name"]
-            neighbor_guid = row["to_guid"]
-            neighbor_type = row["to_type"]
-            this_direction = "forward"
+            neighbor_guid = row["to_guid"] if is_from else row["from_guid"]
+            neighbor_type = row["to_type"]  # == from_type for symmetric
+            this_direction = "symmetric"
+            # direction filters don't apply to symmetric edges
         else:
-            rel = row["inverse_name"]
-            neighbor_guid = row["from_guid"]
-            neighbor_type = row["from_type"]
-            this_direction = "inverse"
+            if dirn in ("forward", "outgoing") and not is_from:
+                continue
+            if dirn in ("inverse", "incoming") and is_from:
+                continue
+            if is_from:
+                rel = row["forward_name"]
+                neighbor_guid = row["to_guid"]
+                neighbor_type = row["to_type"]
+                this_direction = "forward"
+            else:
+                rel = row["inverse_name"]
+                neighbor_guid = row["from_guid"]
+                neighbor_type = row["from_type"]
+                this_direction = "inverse"
 
         if relation and rel != relation:
             continue
@@ -294,15 +364,20 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
             "neighbor_guid": neighbor_guid,
             "neighbor_type": neighbor_type,
             "cardinality": row["cardinality"],
+            "symmetric": is_symmetric,
             "created_at": row["created_at"],
         }
         if expand:
             from .objects import get_object
 
+            # Only a missing neighbor (404) becomes null; other errors surface.
             try:
                 item["neighbor"] = get_object(neighbor_guid)
-            except Exception:
-                item["neighbor"] = None
+            except ApiError as e:
+                if e.status == 404:
+                    item["neighbor"] = None
+                else:
+                    raise
         out.append(item)
 
     return {"guid": guid, "associations": out, "total": len(out)}

@@ -9,6 +9,21 @@ from .router import Router
 router = Router()
 
 
+def _obj_body(req):
+    """Return the request body as a dict, or raise 400.
+
+    An empty/absent body is treated as ``{}`` (a valid empty write), but a
+    non-object JSON value (list, string, number, ``null``) is rejected rather
+    than silently dropped — that would create blank objects from bad input.
+    """
+    b = req.body
+    if b is None or b == {}:
+        return {}
+    if not isinstance(b, dict):
+        raise bad_request("Request body must be a JSON object.")
+    return b
+
+
 # --- meta ---------------------------------------------------------------------
 
 
@@ -114,27 +129,30 @@ def _assoc_schema_args(body):
         from_type=body.get("from_type"),
         to_type=body.get("to_type"),
         forward_name=body.get("forward_name"),
+        # inverse_name is optional for symmetric relationships (defaults to
+        # forward_name); validated in the logic layer otherwise.
         inverse_name=body.get("inverse_name"),
         cardinality=body.get("cardinality"),
+        symmetric=bool(body.get("symmetric", False)),
     )
 
 
 @router.route("POST", "/schemas/associations")
 def create_assoc_schema(req):
-    body = req.body if isinstance(req.body, dict) else {}
+    body = _obj_body(req)
     name = body.get("name")
     if not name:
         raise bad_request("POST /schemas/associations requires a 'name'.")
     args = _assoc_schema_args(body)
-    _require(args, "from_type", "to_type", "forward_name", "inverse_name", "cardinality")
+    _require(args, "from_type", "to_type", "forward_name", "cardinality")
     return 201, assoc.upsert_association_schema(name, **args)
 
 
 @router.route("PUT", "/schemas/associations/{name}")
 def put_assoc_schema(req):
-    body = req.body if isinstance(req.body, dict) else {}
+    body = _obj_body(req)
     args = _assoc_schema_args(body)
-    _require(args, "from_type", "to_type", "forward_name", "inverse_name", "cardinality")
+    _require(args, "from_type", "to_type", "forward_name", "cardinality")
     return assoc.upsert_association_schema(req.params["name"], **args)
 
 
@@ -155,8 +173,7 @@ def _require(args, *keys):
 
 @router.route("POST", "/objects/{type}")
 def create_object(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    return 201, objs.create_object(req.params["type"], body)
+    return 201, objs.create_object(req.params["type"], _obj_body(req))
 
 
 @router.route("GET", "/objects/{type}")
@@ -181,14 +198,14 @@ def get_object_typed(req):
 
 @router.route("PUT", "/objects/{type}/{guid}")
 def put_object(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    return objs.upsert_object(req.params["type"], req.params["guid"], body, partial=False)
+    return objs.upsert_object(req.params["type"], req.params["guid"],
+                              _obj_body(req), partial=False)
 
 
 @router.route("PATCH", "/objects/{type}/{guid}")
 def patch_object(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    return objs.upsert_object(req.params["type"], req.params["guid"], body, partial=True)
+    return objs.upsert_object(req.params["type"], req.params["guid"],
+                              _obj_body(req), partial=True)
 
 
 @router.route("DELETE", "/objects/{type}/{guid}")
@@ -229,7 +246,7 @@ def _read_associations(req, guid):
 
 @router.route("POST", "/associations")
 def create_association(req):
-    body = req.body if isinstance(req.body, dict) else {}
+    body = _obj_body(req)
     name = body.get("assoc_name") or body.get("name")
     if not name:
         raise bad_request("Provide the association type as 'assoc_name' (or 'name').")
@@ -243,14 +260,12 @@ def create_association(req):
 
 @router.route("DELETE", "/associations")
 def delete_association(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    return _do_delete_association(body)
+    return _do_delete_association(_obj_body(req))
 
 
 @router.route("POST", "/associations/delete")
 def delete_association_post(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    return _do_delete_association(body)
+    return _do_delete_association(_obj_body(req))
 
 
 def _do_delete_association(body):
@@ -274,7 +289,7 @@ ENDPOINT_REFERENCE = {
         "DELETE /schemas/objects/{type}?cascade=true": "Delete a type (and, by default, its objects).",
         "POST /schemas/objects/{type}/delete-fields": "Remove fields. Body: {fields: [..]}.",
         "GET /schemas/associations": "List association (relationship) types.",
-        "POST /schemas/associations": "Create/replace a relationship type. Body: {name, from_type, to_type, forward_name, inverse_name, cardinality}.",
+        "POST /schemas/associations": "Create/replace a relationship type. Body: {name, from_type, to_type, forward_name, inverse_name, cardinality, symmetric?}. Set symmetric:true (from_type==to_type, one_to_one|many_to_many) for mutual relations like friends.",
         "DELETE /schemas/associations/{name}?cascade=true": "Delete a relationship type (and its edges).",
     },
     "data (for the website)": {
@@ -292,4 +307,11 @@ ENDPOINT_REFERENCE = {
     "field_types": ["string", "number", "boolean", "json", "datetime"],
     "cardinalities": ["one_to_one", "one_to_many", "many_to_one", "many_to_many"],
     "filter_operators": ["eq (default)", "ne", "gt", "gte", "lt", "lte", "contains", "in", "exists"],
+    "list_response_shape": {"objects": "[...]", "total": "int (full filtered count)",
+                            "limit": "int", "offset": "int"},
+    "notes": [
+        "datetime values are validated as ISO-8601 (or epoch seconds) and normalized.",
+        "number fields reject NaN/Infinity.",
+        "defaults are materialized on write, so they are queryable like any value.",
+    ],
 }

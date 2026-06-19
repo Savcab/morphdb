@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS association_schemas (
     forward_name TEXT NOT NULL,
     inverse_name TEXT NOT NULL,
     cardinality  TEXT NOT NULL,
+    symmetric    INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
@@ -86,9 +87,21 @@ def init_db(path):
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.executescript(SCHEMA_SQL)
+        _migrate(conn)
         conn.commit()
         _CONN = conn
     return _CONN
+
+
+def _migrate(conn):
+    """Apply additive migrations to databases created by older versions."""
+    cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(association_schemas)").fetchall()}
+    if "symmetric" not in cols:
+        conn.execute(
+            "ALTER TABLE association_schemas ADD COLUMN symmetric "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 @contextmanager

@@ -77,8 +77,11 @@ def upsert_object(object_type, guid, data, partial=True):
                 f"'{existing['object_type']}', not '{object_type}'."
             )
 
+        # PUT (partial=False) is replace semantics and must re-validate required
+        # fields, even when the object already exists. PATCH (partial=True) only
+        # touches the provided fields.
         clean = validate_against_schema(
-            data or {}, schema["fields"], partial=partial or existing is not None
+            data or {}, schema["fields"], partial=partial
         )
 
         if existing is None:
@@ -193,8 +196,12 @@ def _build_where(filters, fields):
             clauses.append(f"{expr} <= ?")
             params.append(val)
         elif op == "contains":
-            clauses.append(f"{expr} LIKE ?")
-            params.append(f"%{val}%")
+            # Escape LIKE metacharacters so the match is a literal substring,
+            # not a wildcard pattern.
+            esc = (str(val).replace("\\", "\\\\")
+                   .replace("%", "\\%").replace("_", "\\_"))
+            clauses.append(f"{expr} LIKE ? ESCAPE '\\'")
+            params.append(f"%{esc}%")
         elif op == "in":
             if not val:
                 clauses.append("0")  # empty IN matches nothing
@@ -224,11 +231,13 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
     where = " AND ".join(clauses)
 
     order_sql = "DESC" if str(order).lower() == "desc" else "ASC"
+    # Always append `guid ASC` as a deterministic tie-break so pagination is
+    # stable even when the primary sort key has duplicate values.
     if sort:
         if sort in ("_created_at", "_updated_at", "_guid"):
             col = {"_created_at": "created_at", "_updated_at": "updated_at",
                    "_guid": "guid"}[sort]
-            order_clause = f"{col} {order_sql}"
+            order_clause = f"{col} {order_sql}, guid ASC"
         elif sort in fields:
             order_clause = f"json_extract(data, '$.{sort}') {order_sql}, guid ASC"
         else:
@@ -237,10 +246,13 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
         order_clause = f"created_at {order_sql}, guid ASC"
 
     try:
-        limit = max(0, min(int(limit), MAX_LIMIT))
-        offset = max(0, int(offset))
+        limit = int(limit)
+        offset = int(offset)
     except (TypeError, ValueError):
         raise bad_request("limit and offset must be integers.")
+    if limit < 0 or offset < 0:
+        raise bad_request("limit and offset must be non-negative.")
+    limit = min(limit, MAX_LIMIT)
 
     c = db.conn()
     total = c.execute(

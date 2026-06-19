@@ -38,7 +38,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_json(self, status, payload):
         try:
-            body = json.dumps(payload, default=str).encode("utf-8")
+            body = json.dumps(payload, default=str, allow_nan=False).encode("utf-8")
         except (TypeError, ValueError):
             status = 500
             body = json.dumps(
@@ -48,6 +48,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        # If we decided to close the connection (e.g. an unread body), tell the
+        # client so it doesn't reuse a desynced keep-alive socket.
+        if getattr(self, "close_connection", False):
+            self.send_header("Connection", "close")
         self._set_cors()
         self.end_headers()
         if self.command != "HEAD":
@@ -63,10 +67,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(length)
         except ValueError:
+            # We cannot know how many bytes to drain — close to avoid desyncing
+            # the next request on a keep-alive connection.
+            self.close_connection = True
             raise ApiError(400, "bad_request", "Invalid Content-Length header.")
         if n <= 0:
             return {}
         if n > MAX_BODY:
+            # Don't read a potentially huge body; close the connection so the
+            # unread bytes can't be misread as the next request.
+            self.close_connection = True
             raise ApiError(413, "payload_too_large",
                            f"Request body exceeds {MAX_BODY} bytes.")
         raw = self.rfile.read(n)
@@ -74,7 +84,9 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         try:
             parsed = json.loads(raw.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError,
+                ValueError) as e:
+            # Body was fully read, so the connection stays in sync.
             raise ApiError(400, "bad_request", f"Invalid JSON body: {e}")
         return parsed
 

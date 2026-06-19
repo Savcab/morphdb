@@ -78,6 +78,11 @@ curl -X POST http://127.0.0.1:8787/schemas/associations -d '{
 }'
 ```
 
+For a mutual relationship within one type (friends, peers) add `"symmetric": true`
+(requires `from_type == to_type`, cardinality `one_to_one` or `many_to_many`).
+A–B and B–A are then the same edge — created once in either order, counted once,
+traversable from both ends.
+
 ### 2. Read & write data (the frontend you build)
 
 Every object gets a globally unique `_guid`. System fields are `_guid`, `_type`,

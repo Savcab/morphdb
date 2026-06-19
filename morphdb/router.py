@@ -46,11 +46,13 @@ class Router:
         ``path_matched`` distinguishes a 404 (no path matched) from a 405
         (path matched but not for this method).
         """
+        # HEAD is served by the GET handler (the server omits the body).
+        match_method = "GET" if method == "HEAD" else method
         path_matched = False
         for m, regex, handler, _names in self._routes:
             mo = regex.match(path)
             if mo:
                 path_matched = True
-                if m == method:
+                if m == match_method:
                     return handler, mo.groupdict(), True
         return None, None, path_matched

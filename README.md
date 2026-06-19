@@ -93,12 +93,25 @@ See `examples/todo/index.html` for a complete single-file frontend backed by Mor
 
 **Field types:** `string`, `number`, `boolean`, `json`, `datetime`.
 Values are coerced to the declared type on write; unknown fields are rejected.
+`number` rejects NaN/Infinity; `datetime` is validated as ISO-8601 (or epoch
+seconds) and normalized. Field defaults are materialized into storage on write,
+so a defaulted value is queryable like any other.
 
 **System fields** on every object: `_guid`, `_type`, `_created_at`,
 `_updated_at`. Schema field names may not begin with `_`.
 
 **Cardinalities:** `one_to_one`, `one_to_many`, `many_to_one`, `many_to_many`,
 enforced on edge creation (409 on conflict; `?replace=true` to override).
+
+**Symmetric associations.** For a mutual relationship within one type (friends,
+peers), set `symmetric: true` (requires `from_type == to_type` and a cardinality
+of `one_to_one` or `many_to_many`). The edge A–B and B–A are then the same edge:
+created idempotently in either order, counted once, and traversed from both
+ends under a single `relation` label.
+
+**List responses** are shaped `{"objects": [...], "total": <full filtered
+count>, "limit": <int>, "offset": <int>}` — `total` is the count across the
+whole filter, not just the returned page. Default `limit` is 100 (max 1000).
 
 ## API reference
 
@@ -115,7 +128,7 @@ enforced on edge creation (409 on conflict; `?replace=true` to override).
 | `POST /schemas/objects/{type}/delete-fields` | `{fields:[...]}` | Remove fields (data hidden, not destroyed). |
 | `GET /schemas/associations` | — | List association types. |
 | `GET /schemas/associations/{name}` | — | View one association type. |
-| `POST /schemas/associations` | `{name, from_type, to_type, forward_name, inverse_name, cardinality}` | Create/replace a relationship type. |
+| `POST /schemas/associations` | `{name, from_type, to_type, forward_name, inverse_name, cardinality, symmetric?}` | Create/replace a relationship type. |
 | `PUT /schemas/associations/{name}` | same fields | Create/replace by name. |
 | `DELETE /schemas/associations/{name}` | `?cascade=true` (default) | Delete a relationship type + its edges. |
 

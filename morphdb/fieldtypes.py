@@ -8,11 +8,18 @@ The type set is intentionally small and forgiving — coding agents generate mes
 data and we would rather coerce than reject when the intent is unambiguous.
 """
 
+import math
+import re
 from datetime import datetime
 
 from .errors import bad_request
 
 FIELD_TYPES = {"string", "number", "boolean", "json", "datetime"}
+
+# Field names must be safe SQL/JSON identifiers: they are interpolated into
+# json_extract paths (e.g. "$.title") and ORDER BY clauses, so restricting them
+# to this charset closes any injection vector at the source.
+_FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
 def normalize_field_def(name, raw):
@@ -57,8 +64,35 @@ def normalize_fields(fields):
                 f"Field name '{name}' is reserved (leading underscore is reserved "
                 "for system fields like _guid/_type)."
             )
+        if not _FIELD_NAME_RE.match(name):
+            raise bad_request(
+                f"Invalid field name '{name}'. Use a letter followed by letters, "
+                "digits, or underscores (e.g. 'title', 'due_date')."
+            )
         out[name] = normalize_field_def(name, raw)
     return out
+
+
+def _parse_datetime(field, value):
+    """Validate a datetime string and return it in ISO-8601 form, or raise."""
+    s = value.strip()
+    if not s:
+        raise bad_request(f"Field '{field}': empty datetime string.")
+    iso = s[:-1] + "+00:00" if s.endswith("Z") else s
+    try:
+        datetime.fromisoformat(iso)
+        return s  # already valid ISO-8601; keep caller's form
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%d %H:%M:%S", "%Y/%m/%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(s, fmt).isoformat()
+        except ValueError:
+            continue
+    raise bad_request(
+        f"Field '{field}': '{value}' is not a valid date/datetime (use ISO-8601)."
+    )
 
 
 def coerce_value(field, value, ftype):
@@ -82,14 +116,25 @@ def coerce_value(field, value, ftype):
         if isinstance(value, bool):
             raise bad_request(f"Field '{field}' expects a number, got boolean.")
         if isinstance(value, (int, float)):
-            return value
-        if isinstance(value, str):
+            num = value
+        elif isinstance(value, str):
             try:
                 f = float(value)
             except ValueError:
                 raise bad_request(f"Field '{field}' expects a number, got {value!r}.")
-            return int(f) if f.is_integer() and "." not in value and "e" not in value.lower() else f
-        raise bad_request(f"Field '{field}' expects a number, got {type(value).__name__}.")
+            num = (int(f) if f.is_integer() and "." not in value
+                   and "e" not in value.lower() else f)
+        else:
+            raise bad_request(
+                f"Field '{field}' expects a number, got {type(value).__name__}."
+            )
+        # Reject non-finite values: json.dumps would emit bare NaN/Infinity
+        # (invalid JSON) and SQLite's json_extract chokes on them.
+        if isinstance(num, float) and not math.isfinite(num):
+            raise bad_request(
+                f"Field '{field}' must be a finite number (got {value!r})."
+            )
+        return num
 
     if ftype == "boolean":
         if isinstance(value, bool):
@@ -105,12 +150,20 @@ def coerce_value(field, value, ftype):
         raise bad_request(f"Field '{field}' expects a boolean, got {value!r}.")
 
     if ftype == "datetime":
-        # Store as an ISO-8601 string; accept datetime, epoch seconds, or a string.
+        # Normalize to an ISO-8601 string. Accept epoch seconds or an ISO string;
+        # reject values that are not real dates so the column stays sortable.
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return datetime.utcfromtimestamp(value).isoformat() + "Z"
+            try:
+                return datetime.utcfromtimestamp(value).isoformat() + "Z"
+            except (OverflowError, OSError, ValueError):
+                raise bad_request(
+                    f"Field '{field}': epoch value {value!r} is out of range."
+                )
         if isinstance(value, str):
-            return value  # trust caller's ISO string; parsing is best-effort below
-        raise bad_request(f"Field '{field}' expects a datetime string, got {type(value).__name__}.")
+            return _parse_datetime(field, value)
+        raise bad_request(
+            f"Field '{field}' expects a datetime, got {type(value).__name__}."
+        )
 
     if ftype == "json":
         # Any JSON-serializable value is fine; the store will json.dumps it.
@@ -130,7 +183,17 @@ def project_data(stored, fields):
     out = {}
     for name, fdef in fields.items():
         if name in stored:
-            out[name] = stored[name]
+            value = stored[name]
+            # Re-coerce to the field's *current* type so a read never returns a
+            # value that violates the live schema (e.g. after a field is retyped).
+            # Best-effort: if the old value cannot be coerced, fall back to the
+            # default rather than leaking a wrongly-typed value.
+            if value is not None and fdef["type"] != "json":
+                try:
+                    value = coerce_value(name, value, fdef["type"])
+                except Exception:
+                    value = fdef.get("default")
+            out[name] = value
         else:
             out[name] = fdef.get("default")
     return out
@@ -157,6 +220,13 @@ def validate_against_schema(data, fields, partial=False):
     for name, fdef in fields.items():
         if name in data:
             out[name] = coerce_value(name, data[name], fdef["type"])
-        elif not partial and fdef.get("required") and fdef.get("default") is None:
-            raise bad_request(f"Required field '{name}' is missing.")
+        elif not partial:
+            # On a full write, materialize the default into the stored blob so
+            # that queries (which read the blob directly) agree with reads
+            # (which project the blob). A missing required field with no default
+            # is an error.
+            if fdef.get("default") is not None:
+                out[name] = fdef["default"]
+            elif fdef.get("required"):
+                raise bad_request(f"Required field '{name}' is missing.")
     return out
