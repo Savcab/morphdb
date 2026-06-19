@@ -218,7 +218,7 @@ ENDPOINT_REFERENCE = {
     },
     "object endpoints (your frontend — read/write data)": {
         "POST /objects/{type}": "Create an object. Body: field + relation values. Returns it with _guid.",
-        "GET /objects/{type}": "List/query. Query: field filters (field, field__gt, field__contains, field__in, ...), limit, offset, sort, order.",
+        "GET /objects/{type}": "List/query. Query: field filters (field, field__gt, field__contains, field__in, ...), relation filters (rel=<guid>, rel__in, rel__ne, rel__exists), limit, offset, sort, order.",
         "GET /objects/{type}/{guid}": "Read one object (fields + relation guids).",
         "GET /object/{guid}": "Read one object by guid alone.",
         "PUT /objects/{type}/{guid}": "Replace an object's fields (create if absent). Relations present in the body are set.",
@@ -234,6 +234,7 @@ ENDPOINT_REFERENCE = {
         ),
         "read": "Relation values appear in the object body: a guid (to-one) or list of guids (to-many).",
         "write": "Set a relation like a field: {\"assignee\": \"<guid>\"} or {\"tags\": [\"<g1>\", \"<g2>\"]}. null/[] clears. Last write wins on conflict.",
+        "filter": "Filter a list by a relation, like an ORM foreign key: ?assignee=<guid> (linked to it), ?assignee__in=<g1>,<g2>, ?assignee__ne=<guid>, ?assignee__exists=true|false. Combine with field filters/sort/pagination. Resolved through the indexed edge table, so it is index-backed.",
         "symmetric": "Set symmetric:true (to == this type, one_to_one|many_to_many) for mutual links like friends — one shared label, edge counted once.",
     },
     "headers": {
@@ -248,7 +249,7 @@ ENDPOINT_REFERENCE = {
         "datetime values are validated as ISO-8601 (or epoch seconds) and normalized.",
         "number fields reject NaN/Infinity.",
         "schema edits are O(1) and lazy: after a field retype, an old-typed value reads as unset until rewritten.",
-        "relations are stored as single-row edges and read/written as object fields; filtering is on fields, not relations.",
+        "relations are stored as single-row edges and read/written as object fields; they are filterable on the list endpoint (?rel=<guid>, __in/__ne/__exists), resolved through the indexed edge table — think ORM foreign key, not a separate join.",
         "relation targets must be objects in the same app; cross-app links are rejected.",
     ],
 }

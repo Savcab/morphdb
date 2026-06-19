@@ -181,20 +181,31 @@ def get_object(app, guid, object_type=None):
     return _project_full(app, row, schema["fields"], row["object_type"])
 
 
-def _parse_filter_key(key, fields):
+def _classify_filter_key(key, fields, rel_views):
+    """Split a filter key into ``(name, op, kind, view)``.
+
+    ``kind`` is ``"field"`` (filtered against the JSON blob) or ``"relation"``
+    (filtered through the indexed ``associations`` table, see
+    :func:`_relation_clause`). A field name wins if a name is somehow both, which
+    mirrors how writes resolve a key (see ``_split_body``).
+    """
     if "__" in key:
-        field, op = key.rsplit("__", 1)
+        name, op = key.rsplit("__", 1)
         if op not in _OPS:
-            # treat the whole thing as a field name with default eq
-            field, op = key, "eq"
+            # treat the whole thing as a name with default eq
+            name, op = key, "eq"
     else:
-        field, op = key, "eq"
-    if field not in fields:
-        raise bad_request(
-            f"Cannot filter on unknown field '{field}'. "
-            f"Declared fields: {sorted(fields)}. (Filtering is on fields, not relations.)"
-        )
-    return field, op
+        name, op = key, "eq"
+    if name in fields:
+        return name, op, "field", None
+    if name in rel_views:
+        return name, op, "relation", rel_views[name]
+    raise bad_request(
+        f"Cannot filter on unknown key '{name}'. "
+        f"Declared fields: {sorted(fields)}; "
+        f"relations: {sorted(rel_views)}. "
+        "Filter a relation by a neighbor guid, e.g. ?<relation>=<guid>."
+    )
 
 
 def _coerce_filter_value(field, op, raw, ftype):
@@ -266,16 +277,101 @@ def _field_expr(field, fdef, params):
     return f"(CASE WHEN {valid} THEN {raw} ELSE NULL END)"
 
 
-def _build_where(filters, fields):
+# Operators meaningful on a relation (a set of neighbor guids) rather than a
+# scalar field. A relation filter resolves through the indexed associations
+# table; scalar comparisons (gt/lt/contains) are field-only.
+_REL_OPS = {"eq", "ne", "in", "exists"}
+
+
+def _relation_clause(app, view, op, raw):
+    """A WHERE fragment that filters this type's objects by one relation.
+
+    Emits a subquery over the **indexed** ``associations`` table, so a relation
+    filter is index-backed (unlike a field filter, which scans the JSON blob)::
+
+        ?assignee=<userguid>          tasks linked to that user        (eq)
+        ?assignee__in=<g1>,<g2>       tasks linked to any of them      (in)
+        ?assignee__ne=<userguid>      tasks NOT linked to that user    (ne)
+        ?assignee__exists=true        tasks that have any assignee     (exists)
+
+    ``view`` is one entry from :func:`associations.relation_views` (it carries
+    the edge ``side`` and the synthetic ``assoc_name``). Returns
+    ``(clause_sql, params)``.
+    """
+    if op not in _REL_OPS:
+        raise bad_request(
+            f"Operator '{op}' is not supported on relation '{view['key']}'. "
+            f"Relations support {sorted(_REL_OPS)} — filter by a neighbor guid; "
+            "comparisons like gt/lt/contains are field-only."
+        )
+    side, name = view["side"], view["assoc_name"]
+
+    # Predicate on the column that holds the *neighbor* of a given edge, plus its
+    # params. Returns (None, []) for an empty ``in`` list (matches no edge).
+    def neighbor_pred(nb_col):
+        if op == "exists":
+            return "1", []                               # any edge counts
+        if op == "in":
+            guids = raw.split(",") if isinstance(raw, str) else list(raw)
+            guids = [str(g) for g in guids]
+            if not guids:
+                return None, []
+            return f"{nb_col} IN ({','.join('?' * len(guids))})", guids
+        return f"{nb_col} = ?", [str(raw)]               # eq / ne
+
+    if side == "sym":
+        # The object may sit on either end, so match the neighbor on both.
+        p_to, a_to = neighbor_pred("to_guid")
+        p_from, a_from = neighbor_pred("from_guid")
+        if p_to is None:
+            inner, iparams = None, []
+        else:
+            inner = (
+                f"SELECT from_guid FROM associations "
+                f"WHERE app=? AND assoc_name=? AND {p_to} "
+                f"UNION SELECT to_guid FROM associations "
+                f"WHERE app=? AND assoc_name=? AND {p_from}"
+            )
+            iparams = [app, name, *a_to, app, name, *a_from]
+    else:
+        my_col = "from_guid" if side == "from" else "to_guid"
+        nb_col = "to_guid" if side == "from" else "from_guid"
+        pred, pargs = neighbor_pred(nb_col)
+        if pred is None:
+            inner, iparams = None, []
+        else:
+            inner = (f"SELECT {my_col} FROM associations "
+                     f"WHERE app=? AND assoc_name=? AND {pred}")
+            iparams = [app, name, *pargs]
+
+    if inner is None:                                    # empty __in list
+        # eq/in match nothing; ne/exists-false match everything.
+        return ("0", []) if op in ("eq", "in") else ("1", [])
+
+    if op == "exists":
+        from .fieldtypes import coerce_value
+        negate = not coerce_value(view["key"], raw, "boolean")
+    else:
+        negate = op == "ne"
+    return f"guid {'NOT IN' if negate else 'IN'} ({inner})", iparams
+
+
+def _build_where(app, filters, fields, rel_views):
     """Translate a ``{key: value}`` filter mapping into a SQL WHERE fragment.
 
-    Supports operators via ``field__op`` keys: eq, ne, gt, gte, lt, lte,
-    contains, in, exists.
+    Field filters support operators via ``field__op`` keys: eq, ne, gt, gte, lt,
+    lte, contains, in, exists. Relation filters (``rel``/``rel__op``) support eq,
+    ne, in, exists and resolve through the indexed associations table.
     """
     clauses = []
     params = []
     for key, raw in filters.items():
-        field, op = _parse_filter_key(key, fields)
+        field, op, kind, view = _classify_filter_key(key, fields, rel_views)
+        if kind == "relation":
+            clause, p = _relation_clause(app, view, op, raw)
+            clauses.append(clause)
+            params.extend(p)
+            continue
         fdef = fields[field]
         ftype = fdef["type"]
         val = _coerce_filter_value(field, op, raw, ftype)
@@ -329,10 +425,11 @@ def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
     schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     filters = filters or {}
+    rel_views = {v["key"]: v for v in assoc.relation_views(app, object_type)}
 
     clauses = ["app = ?", "object_type = ?"]
     params = [app, object_type]
-    fc, fp = _build_where(filters, fields)
+    fc, fp = _build_where(app, filters, fields, rel_views)
     clauses.extend(fc)
     params.extend(fp)
     where = " AND ".join(clauses)
@@ -357,7 +454,10 @@ def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
             sort_expr = _field_expr(sort, fields[sort], sort_params)
             order_clause = f"{sort_expr} {order_sql}, guid ASC"
         else:
-            raise bad_request(f"Cannot sort on unknown field '{sort}'.")
+            raise bad_request(
+                f"Cannot sort on '{sort}'. Sort by a declared field, "
+                "_created_at, _updated_at, or _guid. (Relations and json fields "
+                "aren't sortable; filter relations instead, e.g. ?rel=<guid>.)")
     else:
         order_clause = f"created_at {order_sql}, guid ASC"
 

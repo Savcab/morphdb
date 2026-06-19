@@ -294,14 +294,34 @@ Every schema and object request must send the app key as the `X-App-Key` header
 
 ### Query operators
 
-Append `__op` to a field name: `eq` (default), `ne`, `gt`, `gte`, `lt`, `lte`,
-`contains` (substring), `in` (comma-separated), `exists` (`true`/`false`).
-Filtering is on **fields**, not relations.
+Append `__op` to a **field** name: `eq` (default), `ne`, `gt`, `gte`, `lt`,
+`lte`, `contains` (substring), `in` (comma-separated), `exists` (`true`/`false`).
 
 ```
 GET /objects/task?priority__gte=3&title__contains=buy&done=false
 GET /objects/task?status__in=open,blocked&sort=_created_at&order=desc&limit=50
 ```
+
+You can also filter by a **relation** — treat it like an ORM foreign key, not a
+manual join. Filtering by a relation matches objects linked to a given neighbor,
+and resolves through the indexed edge table (so it is index-backed):
+
+| Query | Meaning |
+| --- | --- |
+| `?assignee=<guid>` | objects whose `assignee` is / includes that neighbor |
+| `?assignee__in=<g1>,<g2>` | linked to any of those neighbors |
+| `?assignee__ne=<guid>` | not linked to that neighbor (includes unlinked) |
+| `?assignee__exists=true` | has any `assignee` (`false` → has none) |
+
+```
+# "stages of business X that are still in build" — relation + field, one query
+GET /objects/stage?business=<bizguid>&status=build&sort=_created_at
+```
+
+Relation filters compose with field filters, `sort`, and pagination. Scalar
+comparisons (`gt`/`lt`/`contains`) are field-only; relations support
+`eq`/`ne`/`in`/`exists`. So **model a foreign key as a relation, not a string
+field** — you keep one-read traversal *and* get filtering, indexed, for free.
 
 ## Errors
 

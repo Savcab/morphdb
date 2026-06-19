@@ -2,7 +2,7 @@
 
 import unittest
 
-from harness import Base
+from harness import APP, Base
 
 
 class TestDeclareAndProject(Base):
@@ -164,6 +164,140 @@ class TestSchemaValidation(Base):
         self.assertEqual(b["inverse_relations"], {})       # tasks gone
         st, _, _ = self.get(f"/objects/user/{u}")
         self.assertEqual(st, 200)                          # user survives
+
+
+class TestRelationFiltering(Base):
+    """Relations are filterable on the list endpoint through the indexed
+    ``associations`` table: ``?rel=<guid>`` (eq), plus ``__in`` / ``__ne`` /
+    ``__exists``. This is the awb "filter children by their parent" case that
+    previously forced agents to model the link as an un-indexed FK-as-field.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # The symmetric self-relation is declared in the same call as the type;
+        # that works because the type row is written before its relations.
+        self.put_type("user", fields={"name": "string"}, relations={
+            "friends": {"to": "user", "cardinality": "many_to_many",
+                        "symmetric": True}})
+        self.put_type("tag", fields={"label": "string"})
+        self.put_type("task",
+            fields={"title": "string", "done": "boolean", "priority": "number"},
+            relations={
+                "assignee": {"to": "user", "cardinality": "many_to_one",
+                             "inverse": "tasks"},
+                "tags": {"to": "tag", "cardinality": "many_to_many",
+                         "inverse": "tagged"}})
+        self.ann = self.create("user", {"name": "Ann"})["_guid"]
+        self.bob = self.create("user", {"name": "Bob"})["_guid"]
+        self.urgent = self.create("tag", {"label": "urgent"})["_guid"]
+        self.t1 = self.create("task", {"title": "a1", "assignee": self.ann,
+                                       "done": True, "priority": 1,
+                                       "tags": [self.urgent]})["_guid"]
+        self.t2 = self.create("task", {"title": "a2", "assignee": self.ann,
+                                       "done": False, "priority": 2})["_guid"]
+        self.t3 = self.create("task", {"title": "b1", "assignee": self.bob,
+                                       "done": False, "priority": 3})["_guid"]
+        self.t4 = self.create("task", {"title": "free", "done": False,
+                                       "priority": 4})["_guid"]
+
+    def _guids(self, path):
+        st, b, _ = self.get(path)
+        self.assertEqual(st, 200, b)
+        return {o["_guid"] for o in b["objects"]}, b["total"]
+
+    # --- the core case: filter a type's list by a relation (forward side) ------
+    def test_eq_forward_many_to_one(self):
+        g, total = self._guids(f"/objects/task?assignee={self.ann}")
+        self.assertEqual(g, {self.t1, self.t2})
+        self.assertEqual(total, 2)
+
+    def test_eq_other_neighbor(self):
+        g, total = self._guids(f"/objects/task?assignee={self.bob}")
+        self.assertEqual((g, total), ({self.t3}, 1))
+
+    # --- relation filter composes with a field filter (the real awb query) -----
+    def test_relation_and_field_filter_compose(self):
+        # Ann's tasks with priority >= 2 -> just t2 (t1 is priority 1)
+        g, total = self._guids(f"/objects/task?assignee={self.ann}&priority__gte=2")
+        self.assertEqual((g, total), ({self.t2}, 1))
+
+    # --- inverse side ----------------------------------------------------------
+    def test_eq_inverse_side(self):
+        # users whose `tasks` include t3 -> Bob
+        g, _ = self._guids(f"/objects/user?tasks={self.t3}")
+        self.assertEqual(g, {self.bob})
+
+    # --- many_to_many, both directions -----------------------------------------
+    def test_eq_many_to_many(self):
+        g, _ = self._guids(f"/objects/task?tags={self.urgent}")
+        self.assertEqual(g, {self.t1})
+        g2, _ = self._guids(f"/objects/tag?tagged={self.t1}")
+        self.assertEqual(g2, {self.urgent})
+
+    # --- exists ----------------------------------------------------------------
+    def test_exists_true_false(self):
+        assigned, _ = self._guids("/objects/task?assignee__exists=true")
+        self.assertEqual(assigned, {self.t1, self.t2, self.t3})
+        unassigned, total = self._guids("/objects/task?assignee__exists=false")
+        self.assertEqual((unassigned, total), ({self.t4}, 1))
+
+    # --- in --------------------------------------------------------------------
+    def test_in_multiple_neighbors(self):
+        g, _ = self._guids(
+            f"/objects/task?assignee__in={self.ann},{self.bob}")
+        self.assertEqual(g, {self.t1, self.t2, self.t3})
+
+    # --- ne (note: "not assigned to Ann" includes the unassigned task) ---------
+    def test_ne_excludes_neighbor(self):
+        g, _ = self._guids(f"/objects/task?assignee__ne={self.ann}")
+        self.assertEqual(g, {self.t3, self.t4})
+
+    # --- symmetric: one canonical edge must filter from either end -------------
+    def test_symmetric_either_direction(self):
+        self.patch(f"/objects/user/{self.ann}", {"friends": [self.bob]})
+        a, _ = self._guids(f"/objects/user?friends={self.bob}")
+        self.assertEqual(a, {self.ann})
+        b, _ = self._guids(f"/objects/user?friends={self.ann}")
+        self.assertEqual(b, {self.bob})
+
+    # --- sort + pagination still apply on top of a relation filter -------------
+    def test_relation_filter_with_sort_and_pagination(self):
+        st, b, _ = self.get(
+            f"/objects/task?assignee={self.ann}&sort=priority&order=desc&limit=1")
+        self.assertEqual(st, 200, b)
+        self.assertEqual(b["total"], 2)              # counts the full filtered set
+        self.assertEqual(len(b["objects"]), 1)       # one page
+        self.assertEqual(b["objects"][0]["_guid"], self.t2)   # priority 2 > 1, desc
+
+    # --- errors ----------------------------------------------------------------
+    def test_unsupported_op_on_relation_rejected(self):
+        st, b, _ = self.get(f"/objects/task?assignee__gt={self.ann}")
+        self.assertEqual(st, 400)
+        self.assertIn("assignee", b["error"]["message"])
+
+    def test_unknown_key_message_mentions_relations(self):
+        st, b, _ = self.get("/objects/task?nope=x")
+        self.assertEqual(st, 400)
+        msg = b["error"]["message"]
+        self.assertIn("relations", msg)              # no longer "fields, not relations"
+        self.assertIn("assignee", msg)               # lists the available relations
+
+    # --- the headline claim: a relation filter is index-backed -----------------
+    def test_relation_filter_is_index_backed(self):
+        from morphdb import db
+        plan = db.conn().execute(
+            "EXPLAIN QUERY PLAN SELECT from_guid FROM associations "
+            "WHERE app=? AND assoc_name=? AND to_guid=?",
+            (APP, "task__assignee", self.ann),
+        ).fetchall()
+        text = " | ".join(r["detail"] for r in plan)
+        # An index SEARCH (any of the associations indexes, incl. the covering
+        # UNIQUE index), never a full table SCAN — this is the whole point: a
+        # relation filter is index-backed, where a field filter scans the blob.
+        self.assertIn("SEARCH associations USING", text)
+        self.assertIn("INDEX", text)
+        self.assertNotIn("SCAN associations", text)
 
 
 if __name__ == "__main__":
