@@ -1,6 +1,6 @@
 ---
 name: morphdb
-description: A coding-agent-friendly, multi-tenant backend for vibe-coded websites. Use when building an HTML/CSS/JS frontend that needs to persist and query data (todos, CRM, dashboard, tracker, any CRUD app) but you do not want to hand-write and re-migrate a database schema as the design churns. One MorphDB process hosts many isolated apps (one per site); you reshape each app's schema with one command and the frontend keeps calling the same generic, stable REST endpoints. Trigger when the user asks for a "backend for this", "make it save data", "add a database", or "persist this" for a small/local web app.
+description: A coding-agent-friendly, multi-tenant backend for vibe-coded websites. Activate whenever you are building or iterating on a website or web app that needs a backend — anything that must store, save, persist, or query data, wants a database or REST API, or needs to remember state across reloads (todo apps, CRMs, dashboards, trackers, notes, booking, inventory, any CRUD or data-driven site) — instead of hand-writing and re-migrating a database as the design churns. One MorphDB process backs many isolated apps (one per site); reshape each app's schema with a single command while the frontend keeps calling the same generic, stable endpoints. Also use it to start/stop/debug a site's MorphDB backend. Trigger on "build a backend for this", "make it save data", "add a database", "persist this", a site that loses data on refresh, or seeing a MorphDB marker comment in a project.
 ---
 
 # MorphDB — instant morphable backend for AI-built apps
@@ -30,16 +30,39 @@ Do **not** use it when the user already has a real backend/database, or needs
 multi-tenant auth, horizontal scale, or strong durability. It is a
 localhost-scale dev tool.
 
-## Start the server
+## Start (and manage) the server
+
+If MorphDB is installed (`pip install morphdb` or `brew install morphdb`), drive
+it with the `morphdb` CLI:
 
 ```bash
-# from the morphdb repo (no install needed — pure stdlib):
-python3 -m morphdb --port 8787 --db ./app.sqlite3
+morphdb start      # start the server in the background (default 127.0.0.1:8787)
+morphdb status     # running? where? how many apps?
+morphdb stop       # stop it
+morphdb dashboard  # open a read-only web view of every app + its tables
 ```
 
-Serves on `http://127.0.0.1:8787`. Data persists in the SQLite file. CORS is
-wide open, so a frontend on any origin can call it. `curl .../help` prints the
-live endpoint reference.
+Data lives in `~/.morphdb/data.sqlite3` by default (`--db PATH`, or `:memory:`,
+to change it). From a source checkout with no install, the foreground equivalent
+is `python3 -m morphdb --port 8787 --db ./app.sqlite3`.
+
+Either way it serves on `http://127.0.0.1:8787`, data persists in SQLite, CORS is
+wide open, and `curl .../help` prints the live endpoint reference.
+
+**Using a hosted MorphDB instead of localhost.** If the `MORPHDB_HOST` env var is
+set, treat it as the URL of a MorphDB server (running this same code) hosted
+elsewhere, and send **all** schema and object calls there — you don't need to
+start a local server. Concretely: the schema CLI already targets `$MORPHDB_HOST`
+when it's set, and you should bake the same URL into the frontend as
+`window.MORPHDB_HOST` so its `fetch` calls hit the hosted backend. It accepts a
+full URL (`https://db.example.com`) or a bare `host:port`, and always points at a
+*backend* — never a database directly (a browser can't reach a database, only an
+API).
+
+**Debug tip:** if the frontend can't reach the backend (connection refused, a
+`fetch` throws) and you're running locally, the server is probably down — run
+`morphdb status`, then `morphdb start` if stopped. That's the first thing to
+check when a working app suddenly stops loading or saving data.
 
 ## Mental model
 
@@ -58,7 +81,7 @@ Everything is scoped to an app. Pick a unique key, register it, and **remember
 it** — there is no endpoint to read it back.
 
 ```bash
-S="python3 skill/scripts/morphdb_schema.py"   # adjust path to the skill dir
+S="python3 ~/.claude/skills/morphdb/scripts/morphdb_schema.py"   # ships with this skill
 $S register-app my-cool-site                  # 409 if the key is already taken
 export MORPHDB_APP=my-cool-site               # the CLI sends this as X-App-Key
 ```
@@ -70,14 +93,15 @@ in one shot (other apps are untouched).
 
 ## 1. Reshape the schema with the CLI (you, the agent)
 
-Use `skill/scripts/morphdb_schema.py`. It talks to MorphDB at
+Use the `morphdb_schema` CLI that ships with this skill
+(`~/.claude/skills/morphdb/scripts/morphdb_schema.py`). It talks to MorphDB at
 `http://127.0.0.1:8787` by default; override with the `MORPHDB_HOST` env var (a
 full URL, or a bare `host:port`) or the `--url` flag. Every command runs against
 the app in `$MORPHDB_APP` (or `--app KEY`). Don't curl the schema endpoints by
 hand.
 
 ```bash
-S="python3 skill/scripts/morphdb_schema.py"      # adjust path to the skill dir
+S="python3 ~/.claude/skills/morphdb/scripts/morphdb_schema.py"   # ships with this skill
 
 # create / extend a type — add-field is idempotent (merge), so safe to re-run
 $S add-field task title  string
@@ -194,6 +218,23 @@ curl -H "$H" "$B/objects/task?done=false&sort=priority&order=desc&limit=20"
    fields, so the UI just reads/writes guids.
 5. When the UI needs a new field or relation, run **one** CLI command — no data
    rewrite, no change to the frontend's endpoint URLs.
+6. Leave a MorphDB marker comment in the site (see below) so future iterations
+   re-activate this skill and remember the app key.
+
+## Leave a breadcrumb in the site
+
+So this skill re-activates whenever you (or a later session) iterate on the app,
+drop an explicit note that the site is MorphDB-backed — a comment near the top
+of the main HTML / entry file (and/or a line in the project README):
+
+```html
+<!-- Backend: MorphDB · app key "my-cool-site".
+     Server: `morphdb start` / `morphdb status` / `morphdb stop`.
+     Schema edits: morphdb_schema CLI. This project uses the `morphdb` Claude skill. -->
+```
+
+It reminds the agent which app key to use and signals that the `morphdb` skill
+applies here — cheap context that keeps later edits consistent.
 
 ## Gotchas
 

@@ -93,30 +93,41 @@ curl -X PATCH $BASE/objects/user/<u> -d '{"tasks":["<t1>","<t2>"]}'
 - **Query layer**: filter operators, sorting, pagination — all generic.
 - **Multi-tenant by app** — one process backs many isolated sites; every call is scoped by an `X-App-Key`, and deleting an app cascades away all its data.
 - **Wide-open CORS** so any frontend origin can call it in dev.
-- **A Claude Code skill** (`skill/SKILL.md`) with a schema CLI so the agent edits the model without hand-writing curl.
+- **A management CLI** — `morphdb start/status/stop`, a read-only admin dashboard, and one-command skill install.
+- **A Claude Code skill** (`morphdb/skill/SKILL.md`, install with `morphdb install-skill`) with a schema CLI so the agent edits the model without hand-writing curl.
 
 > Scope: a localhost-scale developer tool. Not built for multi-tenant auth,
 > horizontal scale, or production durability guarantees.
 
 ## Install / run
 
-No install required:
-
 ```bash
-python3 -m morphdb --port 8787 --db ./app.sqlite3
+pip install morphdb
 ```
 
-Or install the console script:
+Manage the local server with the `morphdb` CLI:
 
 ```bash
-pip install -e .
-morphdb --port 8787 --db ./app.sqlite3
+morphdb start          # run in the background (default 127.0.0.1:8787)
+morphdb status         # running? where? how many apps?
+morphdb stop           # stop it
+morphdb run            # run in the foreground instead (blocking)
+morphdb dashboard      # read-only web view of every app + its tables
+morphdb install-skill  # install the MorphDB Claude Code skill (into ~/.claude)
 ```
 
-Flags: `--host` (default `127.0.0.1`), `--port` (default `8787`),
-`--db` (default `morphdb.sqlite3`; use `:memory:` for ephemeral).
+Data lives in `~/.morphdb/data.sqlite3` (change it with `--db PATH` or
+`--db :memory:`; move the state dir with `$MORPHDB_HOME`). Server flags:
+`--host`, `--port`, `--db`. From a source checkout with no install, the
+foreground server is `python3 -m morphdb --port 8787 --db ./app.sqlite3`.
 
 Then: `curl http://127.0.0.1:8787/help` for a live reference.
+
+**Pointing clients at a hosted MorphDB.** Set `MORPHDB_HOST` to a full URL (e.g.
+`https://db.example.com`) and the schema CLI — plus any frontend that reads
+`window.MORPHDB_HOST` — calls that hosted server (running this same code) instead
+of localhost. It's a client-side setting that names a *backend*, not a database
+connection string.
 
 ## Quickstart
 
