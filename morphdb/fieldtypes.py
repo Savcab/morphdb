@@ -277,16 +277,34 @@ def project_data(stored, fields):
     """
     out = {}
     for name, fdef in fields.items():
-        # Stored values are returned exactly as written; the default fills in
-        # only for a key that is absent from the blob (not for a stored null).
-        # Querying mirrors this precisely (see objects._field_expr), so reads and
-        # queries never disagree. Schema edits affect validation of future writes
-        # only — existing values are not rewritten or reinterpreted.
+        t = fdef["type"]
         if name in stored:
-            out[name] = stored[name]
-        else:
-            out[name] = fdef.get("default")
+            v = stored[name]
+            # A json field accepts any value (including null). For typed fields,
+            # a stored value counts only if its actual type still matches the
+            # field's current type; after a retype, a value of the old type is
+            # treated as "not set for the new type yet" and falls back to the
+            # default. Schema edits never rewrite rows (purely lazy); the query
+            # layer applies the exact same rule, so reads and queries agree.
+            if t == "json":
+                out[name] = v
+                continue
+            if v is not None and _matches_type(v, t):
+                out[name] = v
+                continue
+        out[name] = fdef.get("default")
     return out
+
+
+def _matches_type(value, ftype):
+    """True if a stored Python value's type matches a declared field type."""
+    if ftype == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if ftype == "boolean":
+        return isinstance(value, bool)
+    if ftype in ("string", "datetime"):
+        return isinstance(value, str)
+    return True  # json
 
 
 def validate_against_schema(data, fields, partial=False):

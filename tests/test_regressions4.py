@@ -73,27 +73,28 @@ class Base(unittest.TestCase):
         return b["total"]
 
 
-class TestRetypeMigration(Base):
-    def test_string_to_number_recoerces_existing(self):
+class TestRetypeLazy(Base):
+    def test_string_to_number_reads_as_unset(self):
+        # Purely lazy: after a retype, old-typed values read as unset (the field
+        # is "not set for the new type yet"), and queries agree — no row rewrite.
         self.post("/schemas/objects", {"name": "t", "fields": {"v": "string"}})
-        g1 = self.post("/objects/t", {"v": "42"})[1]["_guid"]   # coercible
-        self.post("/objects/t", {"v": "hello"})                 # uncoercible
+        g1 = self.post("/objects/t", {"v": "42"})[1]["_guid"]
+        self.post("/objects/t", {"v": "hello"})
         req("PUT", "/schemas/objects/t", {"merge": True, "fields": {"v": "number"}})
-        # coercible value is now a real number and reads as such
         st, b, _ = self.get(f"/objects/t/{g1}")
-        self.assertEqual(b["v"], 42)
-        # read and eq-query agree
-        self.assertEqual(self.total("/objects/t?v=42"), 1)
-        # uncoercible 'hello' was dropped -> not matched by a numeric range
-        self.assertEqual(self.total("/objects/t?v__gt=0"), 1)   # only the 42 row
+        self.assertIsNone(b["v"])                       # string "42" is not a number
+        self.assertEqual(self.total("/objects/t?v=42"), 0)      # query agrees
+        self.assertEqual(self.total("/objects/t?v__gt=0"), 0)   # no false matches
 
-    def test_number_to_string_recoerces(self):
+    def test_rewrite_sets_value_for_new_type(self):
         self.post("/schemas/objects", {"name": "s", "fields": {"v": "number"}})
         g = self.post("/objects/s", {"v": 50})[1]["_guid"]
         req("PUT", "/schemas/objects/s", {"merge": True, "fields": {"v": "string"}})
+        self.assertIsNone(self.get(f"/objects/s/{g}")[1]["v"])  # 50 not a string
+        req("PATCH", f"/objects/s/{g}", {"v": "fifty"})         # set for new type
         st, b, _ = self.get(f"/objects/s/{g}")
-        self.assertEqual(b["v"], "50")              # re-coerced to string
-        self.assertEqual(self.total("/objects/s?v=50"), 1)  # query agrees
+        self.assertEqual(b["v"], "fifty")
+        self.assertEqual(self.total("/objects/s?v=fifty"), 1)   # query agrees
 
 
 class TestDatetimeConsistency(Base):

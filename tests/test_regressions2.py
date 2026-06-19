@@ -153,16 +153,16 @@ class TestProjectionAwareQueries(Base):
         self.assertEqual(self.total("/objects/d?status=open"), 1)
         self.assertEqual(self.total("/objects/d?status__exists=true"), 1)
 
-    def test_stored_null_not_replaced_by_default_in_query(self):
-        # A present-but-null value must read as null AND query as null — the
-        # default fills only ABSENT keys, in both the read and query paths.
+    def test_unset_value_uses_default_consistently(self):
+        # A value that isn't a valid string for the field (here, an explicit
+        # null) is treated as unset -> the default, on BOTH read and query.
         self.post("/schemas/objects", {
             "name": "z",
             "fields": {"status": {"type": "string", "default": "open"}}})
         st, b, _ = self.post("/objects/z", {"status": None})  # explicit null
-        self.assertIsNone(b["status"])                        # read: null, not 'open'
-        self.assertEqual(self.total("/objects/z?status=open"), 0)   # query agrees
-        self.assertEqual(self.total("/objects/z?status__exists=false"), 1)
+        self.assertEqual(b["status"], "open")                 # read: default
+        self.assertEqual(self.total("/objects/z?status=open"), 1)   # query agrees
+        self.assertEqual(self.total("/objects/z?status__exists=true"), 1)
 
     def test_sort_uses_projected_defaults(self):
         self.post("/schemas/objects", {"name": "s", "fields": {"rank": "number"}})

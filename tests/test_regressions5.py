@@ -99,20 +99,20 @@ class TestDeepJson(Base):
         self.assertEqual(st, 200)
 
 
-class TestDropReaddMigration(Base):
-    def test_readd_at_different_type_recoerces(self):
+class TestDropReadd(Base):
+    def test_readd_at_different_type_reads_unset(self):
+        # number 5 left in the blob does not satisfy a boolean field -> unset
         self.post("/schemas/objects", {"name": "item", "fields": {"qty": "number"}})
         g = self.post("/objects/item", {"qty": 5})[1]["_guid"]
         self.post("/schemas/objects/item/delete-fields", {"fields": ["qty"]})
-        # re-add as a DIFFERENT type
         req("PUT", "/schemas/objects/item",
             {"merge": True, "fields": {"qty": "boolean"}})
         st, b, _ = self.get(f"/objects/item/{g}")
-        # number 5 cannot coerce to boolean -> dropped, not read back as 5
         self.assertIsNone(b["qty"])
 
     def test_readd_same_type_recovers_value(self):
         # the SKILL promise: dropping then re-adding the SAME type recovers data
+        # (the value still matches the type, so lazy projection returns it)
         self.post("/schemas/objects", {"name": "item", "fields": {"qty": "number"}})
         g = self.post("/objects/item", {"qty": 7})[1]["_guid"]
         self.post("/schemas/objects/item/delete-fields", {"fields": ["qty"]})
@@ -121,15 +121,17 @@ class TestDropReaddMigration(Base):
         st, b, _ = self.get(f"/objects/item/{g}")
         self.assertEqual(b["qty"], 7)
 
-    def test_readd_coercible_string_to_number(self):
+    def test_readd_string_value_at_number_reads_unset(self):
+        # a string "42" left over does not satisfy a number field -> unset,
+        # and the eq-query agrees (no cross-type coercion in lazy mode)
         self.post("/schemas/objects", {"name": "p", "fields": {"v": "string"}})
         g = self.post("/objects/p", {"v": "42"})[1]["_guid"]
         self.post("/schemas/objects/p/delete-fields", {"fields": ["v"]})
         req("PUT", "/schemas/objects/p", {"merge": True, "fields": {"v": "number"}})
         st, b, _ = self.get(f"/objects/p/{g}")
-        self.assertEqual(b["v"], 42)           # re-coerced to number
+        self.assertIsNone(b["v"])
         st, q, _ = self.get("/objects/p?v=42")
-        self.assertEqual(q["total"], 1)        # query agrees
+        self.assertEqual(q["total"], 0)
 
 
 if __name__ == "__main__":

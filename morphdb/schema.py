@@ -60,22 +60,15 @@ def upsert_object_schema(name, fields, merge=False):
             new_fields = merged
 
         if existing:
+            # Purely lazy: a schema edit (add/drop/retype) only rewrites this
+            # one metadata row, never the stored objects. A value left at the
+            # wrong type after a retype simply reads as unset (the field's
+            # default) until it is written again — see fieldtypes.project_data
+            # and objects._field_expr, which both apply that rule consistently.
             c.execute(
                 "UPDATE object_schemas SET fields = ?, updated_at = ? WHERE name = ?",
                 (json.dumps(new_fields), ts, name),
             )
-            # Re-coerce stored values to a field's new type (uncoercible ->
-            # dropped) so stored data stays consistent with the schema. This
-            # covers both an in-place retype and a drop+re-add at a different
-            # type (where the field leaves old_fields but its data lingers in
-            # blobs). Migration touches only rows that actually hold the field,
-            # so adding a brand-new field stays O(1).
-            migrate = [
-                f for f, d in new_fields.items()
-                if f not in old_fields or old_fields[f]["type"] != d["type"]
-            ]
-            if migrate:
-                _migrate_field_values(c, name, new_fields, migrate, ts)
         else:
             c.execute(
                 "INSERT INTO object_schemas (name, fields, created_at, updated_at) "
@@ -87,39 +80,6 @@ def upsert_object_schema(name, fields, merge=False):
             "SELECT * FROM object_schemas WHERE name = ?", (name,)
         ).fetchone()
     return _row_to_schema(row)
-
-
-def _migrate_field_values(c, name, fields, migrate, ts):
-    """Re-coerce stored values of the given fields to their current types.
-
-    Only rows that actually contain the field are scanned (via json_type), so
-    a brand-new field with no lingering data costs one indexable probe and no
-    rewrites. Field names are schema-validated identifiers, safe to interpolate.
-    """
-    from .fieldtypes import coerce_value
-
-    for f in migrate:
-        rows = c.execute(
-            f"SELECT guid, data FROM objects WHERE object_type = ? "
-            f"AND json_type(data, '$.{f}') IS NOT NULL",
-            (name,),
-        ).fetchall()
-        for r in rows:
-            blob = json.loads(r["data"])
-            if f not in blob or blob[f] is None:
-                continue
-            try:
-                new_val = coerce_value(f, blob[f], fields[f]["type"])
-            except Exception:
-                new_val = None  # uncoercible -> drop so it can't read/query wrong
-            if new_val is None:
-                blob.pop(f, None)
-            else:
-                blob[f] = new_val
-            c.execute(
-                "UPDATE objects SET data = ?, updated_at = ? WHERE guid = ?",
-                (json.dumps(blob), ts, r["guid"]),
-            )
 
 
 def get_object_schema(name, required=False):

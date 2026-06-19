@@ -182,24 +182,39 @@ def _safe_bind(v):
     return v
 
 
+# JSON storage types (per SQLite json_type) that satisfy each field type.
+_JSON_TYPES_FOR = {
+    "number": ("'integer'", "'real'"),
+    "boolean": ("'true'", "'false'"),
+    "string": ("'text'",),
+    "datetime": ("'text'",),
+}
+
+
 def _field_expr(field, fdef, params):
     """SQL expression for a field that mirrors read-time projection exactly.
 
-    Reads return the stored value as-is and fall back to the default only when
-    the key is *absent* from the blob. We reproduce that with json_type (which
-    is NULL for a missing path but 'null' for a stored JSON null), so a stored
-    null is never replaced by the default — keeping reads and queries in lockstep.
+    A stored value counts only if its JSON type matches the field's current type
+    (the same rule fieldtypes.project_data applies on read). Anything else — an
+    absent key, a stored null, or a value left over at the wrong type after a
+    retype — falls back to the field's default (or NULL). Reads and queries are
+    therefore always in lockstep, with no row rewrites.
 
     Any parameter the expression needs (the default) is appended to ``params``
     in evaluation order, so the caller must add comparison params *after*.
     """
     raw = f"json_extract(data, '$.{field}')"
+    jt = f"json_type(data, '$.{field}')"
+    ftype = fdef["type"]
+    if ftype == "json":
+        valid = f"{jt} IS NOT NULL"
+    else:
+        valid = f"{jt} IN ({','.join(_JSON_TYPES_FOR[ftype])})"
     default = fdef.get("default")
     if default is not None:
         params.append(_safe_bind(default))
-        return (f"(CASE WHEN json_type(data, '$.{field}') IS NULL "
-                f"THEN ? ELSE {raw} END)")
-    return raw
+        return f"(CASE WHEN {valid} THEN {raw} ELSE ? END)"
+    return f"(CASE WHEN {valid} THEN {raw} ELSE NULL END)"
 
 
 def _build_where(filters, fields):

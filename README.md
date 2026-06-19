@@ -190,10 +190,12 @@ allowed, `409` cardinality conflict, `413` body too large, `500` internal.
 
 ## Limitations
 
-- **Schema morphing.** Adding and removing fields is O(1) and never touches
-  stored rows. Changing a field's **type** triggers a one-time re-coercion of
-  that field's existing values to the new type (uncoercible values are dropped),
-  so stored data stays consistent with the schema and reads agree with queries.
+- **Schema morphing is purely lazy.** Every schema edit — add, drop, or retype
+  a field — rewrites only the one metadata row, never the stored objects (O(1)
+  regardless of data size). After a **type change**, a value still stored at the
+  old type simply reads as unset (the field's default, or null) until it's
+  written again; reads and queries apply this rule identically, so they always
+  agree. Re-adding a dropped field at the same type recovers its values.
 - **Integer magnitude.** Numbers are stored and read back exactly at any size.
   Filtering/sorting on integers beyond ±2⁶³ uses floating-point comparison (a
   SQLite limitation), so equality/range queries on such huge integers may be

@@ -189,18 +189,21 @@ class TestDefaultsQueryable(Base):
 
 
 class TestRetypeReadView(Base):
-    def test_retype_recoerces_stored_value(self):
-        # Changing a field's type re-coerces existing values to the new type, so
-        # the stored data stays consistent with the schema and reads agree with
-        # queries (a stored number becomes its string form on number->string).
+    def test_retype_reads_as_unset_until_rewritten(self):
+        # Purely lazy: a value left at the old type after a retype reads as unset
+        # (the default/null) rather than the wrong-typed value, and queries agree.
         self.post("/schemas/objects", {"name": "t", "fields": {"v": "number"}})
         st, b, _ = self.post("/objects/t", {"v": 42})
         guid = b["_guid"]
         req("PUT", "/schemas/objects/t", {"merge": True, "fields": {"v": "string"}})
         st, b2, _ = self.get(f"/objects/t/{guid}")
-        self.assertEqual(b2["v"], "42")  # re-coerced to the new type
+        self.assertIsNone(b2["v"])           # 42 is not a string -> unset
         st, q, _ = self.get("/objects/t?v=42")
-        self.assertEqual(q["total"], 1)  # query agrees with read
+        self.assertEqual(q["total"], 0)      # query agrees: not a string value
+        # writing a proper string sets it for the new type
+        req("PATCH", f"/objects/t/{guid}", {"v": "hi"})
+        st, b3, _ = self.get(f"/objects/t/{guid}")
+        self.assertEqual(b3["v"], "hi")
 
 
 class TestLimitOffset(Base):
