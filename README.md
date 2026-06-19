@@ -3,20 +3,115 @@
 **A coding-agent-friendly, multi-tenant backend for vibe-coded websites.**
 
 Reshape the data model as fast as your coding agent iterates — the frontend
-keeps calling the same small set of generic, deterministic endpoints.
+keeps calling the same small set of generic, deterministic endpoints. One
+process hosts many isolated apps (one per site), zero dependencies, backed by
+SQLite.
 
+## Install
+
+```bash
+pip install morphdb
 ```
-   you (the coding agent)              the frontend you build
-   ──────────────────────             ──────────────────────
-   reshape the schema freely    │     calls fixed generic endpoints
-   PUT    /schema/{type}        │     POST /objects/{type}
-   GET    /schema               │     GET  /objects/{type}?field=…
-   DELETE /schema/{type}        │     PATCH /objects/{type}/{guid}
-            │                                    │
-            └──────────────  MorphDB  ───────────┘
-            (one process · many apps · SQLite)
-                every call: X-App-Key: <app>
+
+Manage the local server with the `morphdb` CLI:
+
+```bash
+morphdb start          # run in the background (default 127.0.0.1:8787)
+morphdb status         # running? where? how many apps?
+morphdb stop           # stop it
+morphdb run            # run in the foreground instead (blocking)
+morphdb dashboard      # read-only web view of every app + its tables
+morphdb install-skill  # install the MorphDB Claude Code skill (into ~/.claude)
 ```
+
+Data lives in `~/.morphdb/data.sqlite3` (change it with `--db PATH` or
+`--db :memory:`; move the state dir with `$MORPHDB_HOME`). Server flags:
+`--host`, `--port`, `--db`. From a source checkout with no install, the
+foreground server is `python3 -m morphdb --port 8787 --db ./app.sqlite3`.
+
+To upgrade later: `pip install -U morphdb`, then `morphdb stop && morphdb start`
+to reload the new code (data in `~/.morphdb` is preserved across `0.1.x`).
+
+**Pointing clients at a hosted MorphDB.** Set `MORPHDB_HOST` to a full URL (e.g.
+`https://db.example.com`) and the schema CLI — plus any frontend that reads
+`window.MORPHDB_HOST` — calls that hosted server (running this same code) instead
+of localhost. It's a client-side setting that names a *backend*, not a database
+connection string.
+
+## Use it
+
+With the server running (`morphdb start`):
+
+```bash
+BASE=http://127.0.0.1:8787
+
+# 0. register an app; send its key as X-App-Key on every schema/object call
+curl -X POST $BASE/app -d '{"key":"my-site"}'
+H="X-App-Key: my-site"
+
+# 1. define types + a relation
+curl -X PUT $BASE/schema/user -H "$H" -d '{"fields":{"name":"string"}}'
+curl -X PUT $BASE/schema/task -H "$H" -d '{
+  "fields": {"title":"string","done":"boolean","priority":"number"},
+  "relations": {"assignee":{"to":"user","cardinality":"many_to_one","inverse":"tasks"}}}'
+
+# 2. create + read + query
+U=$(curl -s -X POST $BASE/objects/user -H "$H" -d '{"name":"Ann"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["_guid"])')
+curl -X POST $BASE/objects/task -H "$H" -d "{\"title\":\"buy milk\",\"priority\":2,\"assignee\":\"$U\"}"
+curl -H "$H" "$BASE/objects/task?done=false&sort=priority&order=desc"
+curl -H "$H" "$BASE/objects/user/$U"          # → includes "tasks":[…]
+
+# 3. morph the schema later — existing rows just gain the new field as null
+curl -X PUT $BASE/schema/task -H "$H" -d '{"merge":true,"fields":{"due":"datetime"}}'
+```
+
+See `examples/todo/index.html` for a complete single-file frontend backed by MorphDB.
+
+## Command-line interface
+
+`morphdb` runs the server as a **background service** — `start` launches it
+detached and hands your terminal straight back; `status` / `stop` find it again
+via a pid file under the state dir.
+
+| Command | What it does |
+| --- | --- |
+| `morphdb` or `morphdb start` | Start the server in the background (returns immediately). |
+| `morphdb status` | Is it running? URL, pid, health, and app count. |
+| `morphdb stop` | Stop the background server. |
+| `morphdb run` | Run in the **foreground** (blocking) instead — handy for watching logs. |
+| `morphdb dashboard` | Open a read-only web view of every app and its tables. |
+| `morphdb install-skill` | Install the bundled Claude Code skill (below). |
+| `morphdb --version` | Print the version. |
+
+`start` / `run` accept `--host` (default `127.0.0.1`), `--port` (default `8787`),
+and `--db` (a SQLite path or `:memory:`; default `~/.morphdb/data.sqlite3`).
+`dashboard` accepts `--port` (default `8788`), `--db`, and `--no-open`. Service
+state (pid, log, the default db) lives under `~/.morphdb` — relocate it with
+`$MORPHDB_HOME`.
+
+```bash
+morphdb start                          # background, default 127.0.0.1:8787
+morphdb start --port 9000 --db ./my.sqlite3
+morphdb status                         # -> running (pid …) at http://… [healthy]
+morphdb dashboard                      # opens http://127.0.0.1:8788
+morphdb stop
+morphdb run                            # foreground instead (Ctrl-C to quit)
+```
+
+### Install the Claude Code skill
+
+`install-skill` writes the bundled MorphDB skill into a Claude skills directory,
+so a coding agent automatically reaches for MorphDB when building a data-backed
+site:
+
+```bash
+morphdb install-skill                  # -> ~/.claude/skills/morphdb (all projects)
+morphdb install-skill --project        # -> ./.claude/skills/morphdb (current project)
+morphdb install-skill --project DIR    # -> DIR/.claude/skills/morphdb
+morphdb install-skill --force          # overwrite an existing copy
+```
+
+Restart Claude Code afterward to pick it up.
 
 ## Why
 
@@ -30,6 +125,19 @@ blobs reinterpreted through the **current** schema on every read (lazy
 invalidation). Adding, removing, or retyping a field is an O(1) metadata edit —
 **no migration, no row rewrite, no downtime** — regardless of how much data
 exists. Meanwhile the frontend talks to generic endpoints that never change.
+
+```
+   you (the coding agent)              the frontend you build
+   ──────────────────────             ──────────────────────
+   reshape the schema freely    │     calls fixed generic endpoints
+   PUT    /schema/{type}        │     POST /objects/{type}
+   GET    /schema               │     GET  /objects/{type}?field=…
+   DELETE /schema/{type}        │     PATCH /objects/{type}/{guid}
+            │                                    │
+            └──────────────  MorphDB  ───────────┘
+            (one process · many apps · SQLite)
+                every call: X-App-Key: <app>
+```
 
 ## The shape of it
 
@@ -98,112 +206,6 @@ curl -X PATCH $BASE/objects/user/<u> -d '{"tasks":["<t1>","<t2>"]}'
 
 > Scope: a localhost-scale developer tool. Not built for multi-tenant auth,
 > horizontal scale, or production durability guarantees.
-
-## Install / run
-
-```bash
-pip install morphdb
-```
-
-Manage the local server with the `morphdb` CLI:
-
-```bash
-morphdb start          # run in the background (default 127.0.0.1:8787)
-morphdb status         # running? where? how many apps?
-morphdb stop           # stop it
-morphdb run            # run in the foreground instead (blocking)
-morphdb dashboard      # read-only web view of every app + its tables
-morphdb install-skill  # install the MorphDB Claude Code skill (into ~/.claude)
-```
-
-Data lives in `~/.morphdb/data.sqlite3` (change it with `--db PATH` or
-`--db :memory:`; move the state dir with `$MORPHDB_HOME`). Server flags:
-`--host`, `--port`, `--db`. From a source checkout with no install, the
-foreground server is `python3 -m morphdb --port 8787 --db ./app.sqlite3`.
-
-Then: `curl http://127.0.0.1:8787/help` for a live reference.
-
-**Pointing clients at a hosted MorphDB.** Set `MORPHDB_HOST` to a full URL (e.g.
-`https://db.example.com`) and the schema CLI — plus any frontend that reads
-`window.MORPHDB_HOST` — calls that hosted server (running this same code) instead
-of localhost. It's a client-side setting that names a *backend*, not a database
-connection string.
-
-To upgrade later: `pip install -U morphdb`, then `morphdb stop && morphdb start`
-to reload the new code (data in `~/.morphdb` is preserved across `0.1.x`).
-
-## Command-line interface
-
-`morphdb` runs the server as a **background service** — `start` launches it
-detached and hands your terminal straight back; `status` / `stop` find it again
-via a pid file under the state dir.
-
-| Command | What it does |
-| --- | --- |
-| `morphdb` or `morphdb start` | Start the server in the background (returns immediately). |
-| `morphdb status` | Is it running? URL, pid, health, and app count. |
-| `morphdb stop` | Stop the background server. |
-| `morphdb run` | Run in the **foreground** (blocking) instead — handy for watching logs. |
-| `morphdb dashboard` | Open a read-only web view of every app and its tables. |
-| `morphdb install-skill` | Install the bundled Claude Code skill (below). |
-| `morphdb --version` | Print the version. |
-
-`start` / `run` accept `--host` (default `127.0.0.1`), `--port` (default `8787`),
-and `--db` (a SQLite path or `:memory:`; default `~/.morphdb/data.sqlite3`).
-`dashboard` accepts `--port` (default `8788`), `--db`, and `--no-open`. Service
-state (pid, log, the default db) lives under `~/.morphdb` — relocate it with
-`$MORPHDB_HOME`.
-
-```bash
-morphdb start                          # background, default 127.0.0.1:8787
-morphdb start --port 9000 --db ./my.sqlite3
-morphdb status                         # -> running (pid …) at http://… [healthy]
-morphdb dashboard                      # opens http://127.0.0.1:8788
-morphdb stop
-morphdb run                            # foreground instead (Ctrl-C to quit)
-```
-
-### Install the Claude Code skill
-
-`install-skill` writes the bundled MorphDB skill into a Claude skills directory,
-so a coding agent automatically reaches for MorphDB when building a data-backed
-site:
-
-```bash
-morphdb install-skill                  # -> ~/.claude/skills/morphdb (all projects)
-morphdb install-skill --project        # -> ./.claude/skills/morphdb (current project)
-morphdb install-skill --project DIR    # -> DIR/.claude/skills/morphdb
-morphdb install-skill --force          # overwrite an existing copy
-```
-
-Restart Claude Code afterward to pick it up.
-
-## Quickstart
-
-```bash
-BASE=http://127.0.0.1:8787
-
-# 0. register an app; send its key as X-App-Key on every schema/object call
-curl -X POST $BASE/app -d '{"key":"my-site"}'
-H="X-App-Key: my-site"
-
-# 1. define types + a relation
-curl -X PUT $BASE/schema/user -H "$H" -d '{"fields":{"name":"string"}}'
-curl -X PUT $BASE/schema/task -H "$H" -d '{
-  "fields": {"title":"string","done":"boolean","priority":"number"},
-  "relations": {"assignee":{"to":"user","cardinality":"many_to_one","inverse":"tasks"}}}'
-
-# 2. create + read + query
-U=$(curl -s -X POST $BASE/objects/user -H "$H" -d '{"name":"Ann"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["_guid"])')
-curl -X POST $BASE/objects/task -H "$H" -d "{\"title\":\"buy milk\",\"priority\":2,\"assignee\":\"$U\"}"
-curl -H "$H" "$BASE/objects/task?done=false&sort=priority&order=desc"
-curl -H "$H" "$BASE/objects/user/$U"          # → includes "tasks":[…]
-
-# 3. morph the schema later — existing rows just gain the new field as null
-curl -X PUT $BASE/schema/task -H "$H" -d '{"merge":true,"fields":{"due":"datetime"}}'
-```
-
-See `examples/todo/index.html` for a complete single-file frontend backed by MorphDB.
 
 ## Data model
 
