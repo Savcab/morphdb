@@ -3,6 +3,11 @@
 Zero dependencies — stdlib unittest + urllib only. The server runs in a daemon
 thread against an in-memory SQLite db that ``Base.setUp`` re-initializes before
 each test, so tests are isolated and order-independent (run serially).
+
+Multi-tenancy: every request needs an ``X-App-Key`` header. ``req`` attaches a
+default test app (``APP``) unless ``app`` is overridden (pass ``app=None`` to
+omit it, e.g. to test the missing-header path, or another key for isolation).
+``Base.setUp`` registers ``APP`` after each db reset.
 """
 
 import json
@@ -22,6 +27,7 @@ from morphdb.server import Handler, MorphServer   # noqa: E402
 _HTTPD = None
 PORT = None
 BASE = None
+APP = "testapp"          # default app key attached to requests
 
 
 def _free_port():
@@ -44,13 +50,23 @@ def ensure_server():
     threading.Thread(target=_HTTPD.serve_forever, daemon=True).start()
 
 
-def req(method, path, body=None, raw_body=None):
-    """Return (status, parsed_json_or_none, response). Never raises on HTTP error."""
+def register_app(key):
+    """Register an app key directly (no X-App-Key needed for POST /app)."""
+    return req("POST", "/app", {"key": key}, app=None)
+
+
+def req(method, path, body=None, raw_body=None, app=APP):
+    """Return (status, parsed_json_or_none, response). Never raises on HTTP error.
+
+    ``app`` is sent as the X-App-Key header; pass ``app=None`` to omit it.
+    """
     ensure_server()
     data = raw_body if raw_body is not None else (
         json.dumps(body).encode() if body is not None else None)
     r = urllib.request.Request(BASE + path, data=data, method=method)
     r.add_header("Content-Type", "application/json")
+    if app is not None:
+        r.add_header("X-App-Key", app)
     try:
         resp = urllib.request.urlopen(r, timeout=10)
         raw = resp.read()
@@ -64,6 +80,8 @@ class Base(unittest.TestCase):
     def setUp(self):
         ensure_server()
         db.init_db(":memory:")
+        st, b, _ = register_app(APP)
+        self.assertEqual(st, 201, b)
 
     # convenience verbs ---------------------------------------------------------
     def post(self, p, b=None):

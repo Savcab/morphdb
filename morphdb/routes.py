@@ -1,16 +1,23 @@
 """HTTP route definitions. Pure glue between the router and the logic modules.
 
-Two surfaces only:
+Three surfaces:
 
+* **Apps** (one MorphDB instance, many independent websites):
+  POST ``/app`` to register, DELETE ``/app/{key}`` to delete (cascades). There
+  is deliberately no "list apps" endpoint — you only address an app you already
+  hold the key for.
 * **Schema** (the coding agent reshapes the data model):
   GET/PUT/DELETE ``/schema`` and ``/schema/{type}``.
 * **Objects** (the frontend reads/writes data, including relations as fields):
   ``/objects/{type}`` and ``/object/{guid}``.
 
-Relations are not their own endpoints — they are declared inside a type's schema
-and read/written as fields on objects.
+Every schema and object request must carry its app via the ``X-App-Key`` header;
+``apps.require_app`` resolves and validates it. Relations are not their own
+endpoints — they are declared inside a type's schema and read/written as fields
+on objects.
 """
 
+from . import apps
 from . import objects as objs
 from . import schema as sch
 from .errors import bad_request
@@ -57,17 +64,39 @@ def help_(req):
     return {"endpoints": ENDPOINT_REFERENCE}
 
 
+# --- apps (register a website; delete one and everything under it) ------------
+
+
+@router.route("POST", "/app")
+def register_app(req):
+    body = _obj_body(req)
+    key = body.get("key")
+    if not key or not isinstance(key, str):
+        raise bad_request(
+            "Provide an app key: {\"key\": \"my-app\"}. Pick a unique, memorable "
+            "string and reuse it as the X-App-Key header on every request."
+        )
+    return 201, apps.register_app(key)
+
+
+@router.route("DELETE", "/app/{key}")
+def delete_app(req):
+    return apps.delete_app(req.params["key"])
+
+
 # --- schema (for the coding agent) --------------------------------------------
 
 
 @router.route("GET", "/schema")
 def full_schema(req):
-    return {"types": sch.list_type_docs()}
+    app = apps.require_app(req)
+    return {"types": sch.list_type_docs(app)}
 
 
 @router.route("GET", "/schema/{type}")
 def get_type(req):
-    return sch.get_type_doc(req.params["type"], required=True)
+    app = apps.require_app(req)
+    return sch.get_type_doc(app, req.params["type"], required=True)
 
 
 def _type_body(body):
@@ -93,14 +122,16 @@ def _type_body(body):
 
 @router.route("PUT", "/schema/{type}")
 def put_type(req):
+    app = apps.require_app(req)
     fields, relations, merge = _type_body(_obj_body(req))
-    return sch.upsert_type(req.params["type"], fields=fields,
+    return sch.upsert_type(app, req.params["type"], fields=fields,
                            relations=relations, merge=merge)
 
 
 @router.route("DELETE", "/schema/{type}")
 def delete_type(req):
-    return sch.delete_type(req.params["type"])
+    app = apps.require_app(req)
+    return sch.delete_type(app, req.params["type"])
 
 
 # --- objects (for the website) ------------------------------------------------
@@ -108,11 +139,13 @@ def delete_type(req):
 
 @router.route("POST", "/objects/{type}")
 def create_object(req):
-    return 201, objs.create_object(req.params["type"], _obj_body(req))
+    app = apps.require_app(req)
+    return 201, objs.create_object(app, req.params["type"], _obj_body(req))
 
 
 @router.route("GET", "/objects/{type}")
 def list_objects(req):
+    app = apps.require_app(req)
     q = dict(req.query)
     limit = q.pop("limit", objs.DEFAULT_LIMIT)
     offset = q.pop("offset", 0)
@@ -120,43 +153,58 @@ def list_objects(req):
     order = q.pop("order", "asc")
     # everything left in q is a field filter
     return objs.list_objects(
-        req.params["type"], filters=q, limit=limit, offset=offset,
+        app, req.params["type"], filters=q, limit=limit, offset=offset,
         sort=sort, order=order,
     )
 
 
 @router.route("GET", "/objects/{type}/{guid}")
 def get_object_typed(req):
-    return objs.get_object(req.params["guid"], object_type=req.params["type"])
+    app = apps.require_app(req)
+    return objs.get_object(app, req.params["guid"], object_type=req.params["type"])
 
 
 @router.route("PUT", "/objects/{type}/{guid}")
 def put_object(req):
-    return objs.upsert_object(req.params["type"], req.params["guid"],
+    app = apps.require_app(req)
+    return objs.upsert_object(app, req.params["type"], req.params["guid"],
                               _obj_body(req), partial=False)
 
 
 @router.route("PATCH", "/objects/{type}/{guid}")
 def patch_object(req):
-    return objs.upsert_object(req.params["type"], req.params["guid"],
+    app = apps.require_app(req)
+    return objs.upsert_object(app, req.params["type"], req.params["guid"],
                               _obj_body(req), partial=True)
 
 
 @router.route("DELETE", "/objects/{type}/{guid}")
 def delete_object(req):
-    return objs.delete_object(req.params["guid"])
+    app = apps.require_app(req)
+    return objs.delete_object(app, req.params["guid"])
 
 
 @router.route("GET", "/object/{guid}")
 def get_object_by_guid(req):
-    return objs.get_object(req.params["guid"])
+    app = apps.require_app(req)
+    return objs.get_object(app, req.params["guid"])
 
 
 # --- self-documenting reference (served at GET /help) -------------------------
 
 ENDPOINT_REFERENCE = {
+    "_apps": (
+        "One MorphDB instance hosts many apps (one per website). Register an app, "
+        "then send its key as the 'X-App-Key' header on EVERY schema and object "
+        "request. Apps are isolated: type names may repeat across apps. There is "
+        "no list-apps endpoint by design."
+    ),
+    "app endpoints (register / delete a website)": {
+        "POST /app": "Register an app. Body: {\"key\": \"my-app\"}. 409 if the key is taken. Remember the key — there is no way to list it back.",
+        "DELETE /app/{key}": "Delete an app and cascade-delete all its schemas, objects, relations, and edges.",
+    },
     "schema endpoints (you, the agent — reshape the data model)": {
-        "GET /schema": "View all type schemas (fields + relations + inverse relations).",
+        "GET /schema": "View all type schemas (fields + relations + inverse relations) for this app.",
         "GET /schema/{type}": "View one type's schema.",
         "PUT /schema/{type}": (
             "Create/replace a type. Body: {fields?, relations?, merge?} or a bare "
@@ -188,6 +236,9 @@ ENDPOINT_REFERENCE = {
         "write": "Set a relation like a field: {\"assignee\": \"<guid>\"} or {\"tags\": [\"<g1>\", \"<g2>\"]}. null/[] clears. Last write wins on conflict.",
         "symmetric": "Set symmetric:true (to == this type, one_to_one|many_to_many) for mutual links like friends — one shared label, edge counted once.",
     },
+    "headers": {
+        "X-App-Key": "Required on every schema and object request: the key of the app you registered. Missing -> 400, unknown -> 404.",
+    },
     "field_types": ["string", "number", "boolean", "json", "datetime"],
     "cardinalities": ["one_to_one", "one_to_many", "many_to_one", "many_to_many"],
     "filter_operators": ["eq (default)", "ne", "gt", "gte", "lt", "lte", "contains", "in", "exists"],
@@ -198,5 +249,6 @@ ENDPOINT_REFERENCE = {
         "number fields reject NaN/Infinity.",
         "schema edits are O(1) and lazy: after a field retype, an old-typed value reads as unset until rewritten.",
         "relations are stored as single-row edges and read/written as object fields; filtering is on fields, not relations.",
+        "relation targets must be objects in the same app; cross-app links are rejected.",
     ],
 }

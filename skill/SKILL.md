@@ -5,14 +5,17 @@ description: Spin up an instant, schema-fluid backend for a vibe-coded app. Use 
 
 # MorphDB — instant morphable backend for AI-built apps
 
-MorphDB is a single Python process (zero dependencies, backed by SQLite) with
-**two surfaces**:
+MorphDB is a single Python process (zero dependencies, backed by SQLite). One
+process hosts **many apps** — one per website you build — fully isolated from
+each other. Three surfaces:
 
-- **Schema** — the data model. *You*, the agent, reshape it with the
-  `morphdb_schema` CLI (don't hand-write curl for schema edits).
-- **Objects** — the data. The *frontend you build* reads/writes it over plain
-  HTTP (`fetch`/curl), because that frontend will call these endpoints directly
-  in the running app.
+- **App** — the tenant. Register one with a key you choose; every schema/object
+  call then carries that key in the `X-App-Key` header. You only ever touch the
+  app whose key you hold — there is no "list apps".
+- **Schema** — the data model *within your app*. *You*, the agent, reshape it
+  with the `morphdb_schema` CLI (don't hand-write curl for schema edits).
+- **Objects** — the data *within your app*. The *frontend you build* reads/writes
+  it over plain HTTP (`fetch`/curl), sending the same `X-App-Key`.
 
 Schema changes are **O(1) and instant** (lazy invalidation — no migrations, no
 rewriting rows), so you iterate the data model as fast as you iterate the UI,
@@ -49,12 +52,29 @@ types automatically (the inverse).
 System fields on every object: `_guid`, `_type`, `_created_at`, `_updated_at`.
 Field types: `string`, `number`, `boolean`, `json`, `datetime`.
 
+## 0. Register your app first (once)
+
+Everything is scoped to an app. Pick a unique key, register it, and **remember
+it** — there is no endpoint to read it back.
+
+```bash
+S="python3 skill/scripts/morphdb_schema.py"   # adjust path to the skill dir
+$S register-app my-cool-site                  # 409 if the key is already taken
+export MORPHDB_APP=my-cool-site               # the CLI sends this as X-App-Key
+```
+
+Persist the key where the project will find it again (the `MORPHDB_APP` env var
+for the CLI; a `window.MORPHDB_APP` constant in the frontend). Deleting an app
+cascades — `$S delete-app my-cool-site` wipes its schema, objects, and relations
+in one shot (other apps are untouched).
+
 ## 1. Reshape the schema with the CLI (you, the agent)
 
 Use `skill/scripts/morphdb_schema.py`. It talks to MorphDB at
 `http://127.0.0.1:8787` by default; override with the `MORPHDB_HOST` env var (a
-full URL, or a bare `host:port`) or the `--url` flag. Don't curl the schema
-endpoints by hand.
+full URL, or a bare `host:port`) or the `--url` flag. Every command runs against
+the app in `$MORPHDB_APP` (or `--app KEY`). Don't curl the schema endpoints by
+hand.
 
 ```bash
 S="python3 skill/scripts/morphdb_schema.py"      # adjust path to the skill dir
@@ -117,15 +137,17 @@ List returns `{objects, total, limit, offset}` (`total` = full filtered count).
 
 ```js
 // MorphDB object-endpoint client — paste into the frontend you build.
-// Defaults to localhost:8787. For a non-local deploy, set window.MORPHDB_HOST
-// (a full URL or bare host:port) in a <script> before this runs.
+// Defaults to localhost:8787. Set window.MORPHDB_HOST (full URL or host:port)
+// and window.MORPHDB_APP (your app key) in a <script> before this runs to
+// override. Every request sends the X-App-Key header.
 const MORPHDB_HOST = (typeof window !== "undefined" && window.MORPHDB_HOST) || "127.0.0.1:8787";
+const MORPHDB_APP  = (typeof window !== "undefined" && window.MORPHDB_APP)  || "my-cool-site"; // the key you registered
 const BASE = MORPHDB_HOST.includes("://") ? MORPHDB_HOST : "http://" + MORPHDB_HOST;
 
 async function db(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-App-Key": MORPHDB_APP },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = res.status === 204 ? null : await res.json();
@@ -157,22 +179,27 @@ await db("DELETE", `/objects/task/${task._guid}`);
 Quick manual poke from the shell (same endpoints):
 
 ```bash
-B=http://127.0.0.1:8787
-curl -X POST $B/objects/task -d '{"title":"buy milk","done":false}'
-curl "$B/objects/task?done=false&sort=priority&order=desc&limit=20"
+B=http://127.0.0.1:8787 ; H="X-App-Key: my-cool-site"
+curl -X POST $B/objects/task -H "$H" -d '{"title":"buy milk","done":false}'
+curl -H "$H" "$B/objects/task?done=false&sort=priority&order=desc&limit=20"
 ```
 
 ## Recipe for building an app
 
 1. Start MorphDB pointed at a project-local `.sqlite3` file.
-2. Define the object types and relations with the `morphdb_schema` CLI.
-3. Build the frontend (plain `fetch`) against `/objects/...` — relations are
+2. **Register an app** (`$S register-app <key>`), set `MORPHDB_APP`, and bake the
+   same key into the frontend (`window.MORPHDB_APP`) — it rides on `X-App-Key`.
+3. Define the object types and relations with the `morphdb_schema` CLI.
+4. Build the frontend (plain `fetch`) against `/objects/...` — relations are
    fields, so the UI just reads/writes guids.
-4. When the UI needs a new field or relation, run **one** CLI command — no data
+5. When the UI needs a new field or relation, run **one** CLI command — no data
    rewrite, no change to the frontend's endpoint URLs.
 
 ## Gotchas
 
+- Every schema/object call needs the `X-App-Key` header (the CLI and the FE
+  client above send it for you). Missing → 400; unknown key → 404. Register the
+  app first. Type names are unique only *within* an app — reuse across apps is fine.
 - Writing a field/relation not in the schema is rejected (400) — declare it
   first. Catches typos early.
 - Values are coerced to the declared type; `"yes"`/`1` → boolean `true`, numeric

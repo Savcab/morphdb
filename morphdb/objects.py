@@ -1,11 +1,15 @@
 """Object instances — the data the website reads and writes.
 
-Every object has a globally unique ``_guid`` and belongs to one object type.
-Raw field values are stored as a JSON blob and projected through the current
-schema on every read (lazy invalidation), so schema edits never touch rows.
-Relations are *not* in the blob — they live as edges (see :mod:`associations`)
-and are folded into the object body on read / exploded into edges on write, so
-the frontend treats a link like any other field.
+Every object has a globally unique ``_guid`` and belongs to one object type
+inside one **app**. Raw field values are stored as a JSON blob and projected
+through the current schema on every read (lazy invalidation), so schema edits
+never touch rows. Relations are *not* in the blob — they live as edges (see
+:mod:`associations`) and are folded into the object body on read / exploded into
+edges on write, so the frontend treats a link like any other field.
+
+Every read and write is scoped to the caller's app: a guid that belongs to a
+different app is treated as not found, so apps are fully isolated even though
+guids are globally unique.
 
 Output shape is flat with underscore-prefixed system fields:
 
@@ -44,21 +48,21 @@ def _project_fields(row, fields):
     return out
 
 
-def _project_full(row, fields, object_type):
+def _project_full(app, row, fields, object_type):
     """A single object's full body: system fields + fields + relation values."""
     out = _project_fields(row, fields)
-    rels = assoc.project_relations([row["guid"]], object_type)[row["guid"]]
+    rels = assoc.project_relations(app, [row["guid"]], object_type)[row["guid"]]
     out.update(rels)
     return out
 
 
-def _split_body(object_type, body, fields, c=None):
+def _split_body(app, object_type, body, fields, c=None):
     """Partition an incoming write into (field values, relation values).
 
     Keys that are neither a declared field nor a relation (and not a system
     ``_`` key echoed back from a read) are rejected, so typos surface early.
     """
-    rel_keys = assoc.relation_keys(object_type, c)
+    rel_keys = assoc.relation_keys(app, object_type, c)
     field_part, rel_part = {}, {}
     for k, v in body.items():
         if k in fields:
@@ -79,54 +83,57 @@ def _split_body(object_type, body, fields, c=None):
 # --- writes -------------------------------------------------------------------
 
 
-def create_object(object_type, data):
-    schema = get_object_schema(object_type, required=True)
+def create_object(app, object_type, data):
+    schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     guid = new_guid(object_type)
     ts = now_iso()
     with db.transaction() as c:
-        field_part, rel_part = _split_body(object_type, data or {}, fields, c)
+        field_part, rel_part = _split_body(app, object_type, data or {}, fields, c)
         clean = validate_against_schema(field_part, fields, partial=False)
         c.execute(
-            "INSERT INTO objects (guid, object_type, data, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (guid, object_type, json.dumps(clean), ts, ts),
+            "INSERT INTO objects (guid, app, object_type, data, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (guid, app, object_type, json.dumps(clean), ts, ts),
         )
         if rel_part:
-            assoc.apply_relation_writes(c, guid, object_type, rel_part)
+            assoc.apply_relation_writes(c, app, guid, object_type, rel_part)
         row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
-    return _project_full(row, fields, object_type)
+    return _project_full(app, row, fields, object_type)
 
 
-def upsert_object(object_type, guid, data, partial=True):
-    """Create-or-update an object at a caller-supplied guid.
+def upsert_object(app, object_type, guid, data, partial=True):
+    """Create-or-update an object at a caller-supplied guid, within ``app``.
 
     Fields follow ``partial``: PATCH (partial=True) merges the given fields, PUT
     (partial=False) replaces the field set (and re-checks required fields).
     Relations are always patch-style: only relation keys present in the body are
     touched; each present relation's value becomes its full set (set-as-field).
     """
-    schema = get_object_schema(object_type, required=True)
+    schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     ts = now_iso()
     with db.transaction() as c:
         existing = c.execute(
             "SELECT * FROM objects WHERE guid = ?", (guid,)
         ).fetchone()
+        if existing is not None and existing["app"] != app:
+            # The guid is owned by another app; from here it simply doesn't exist.
+            raise not_found(f"No object with guid '{guid}'.")
         if existing is not None and existing["object_type"] != object_type:
             raise bad_request(
                 f"Object '{guid}' already exists with type "
                 f"'{existing['object_type']}', not '{object_type}'."
             )
 
-        field_part, rel_part = _split_body(object_type, data or {}, fields, c)
+        field_part, rel_part = _split_body(app, object_type, data or {}, fields, c)
         clean = validate_against_schema(field_part, fields, partial=partial)
 
         if existing is None:
             c.execute(
-                "INSERT INTO objects (guid, object_type, data, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (guid, object_type, json.dumps(clean), ts, ts),
+                "INSERT INTO objects (guid, app, object_type, data, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (guid, app, object_type, json.dumps(clean), ts, ts),
             )
         else:
             blob = json.loads(existing["data"]) if partial else {}
@@ -136,21 +143,23 @@ def upsert_object(object_type, guid, data, partial=True):
                 (json.dumps(blob), ts, guid),
             )
         if rel_part:
-            assoc.apply_relation_writes(c, guid, object_type, rel_part)
+            assoc.apply_relation_writes(c, app, guid, object_type, rel_part)
         row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
-    return _project_full(row, fields, object_type)
+    return _project_full(app, row, fields, object_type)
 
 
-def delete_object(guid):
+def delete_object(app, guid):
     with db.transaction() as c:
-        row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
+        row = c.execute(
+            "SELECT * FROM objects WHERE app = ? AND guid = ?", (app, guid)
+        ).fetchone()
         if row is None:
             raise not_found(f"No object with guid '{guid}'.")
-        c.execute("DELETE FROM objects WHERE guid = ?", (guid,))
+        c.execute("DELETE FROM objects WHERE app = ? AND guid = ?", (app, guid))
         # Remove this object's edges only; neighbor objects are left intact.
         c.execute(
-            "DELETE FROM associations WHERE from_guid = ? OR to_guid = ?",
-            (guid, guid),
+            "DELETE FROM associations WHERE app = ? AND (from_guid = ? OR to_guid = ?)",
+            (app, guid, guid),
         )
     return {"deleted": guid}
 
@@ -158,9 +167,9 @@ def delete_object(guid):
 # --- reads --------------------------------------------------------------------
 
 
-def get_object(guid, object_type=None):
+def get_object(app, guid, object_type=None):
     row = db.conn().execute(
-        "SELECT * FROM objects WHERE guid = ?", (guid,)
+        "SELECT * FROM objects WHERE app = ? AND guid = ?", (app, guid)
     ).fetchone()
     if row is None:
         raise not_found(f"No object with guid '{guid}'.")
@@ -168,8 +177,8 @@ def get_object(guid, object_type=None):
         raise not_found(
             f"Object '{guid}' is of type '{row['object_type']}', not '{object_type}'."
         )
-    schema = get_object_schema(row["object_type"], required=True)
-    return _project_full(row, schema["fields"], row["object_type"])
+    schema = get_object_schema(app, row["object_type"], required=True)
+    return _project_full(app, row, schema["fields"], row["object_type"])
 
 
 def _parse_filter_key(key, fields):
@@ -315,14 +324,14 @@ def _build_where(filters, fields):
     return clauses, params
 
 
-def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
+def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
                  sort=None, order="asc"):
-    schema = get_object_schema(object_type, required=True)
+    schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     filters = filters or {}
 
-    clauses = ["object_type = ?"]
-    params = [object_type]
+    clauses = ["app = ?", "object_type = ?"]
+    params = [app, object_type]
     fc, fp = _build_where(filters, fields)
     clauses.extend(fc)
     params.extend(fp)
@@ -374,7 +383,7 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
     ).fetchall()
 
     projected = [_project_fields(r, fields) for r in rows]
-    relmap = assoc.project_relations([r["guid"] for r in rows], object_type)
+    relmap = assoc.project_relations(app, [r["guid"] for r in rows], object_type)
     for p in projected:
         p.update(relmap[p["_guid"]])
 

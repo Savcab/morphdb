@@ -113,6 +113,7 @@ class TestHttpLayer(unittest.TestCase):
         ensure_server()
         from morphdb import db
         db.init_db(":memory:")
+        harness.register_app(harness.APP)
         req("PUT", "/schema/task", {"fields": {"title": "string"}})
 
     def test_head_and_options(self):

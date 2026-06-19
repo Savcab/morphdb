@@ -33,7 +33,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods",
                          "GET, POST, PUT, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers",
-                         "Content-Type, Authorization")
+                         "Content-Type, Authorization, X-App-Key")
         self.send_header("Access-Control-Max-Age", "86400")
 
     def _send_json(self, status, payload):

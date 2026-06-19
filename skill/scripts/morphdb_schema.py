@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
-"""morphdb_schema — a tiny CLI for editing a MorphDB schema.
+"""morphdb_schema — a tiny CLI for managing apps and editing a MorphDB schema.
 
 The coding agent reshapes the data model through this script instead of
 hand-writing curl against the schema endpoints. It is a thin, zero-dependency
-wrapper over `GET/PUT/DELETE /schema[/{type}]` on a running MorphDB server.
+wrapper over the MorphDB HTTP API.
+
+Multi-tenancy: one MorphDB instance hosts many apps (one per website). Register
+an app once with a key you pick, remember that key, and pass it to every schema
+command via --app or $MORPHDB_APP — it is sent as the X-App-Key header. There is
+no way to list apps back, so do not lose the key.
 
 (Reading and writing actual object *data* is intentionally not here — the
-frontend you build will call `/objects/...` over HTTP directly, so use curl for
-those while developing.)
+frontend you build will call `/objects/...` over HTTP directly, sending the same
+X-App-Key header, so use curl for those while developing.)
 
 Usage:
-    python3 morphdb_schema.py [--url URL] <command> ...
+    python3 morphdb_schema.py [--url URL] [--app KEY] <command> ...
 
-    list                          Show every type (fields + relations).
+    register-app <key>            Create an app (key = your choice, must be unique).
+    delete-app   <key>            Delete an app and everything under it (cascade!).
+
+    list                          Show every type in the app (fields + relations).
     show   <type>                 Show one type's schema.
 
     add-field    <type> <name> <ftype> [--default V] [--required]
@@ -28,6 +36,7 @@ Usage:
 
 Host defaults to http://127.0.0.1:8787; override with $MORPHDB_HOST (a full URL,
 or a bare host[:port] which assumes http) or the --url flag.
+App key comes from --app or $MORPHDB_APP (not needed for register-app/delete-app).
 
 Field types: string, number, boolean, json, datetime.
 Cardinalities: one_to_one, one_to_many, many_to_one, many_to_many.
@@ -42,6 +51,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+
 
 def _default_base():
     """Where MorphDB is hosted: $MORPHDB_HOST, else localhost:8787.
@@ -58,10 +68,12 @@ def _default_base():
 DEFAULT_URL = _default_base()
 
 
-def _request(url, method, path, body=None):
+def _request(url, method, path, body=None, app=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url.rstrip("/") + path, data=data, method=method)
     req.add_header("Content-Type", "application/json")
+    if app:
+        req.add_header("X-App-Key", app)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read()
@@ -77,12 +89,12 @@ def _request(url, method, path, body=None):
         sys.exit(f"cannot reach MorphDB at {url} ({e.reason}). Is the server running?")
 
 
-def _get_type(url, type_name):
-    return _request(url, "GET", f"/schema/{type_name}")
+def _get_type(url, app, type_name):
+    return _request(url, "GET", f"/schema/{type_name}", app=app)
 
 
-def _put_type(url, type_name, doc):
-    return _request(url, "PUT", f"/schema/{type_name}", doc)
+def _put_type(url, app, type_name, doc):
+    return _request(url, "PUT", f"/schema/{type_name}", doc, app=app)
 
 
 def _pretty(obj):
@@ -92,12 +104,23 @@ def _pretty(obj):
 # --- commands -----------------------------------------------------------------
 
 
-def cmd_list(url, args):
-    _pretty(_request(url, "GET", "/schema"))
+def cmd_register_app(url, app, args):
+    _pretty(_request(url, "POST", "/app", {"key": args.key}))
+    print(f"\nApp '{args.key}' registered. Use it on every schema/object request:\n"
+          f"  export MORPHDB_APP={args.key}\n"
+          f"  (frontend: send it as the 'X-App-Key' header)", file=sys.stderr)
 
 
-def cmd_show(url, args):
-    _pretty(_get_type(url, args.type))
+def cmd_delete_app(url, app, args):
+    _pretty(_request(url, "DELETE", f"/app/{args.key}"))
+
+
+def cmd_list(url, app, args):
+    _pretty(_request(url, "GET", "/schema", app=app))
+
+
+def cmd_show(url, app, args):
+    _pretty(_get_type(url, app, args.type))
 
 
 def _parse_default(raw):
@@ -112,7 +135,7 @@ def _parse_default(raw):
         return raw
 
 
-def cmd_add_field(url, args):
+def cmd_add_field(url, app, args):
     fdef = {"type": args.ftype}
     if args.default is not None:
         fdef["default"] = _parse_default(args.default)
@@ -120,21 +143,21 @@ def cmd_add_field(url, args):
         fdef["required"] = True
     # merge:true so existing fields/relations are untouched.
     doc = {"merge": True, "fields": {args.name: fdef}}
-    _pretty(_put_type(url, args.type, doc))
+    _pretty(_put_type(url, app, args.type, doc))
 
 
-def cmd_drop_field(url, args):
-    current = _get_type(url, args.type)
+def cmd_drop_field(url, app, args):
+    current = _get_type(url, app, args.type)
     fields = current.get("fields", {})
     if args.name not in fields:
         sys.exit(f"error: type '{args.type}' has no field '{args.name}'.")
     fields.pop(args.name)
     # Replace fields (merge:false) with the remaining set; omit 'relations' so
     # they are left untouched.
-    _pretty(_put_type(url, args.type, {"merge": False, "fields": fields}))
+    _pretty(_put_type(url, app, args.type, {"merge": False, "fields": fields}))
 
 
-def cmd_add_relation(url, args):
+def cmd_add_relation(url, app, args):
     rel = {"to": args.to, "cardinality": args.cardinality}
     if args.symmetric:
         rel["symmetric"] = True
@@ -148,11 +171,11 @@ def cmd_add_relation(url, args):
     if args.inverse_description:
         rel["inverse_description"] = args.inverse_description
     doc = {"merge": True, "relations": {args.name: rel}}
-    _pretty(_put_type(url, args.type, doc))
+    _pretty(_put_type(url, app, args.type, doc))
 
 
-def cmd_drop_relation(url, args):
-    current = _get_type(url, args.type)
+def cmd_drop_relation(url, app, args):
+    current = _get_type(url, app, args.type)
     relations = current.get("relations", {})
     if args.name not in relations:
         inverse = current.get("inverse_relations", {})
@@ -167,7 +190,7 @@ def cmd_drop_relation(url, args):
     # replace (merge:false) so the named one is pruned along with its edges.
     relations.pop(args.name)
     remaining = {k: _authoring_def(v) for k, v in relations.items()}
-    _pretty(_put_type(url, args.type, {"merge": False, "relations": remaining}))
+    _pretty(_put_type(url, app, args.type, {"merge": False, "relations": remaining}))
 
 
 def _authoring_def(view):
@@ -184,23 +207,31 @@ def _authoring_def(view):
     return out
 
 
-def cmd_delete_type(url, args):
-    _pretty(_request(url, "DELETE", f"/schema/{args.type}"))
+def cmd_delete_type(url, app, args):
+    _pretty(_request(url, "DELETE", f"/schema/{args.type}", app=app))
 
 
-def cmd_set(url, args):
+def cmd_set(url, app, args):
     try:
         doc = json.loads(args.json)
     except ValueError as e:
         sys.exit(f"error: --json is not valid JSON ({e}).")
-    _pretty(_put_type(url, args.type, doc))
+    _pretty(_put_type(url, app, args.type, doc))
 
 
 def build_parser():
     p = argparse.ArgumentParser(prog="morphdb_schema", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--url", default=DEFAULT_URL, help=f"MorphDB base URL (default {DEFAULT_URL})")
+    p.add_argument("--app", default=None,
+                   help="App key (default $MORPHDB_APP). Required except for register-app/delete-app.")
     sub = p.add_subparsers(dest="command", required=True)
+
+    # app management — no app context needed
+    sp = sub.add_parser("register-app"); sp.add_argument("key")
+    sp.set_defaults(func=cmd_register_app, needs_app=False)
+    sp = sub.add_parser("delete-app"); sp.add_argument("key")
+    sp.set_defaults(func=cmd_delete_app, needs_app=False)
 
     sub.add_parser("list").set_defaults(func=cmd_list)
 
@@ -241,7 +272,13 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    args.func(args.url, args)
+    app = (args.app or os.environ.get("MORPHDB_APP") or "").strip() or None
+    if getattr(args, "needs_app", True) and not app:
+        sys.exit(
+            "error: no app key. Register one with `register-app <key>`, then set "
+            "--app <key> or export MORPHDB_APP=<key>."
+        )
+    args.func(args.url, app, args)
 
 
 if __name__ == "__main__":

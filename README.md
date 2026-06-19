@@ -14,7 +14,8 @@ keeps calling the same small set of generic, deterministic endpoints.
    DELETE /schema/{type}        │     PATCH /objects/{type}/{guid}
             │                                    │
             └──────────────  MorphDB  ───────────┘
-                       (one process, SQLite)
+            (one process · many apps · SQLite)
+                every call: X-App-Key: <app>
 ```
 
 ## Why
@@ -32,13 +33,20 @@ exists. Meanwhile the frontend talks to generic endpoints that never change.
 
 ## The shape of it
 
-There are just **two sets of endpoints**:
+One MorphDB process hosts **many apps** (one per website), fully isolated from
+each other. Every schema and object request carries its app in the `X-App-Key`
+header. There are three sets of endpoints:
 
+- **App endpoints** — the tenant: `POST /app` to register a key you choose,
+  `DELETE /app/{key}` to delete it and cascade away everything under it. There
+  is no "list apps" — you only address an app whose key you already hold.
 - **Schema endpoints** — the type model: `GET/PUT/DELETE /schema[/{type}]`.
   You, the agent, reshape these constantly (drive them with the schema CLI).
 - **Object endpoints** — the data: `/objects/{type}` and `/object/{guid}`.
   Your frontend reads and writes here, and they never change as you morph the
   schema.
+
+Within an app, type names are unique; the same name may be reused in another app.
 
 A **type** is one document with `fields` (raw values) and `relations` (links to
 other types). Relations are declared once but read and written **like ordinary
@@ -83,6 +91,7 @@ curl -X PATCH $BASE/objects/user/<u> -d '{"tasks":["<t1>","<t2>"]}'
 - **Instant schema morphing** with lazy invalidation — O(1) regardless of data size.
 - **Relations as fields** — four cardinalities, bidirectional, declared once, read/written on the object.
 - **Query layer**: filter operators, sorting, pagination — all generic.
+- **Multi-tenant by app** — one process backs many isolated sites; every call is scoped by an `X-App-Key`, and deleting an app cascades away all its data.
 - **Wide-open CORS** so any frontend origin can call it in dev.
 - **A Claude Code skill** (`skill/SKILL.md`) with a schema CLI so the agent edits the model without hand-writing curl.
 
@@ -114,20 +123,24 @@ Then: `curl http://127.0.0.1:8787/help` for a live reference.
 ```bash
 BASE=http://127.0.0.1:8787
 
+# 0. register an app; send its key as X-App-Key on every schema/object call
+curl -X POST $BASE/app -d '{"key":"my-site"}'
+H="X-App-Key: my-site"
+
 # 1. define types + a relation
-curl -X PUT $BASE/schema/user -d '{"fields":{"name":"string"}}'
-curl -X PUT $BASE/schema/task -d '{
+curl -X PUT $BASE/schema/user -H "$H" -d '{"fields":{"name":"string"}}'
+curl -X PUT $BASE/schema/task -H "$H" -d '{
   "fields": {"title":"string","done":"boolean","priority":"number"},
   "relations": {"assignee":{"to":"user","cardinality":"many_to_one","inverse":"tasks"}}}'
 
 # 2. create + read + query
-U=$(curl -s -X POST $BASE/objects/user -d '{"name":"Ann"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["_guid"])')
-curl -X POST $BASE/objects/task -d "{\"title\":\"buy milk\",\"priority\":2,\"assignee\":\"$U\"}"
-curl "$BASE/objects/task?done=false&sort=priority&order=desc"
-curl "$BASE/objects/user/$U"          # → includes "tasks":[…]
+U=$(curl -s -X POST $BASE/objects/user -H "$H" -d '{"name":"Ann"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["_guid"])')
+curl -X POST $BASE/objects/task -H "$H" -d "{\"title\":\"buy milk\",\"priority\":2,\"assignee\":\"$U\"}"
+curl -H "$H" "$BASE/objects/task?done=false&sort=priority&order=desc"
+curl -H "$H" "$BASE/objects/user/$U"          # → includes "tasks":[…]
 
 # 3. morph the schema later — existing rows just gain the new field as null
-curl -X PUT $BASE/schema/task -d '{"merge":true,"fields":{"due":"datetime"}}'
+curl -X PUT $BASE/schema/task -H "$H" -d '{"merge":true,"fields":{"due":"datetime"}}'
 ```
 
 See `examples/todo/index.html` for a complete single-file frontend backed by MorphDB.
@@ -136,6 +149,7 @@ See `examples/todo/index.html` for a complete single-file frontend backed by Mor
 
 | Concept | What it is |
 | --- | --- |
+| **App** | A tenant: one website's isolated schema + data, addressed by a key sent in the `X-App-Key` header. |
 | **Type** | A named schema: `fields` (raw values) + `relations` (links). The thing you morph. |
 | **Object** | An instance: a `_guid`, a type, field values (JSON blob) + relation guids (edges). |
 | **Relation** | A typed link with a cardinality, declared on one type, visible (as the inverse) on both. |
@@ -182,11 +196,21 @@ whole filter, not just the returned page. Default `limit` is 100 (max 1000).
 
 ## API reference
 
+Every schema and object request must send the app key as the `X-App-Key` header
+(missing → `400`, unknown → `404`); the app endpoints below are the exception.
+
+### App endpoints (one instance, many sites)
+
+| Method & path | Body | Description |
+| --- | --- | --- |
+| `POST /app` | `{key}` | Register an app under a key you choose. `409` if taken. No list endpoint — remember the key. |
+| `DELETE /app/{key}` | — | Delete an app and cascade-delete all its schemas, objects, relations, and edges. |
+
 ### Schema endpoints (you, the agent)
 
 | Method & path | Body | Description |
 | --- | --- | --- |
-| `GET /schema` | — | All type schemas (fields + relations + inverse relations). |
+| `GET /schema` | — | All type schemas (fields + relations + inverse relations) for the app. |
 | `GET /schema/{type}` | — | One type's schema. |
 | `PUT /schema/{type}` | `{fields?, relations?, merge?}` or a bare field map | Create/replace a type. `merge:true` adds without dropping. Absent `fields`/`relations` are left untouched. |
 | `DELETE /schema/{type}` | — | Delete a type, its objects, and edges touching them. Neighbor objects survive. |
@@ -231,6 +255,11 @@ allowed, `413` body too large, `500` internal.
   traversal queries both endpoint columns (both indexed). This avoids the
   dual-write hazard of mirrored rows while letting an object surface all of its
   links in one read.
+- **Apps are the tenant boundary.** Every row carries an `app` foreign key
+  (`ON DELETE CASCADE`, with `PRAGMA foreign_keys=ON`); all reads and writes
+  filter by it, so apps can reuse type names and never see each other's data,
+  and deleting an app is a single cascading delete. Type identity is the
+  `(app, name)` pair, and relation targets must live in the same app.
 - **One connection, one lock.** All access is serialized through a single
   SQLite connection guarded by a reentrant lock — simple and correct at
   localhost scale; threaded request handling stays safe.
@@ -251,6 +280,10 @@ allowed, `413` body too large, `500` internal.
   imprecise even though reads are exact.
 - **HTTP verbs.** Only `GET/POST/PUT/PATCH/DELETE/OPTIONS/HEAD` are part of the
   API; other verbs (e.g. `TRACE`) get the stdlib's plain `501`.
+- **App keys are namespaces, not secrets.** The `X-App-Key` is an identifier in
+  a plain header — it isolates data between apps but is **not** authentication.
+  Anyone who knows a key can use that app; the absence of a list-apps endpoint is
+  light obscurity, not a security boundary.
 - Scope is a localhost-scale developer tool — no auth, no horizontal scale.
 
 ## Development

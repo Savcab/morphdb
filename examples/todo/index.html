@@ -58,6 +58,7 @@
 const BASE = location.hostname
   ? `${location.protocol}//${location.hostname}:8787`
   : "http://127.0.0.1:8787";
+const APP = "todo-demo";   // this site's MorphDB app key (sent as X-App-Key)
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -65,7 +66,7 @@ const err = (m) => { $("err").textContent = m || ""; };
 async function api(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-App-Key": APP },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = res.status === 204 ? null : await res.json();
@@ -73,8 +74,19 @@ async function api(method, path, body) {
   return data;
 }
 
-// Self-bootstrapping: ensure the schema exists on load. Idempotent — this is the
-// recommended pattern so the app sets up its own backend. Morph it any time.
+// Self-bootstrapping: register this site's app, then ensure its schema exists.
+// Registering an app that already exists returns 409, which we ignore. This is
+// the recommended pattern — the site sets up its own backend on first load.
+async function ensureApp() {
+  try {
+    await fetch(BASE + "/app", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: APP }),
+    });             // 409 (already registered) is fine — we don't inspect it
+  } catch (_) { /* connection errors surface on the first real call below */ }
+}
+
 async function ensureSchema() {
   await api("PUT", "/schema/todo", {
     merge: true,
@@ -147,7 +159,7 @@ $("hideDone").onchange = load;
 $("sort").onchange = load;
 
 (async () => {
-  try { await ensureSchema(); }
+  try { await ensureApp(); await ensureSchema(); }
   catch (e) { err("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")"); return; }
   load();
 })();
