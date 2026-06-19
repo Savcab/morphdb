@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MorphDB Todo — example</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    max-width: 640px; margin: 40px auto; padding: 0 16px;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0; }
+  .sub { color: #888; margin-top: 4px; }
+  .bar { display: flex; gap: 8px; margin: 20px 0; }
+  input[type=text] { flex: 1; padding: 10px 12px; border: 1px solid #8884; border-radius: 8px; font: inherit; }
+  select, button { padding: 10px 12px; border: 1px solid #8884; border-radius: 8px; font: inherit; background: #8881; cursor: pointer; }
+  button.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+  ul { list-style: none; padding: 0; }
+  li { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #8883; border-radius: 8px; margin-bottom: 8px; }
+  li.done .title { text-decoration: line-through; color: #999; }
+  .title { flex: 1; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #8882; }
+  .del { color: #ef4444; border-color: #ef444466; }
+  .filters { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .err { color: #ef4444; min-height: 1.4em; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>MorphDB Todo</h1>
+  <div class="sub">A vibe-coded frontend with a real, morphable backend. No build step.</div>
+
+  <div class="bar">
+    <input id="title" type="text" placeholder="What needs doing?" autofocus />
+    <select id="priority">
+      <option value="1">Low</option>
+      <option value="2" selected>Med</option>
+      <option value="3">High</option>
+    </select>
+    <button class="primary" id="add">Add</button>
+  </div>
+
+  <div class="filters">
+    <label><input type="checkbox" id="hideDone" /> hide done</label>
+    <span style="flex:1"></span>
+    <select id="sort">
+      <option value="_created_at">newest</option>
+      <option value="priority">priority</option>
+      <option value="title">title</option>
+    </select>
+  </div>
+
+  <div class="err" id="err"></div>
+  <ul id="list"></ul>
+
+<script>
+const BASE = location.hostname
+  ? `${location.protocol}//${location.hostname}:8787`
+  : "http://127.0.0.1:8787";
+
+const $ = (id) => document.getElementById(id);
+const err = (m) => { $("err").textContent = m || ""; };
+
+async function api(method, path, body) {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = res.status === 204 ? null : await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+// Self-bootstrapping: ensure the schema exists on load. Idempotent — this is the
+// recommended pattern so the app sets up its own backend. Morph it any time.
+async function ensureSchema() {
+  await api("PUT", "/schemas/objects/todo", {
+    merge: true,
+    fields: { title: "string", done: "boolean", priority: "number" },
+  });
+}
+
+async function load() {
+  err("");
+  try {
+    const sort = $("sort").value;
+    const order = sort === "priority" ? "desc" : (sort === "title" ? "asc" : "desc");
+    let q = `/objects/todo?sort=${sort}&order=${order}&limit=200`;
+    if ($("hideDone").checked) q += "&done=false";
+    const { objects } = await api("GET", q);
+    render(objects);
+  } catch (e) { err(e.message); }
+}
+
+function render(items) {
+  const list = $("list");
+  list.innerHTML = "";
+  if (!items.length) {
+    list.innerHTML = '<li style="justify-content:center;color:#999">Nothing yet. Add something above.</li>';
+    return;
+  }
+  const labels = { 1: "low", 2: "med", 3: "high" };
+  for (const it of items) {
+    const li = document.createElement("li");
+    if (it.done) li.classList.add("done");
+    li.innerHTML = `
+      <input type="checkbox" ${it.done ? "checked" : ""} />
+      <span class="title"></span>
+      <span class="pill"></span>
+      <button class="del">✕</button>`;
+    li.querySelector(".title").textContent = it.title;
+    li.querySelector(".pill").textContent = labels[it.priority] || "med";
+    li.querySelector("input").onchange = (e) =>
+      update(it._guid, { done: e.target.checked });
+    li.querySelector(".del").onclick = () => remove(it._guid);
+    list.appendChild(li);
+  }
+}
+
+async function add() {
+  const title = $("title").value.trim();
+  if (!title) return;
+  try {
+    await api("POST", "/objects/todo", {
+      title, done: false, priority: Number($("priority").value),
+    });
+    $("title").value = "";
+    load();
+  } catch (e) { err(e.message); }
+}
+
+async function update(guid, patch) {
+  try { await api("PATCH", `/objects/todo/${guid}`, patch); load(); }
+  catch (e) { err(e.message); }
+}
+
+async function remove(guid) {
+  try { await api("DELETE", `/objects/todo/${guid}`); load(); }
+  catch (e) { err(e.message); }
+}
+
+$("add").onclick = add;
+$("title").addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+$("hideDone").onchange = load;
+$("sort").onchange = load;
+
+(async () => {
+  try { await ensureSchema(); }
+  catch (e) { err("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")"); return; }
+  load();
+})();
+</script>
+</body>
+</html>

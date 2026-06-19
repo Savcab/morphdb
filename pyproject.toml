@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "morphdb"
+version = "0.1.0"
+description = "A schema-fluid, API-stable database for AI-generated apps. Reshape the schema as fast as your coding agent iterates; the frontend keeps calling the same generic endpoints."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "morphdb contributors" }]
+keywords = ["database", "ai", "agent", "schema", "sqlite", "backend", "vibe-coding"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Database",
+]
+# Zero runtime dependencies — only the Python standard library.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+morphdb = "morphdb.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/morphdb/morphdb"
+
+[tool.setuptools]
+packages = ["morphdb"]
