@@ -81,7 +81,8 @@ class TestDashboardGather(unittest.TestCase):
         task = by_app["a"]["types"][0]
         self.assertEqual(task["name"], "task")
         self.assertEqual(task["count"], 2)
-        self.assertIn("title", task["fields"])
+        self.assertEqual([f["name"] for f in task["fields"]], ["title"])
+        self.assertEqual(task["fields"][0]["type"], "string")
         self.assertEqual(by_app["b"]["types"], [])
         # render must not blow up and must mention the app
         self.assertIn("a", dashboard.render(data, self.path))
