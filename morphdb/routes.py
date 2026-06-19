@@ -49,7 +49,7 @@ def root(req):
     return {
         "name": "MorphDB",
         "version": __import__("morphdb").__version__,
-        "description": "Schema-fluid, API-stable database for AI-generated apps.",
+        "description": "Coding-agent-friendly, multi-tenant backend for vibe-coded websites.",
         "docs": "GET /help for the full endpoint reference.",
     }
 

@@ -10,7 +10,7 @@ from .server import serve
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="morphdb",
-        description="MorphDB — a schema-fluid, API-stable database for AI-generated apps.",
+        description="MorphDB — a coding-agent-friendly, multi-tenant backend for vibe-coded websites.",
     )
     parser.add_argument("--host", default="127.0.0.1",
                         help="Host/interface to bind (default: 127.0.0.1).")

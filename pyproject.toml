@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "morphdb"
-version = "0.1.0"
-description = "A schema-fluid, API-stable database for AI-generated apps. Reshape the schema as fast as your coding agent iterates; the frontend keeps calling the same generic endpoints."
+version = "0.1.1"
+description = "A coding-agent-friendly, multi-tenant backend for vibe-coded websites. One process hosts many isolated apps; reshape each app's schema as fast as your agent iterates while the frontend keeps calling the same generic endpoints."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

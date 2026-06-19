@@ -1,6 +1,6 @@
 # MorphDB
 
-**A schema-fluid, API-stable database for AI-generated apps.**
+**A coding-agent-friendly, multi-tenant backend for vibe-coded websites.**
 
 Reshape the data model as fast as your coding agent iterates — the frontend
 keeps calling the same small set of generic, deterministic endpoints.

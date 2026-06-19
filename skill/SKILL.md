@@ -1,6 +1,6 @@
 ---
 name: morphdb
-description: Spin up an instant, schema-fluid backend for a vibe-coded app. Use when you are building an HTML/CSS/JS frontend that needs to persist and query data (todos, CRM, dashboard, tracker, any CRUD app) but you do not want to hand-write and re-migrate a database schema as the design churns. MorphDB gives you generic, stable REST endpoints; you reshape the schema with one command whenever the app's needs change, and the frontend never has to change which endpoints it calls. Trigger when the user asks for a "backend for this", "make it save data", "add a database", or "persist this" for a small/local web app.
+description: A coding-agent-friendly, multi-tenant backend for vibe-coded websites. Use when building an HTML/CSS/JS frontend that needs to persist and query data (todos, CRM, dashboard, tracker, any CRUD app) but you do not want to hand-write and re-migrate a database schema as the design churns. One MorphDB process hosts many isolated apps (one per site); you reshape each app's schema with one command and the frontend keeps calling the same generic, stable REST endpoints. Trigger when the user asks for a "backend for this", "make it save data", "add a database", or "persist this" for a small/local web app.
 ---
 
 # MorphDB — instant morphable backend for AI-built apps
