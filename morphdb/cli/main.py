@@ -7,6 +7,7 @@
     morphdb logs          show the background server's log (-f to follow)
     morphdb run           run the server in the foreground (blocking)
     morphdb dashboard     open the read-only admin dashboard
+    morphdb mcp           run the MCP server (stdio; spawned by Claude Code)
     morphdb install-skill install the bundled Claude Code skill
 
 ``python -m morphdb`` remains the plain foreground server (what `start` and the
@@ -55,7 +56,14 @@ def cmd_run(args):
 
 def cmd_status(args):
     print(_fmt_status(service.status()))
+    from . import mcp
+    print(f"  mcp:  {mcp.registration_summary()}")
     return 0
+
+
+def cmd_mcp(args):
+    from . import mcp
+    return mcp.serve()
 
 
 def cmd_stop(args):
@@ -158,6 +166,9 @@ def build_parser():
     sp.add_argument("--db", default=None, help="database to inspect (default the server's)")
     sp.add_argument("--no-open", action="store_true", help="don't auto-open a browser")
     sp.set_defaults(func=cmd_dashboard)
+
+    sub.add_parser("mcp", help="run the MCP server over stdio (Claude Code spawns "
+                   "this; you don't run it directly)").set_defaults(func=cmd_mcp)
 
     sp = sub.add_parser("install-skill",
                         help="install/update the bundled Claude Code skill")
