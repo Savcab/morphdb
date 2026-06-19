@@ -188,6 +188,20 @@ allowed, `409` cardinality conflict, `413` body too large, `500` internal.
   SQLite connection guarded by a reentrant lock — simple and correct at
   localhost scale; threaded request handling stays safe.
 
+## Limitations
+
+- **Schema morphing.** Adding and removing fields is O(1) and never touches
+  stored rows. Changing a field's **type** triggers a one-time re-coercion of
+  that field's existing values to the new type (uncoercible values are dropped),
+  so stored data stays consistent with the schema and reads agree with queries.
+- **Integer magnitude.** Numbers are stored and read back exactly at any size.
+  Filtering/sorting on integers beyond ±2⁶³ uses floating-point comparison (a
+  SQLite limitation), so equality/range queries on such huge integers may be
+  imprecise even though reads are exact.
+- **HTTP verbs.** Only `GET/POST/PUT/PATCH/DELETE/OPTIONS/HEAD` are part of the
+  API; other verbs (e.g. `TRACE`) get the stdlib's plain `501`.
+- Scope is a localhost-scale developer tool — no auth, no horizontal scale.
+
 ## Development
 
 ```bash

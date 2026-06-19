@@ -304,6 +304,8 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
         raise bad_request("limit and offset must be integers.")
     if limit < 0 or offset < 0:
         raise bad_request("limit and offset must be non-negative.")
+    if offset > _INT64_MAX:
+        raise bad_request("offset is too large.")
     limit = min(limit, MAX_LIMIT)
 
     c = db.conn()

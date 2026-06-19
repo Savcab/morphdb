@@ -391,8 +391,12 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
 
     sql = (
         "SELECT a.*, s.from_type, s.to_type, s.forward_name, s.inverse_name, "
-        "s.cardinality, s.symmetric FROM associations a "
+        "s.cardinality, s.symmetric, "
+        "fo.object_type AS from_obj_type, too.object_type AS to_obj_type "
+        "FROM associations a "
         "JOIN association_schemas s ON a.assoc_name = s.name "
+        "LEFT JOIN objects fo ON fo.guid = a.from_guid "
+        "LEFT JOIN objects too ON too.guid = a.to_guid "
         "WHERE (a.from_guid = ? OR a.to_guid = ?)"
     )
     params = [guid, guid]
@@ -414,7 +418,11 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
                 continue
             rel = row["forward_name"]
             neighbor_guid = row["to_guid"] if is_from else row["from_guid"]
-            neighbor_type = row["to_type"]  # == from_type for symmetric
+            # Derive neighbor type from the actual object (falls back to the
+            # schema type if the object is missing), so it stays correct even if
+            # the schema's from_type/to_type were later changed.
+            neighbor_type = ((row["to_obj_type"] if is_from else row["from_obj_type"])
+                             or row["to_type"])
             this_direction = "symmetric"
         else:
             # Directional edge: excluded when only symmetric edges are requested.
@@ -427,12 +435,12 @@ def get_associations(guid, name=None, relation=None, direction=None, expand=Fals
             if is_from:
                 rel = row["forward_name"]
                 neighbor_guid = row["to_guid"]
-                neighbor_type = row["to_type"]
+                neighbor_type = row["to_obj_type"] or row["to_type"]
                 this_direction = "forward"
             else:
                 rel = row["inverse_name"]
                 neighbor_guid = row["from_guid"]
-                neighbor_type = row["from_type"]
+                neighbor_type = row["from_obj_type"] or row["from_type"]
                 this_direction = "inverse"
 
         if relation and rel != relation:

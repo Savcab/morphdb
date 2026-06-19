@@ -53,8 +53,9 @@ def upsert_object_schema(name, fields, merge=False):
             "SELECT * FROM object_schemas WHERE name = ?", (name,)
         ).fetchone()
 
+        old_fields = json.loads(existing["fields"]) if existing else {}
         if existing and merge:
-            merged = json.loads(existing["fields"])
+            merged = dict(old_fields)
             merged.update(new_fields)
             new_fields = merged
 
@@ -63,6 +64,17 @@ def upsert_object_schema(name, fields, merge=False):
                 "UPDATE object_schemas SET fields = ?, updated_at = ? WHERE name = ?",
                 (json.dumps(new_fields), ts, name),
             )
+            # If any field's *type* changed, re-coerce existing stored values to
+            # the new type (uncoercible -> dropped). Adding/removing fields stays
+            # O(1) and never touches rows; only a genuine type change migrates
+            # data, keeping stored values consistent with the schema so reads and
+            # queries agree.
+            retyped = [
+                f for f, d in new_fields.items()
+                if f in old_fields and old_fields[f]["type"] != d["type"]
+            ]
+            if retyped:
+                _migrate_retyped_fields(c, name, new_fields, retyped, ts)
         else:
             c.execute(
                 "INSERT INTO object_schemas (name, fields, created_at, updated_at) "
@@ -74,6 +86,35 @@ def upsert_object_schema(name, fields, merge=False):
             "SELECT * FROM object_schemas WHERE name = ?", (name,)
         ).fetchone()
     return _row_to_schema(row)
+
+
+def _migrate_retyped_fields(c, name, fields, retyped, ts):
+    """Re-coerce the given fields' stored values to their new types in place."""
+    from .fieldtypes import coerce_value
+
+    rows = c.execute(
+        "SELECT guid, data FROM objects WHERE object_type = ?", (name,)
+    ).fetchall()
+    for r in rows:
+        blob = json.loads(r["data"])
+        changed = False
+        for f in retyped:
+            if f not in blob or blob[f] is None:
+                continue
+            try:
+                new_val = coerce_value(f, blob[f], fields[f]["type"])
+            except Exception:
+                new_val = None  # uncoercible -> drop so it can't read/query wrong
+            if new_val is None:
+                del blob[f]
+            else:
+                blob[f] = new_val
+            changed = True
+        if changed:
+            c.execute(
+                "UPDATE objects SET data = ?, updated_at = ? WHERE guid = ?",
+                (json.dumps(blob), ts, r["guid"]),
+            )
 
 
 def get_object_schema(name, required=False):

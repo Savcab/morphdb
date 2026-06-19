@@ -84,7 +84,12 @@ class Handler(BaseHTTPRequestHandler):
             # the next request on a keep-alive connection.
             self.close_connection = True
             raise ApiError(400, "bad_request", "Invalid Content-Length header.")
-        if n <= 0:
+        if n < 0:
+            # A negative length is invalid and leaves the body undrained; close
+            # the connection so leftover bytes can't be misread as the next req.
+            self.close_connection = True
+            raise ApiError(400, "bad_request", "Invalid Content-Length header.")
+        if n == 0:
             return b""
         if n > MAX_BODY:
             # Don't read a potentially huge body; close the connection so the

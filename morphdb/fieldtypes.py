@@ -103,8 +103,17 @@ def _canonical_dt(dtobj):
 
 
 def _epoch_to_canonical(field, value):
+    fval = float(value)
+    # Reject ambiguously-small magnitudes consistently for both JSON numbers and
+    # numeric strings (a value like 0 or 2024 is more likely a mistake than a
+    # 1970-relative timestamp).
+    if abs(fval) < _EPOCH_MIN_ABS:
+        raise bad_request(
+            f"Field '{field}': ambiguous datetime {value!r}; use an ISO-8601 "
+            f"string, or epoch seconds with magnitude >= {int(_EPOCH_MIN_ABS)}."
+        )
     try:
-        return _canonical_dt(datetime.fromtimestamp(float(value), tz=timezone.utc))
+        return _canonical_dt(datetime.fromtimestamp(fval, tz=timezone.utc))
     except (OverflowError, OSError, ValueError):
         raise bad_request(f"Field '{field}': epoch value {value!r} is out of range.")
 
@@ -124,6 +133,15 @@ def _parse_datetime(field, value):
     # like "2024" isn't silently turned into a 1970 instant.
     if _NUM_STR_RE.fullmatch(s) and abs(float(s)) >= _EPOCH_MIN_ABS:
         return _epoch_to_canonical(field, s)
+    # 'Z' (UTC) must be a single trailing marker and not coexist with another
+    # offset — fromisoformat would silently ignore a misplaced/duplicate 'Z'.
+    if "Z" in s:
+        core = s[:-1]
+        if s.count("Z") != 1 or not s.endswith("Z") or "+" in core \
+                or core.count("-") > 2:
+            raise bad_request(
+                f"Field '{field}': malformed datetime '{value}'."
+            )
     iso = s[:-1] + "+00:00" if s.endswith("Z") else s
     # Python 3.10 fromisoformat accepts only 3/6-digit fractional seconds;
     # truncate longer (nano/micro) fractions to 6 digits so valid ISO-8601
