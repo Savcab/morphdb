@@ -18,3 +18,10 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# build artifacts
+/dist/
+/build/
+*.egg-info/
+__pycache__/
+*.pyc

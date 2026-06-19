@@ -7,7 +7,7 @@ name = "morphdb"
 version = "0.1.0"
 description = "A schema-fluid, API-stable database for AI-generated apps. Reshape the schema as fast as your coding agent iterates; the frontend keeps calling the same generic endpoints."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "morphdb contributors" }]
 keywords = ["database", "ai", "agent", "schema", "sqlite", "backend", "vibe-coding"]
@@ -15,8 +15,13 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 # Zero runtime dependencies — only the Python standard library.
 dependencies = []
@@ -28,7 +33,9 @@ dev = ["pytest>=7.0"]
 morphdb = "morphdb.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/morphdb/morphdb"
+Homepage = "https://github.com/Savcab/morphdb"
+Repository = "https://github.com/Savcab/morphdb"
+Issues = "https://github.com/Savcab/morphdb/issues"
 
 [tool.setuptools]
 packages = ["morphdb"]
