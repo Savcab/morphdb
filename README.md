@@ -129,6 +129,55 @@ Then: `curl http://127.0.0.1:8787/help` for a live reference.
 of localhost. It's a client-side setting that names a *backend*, not a database
 connection string.
 
+To upgrade later: `pip install -U morphdb`, then `morphdb stop && morphdb start`
+to reload the new code (data in `~/.morphdb` is preserved across `0.1.x`).
+
+## Command-line interface
+
+`morphdb` runs the server as a **background service** — `start` launches it
+detached and hands your terminal straight back; `status` / `stop` find it again
+via a pid file under the state dir.
+
+| Command | What it does |
+| --- | --- |
+| `morphdb` or `morphdb start` | Start the server in the background (returns immediately). |
+| `morphdb status` | Is it running? URL, pid, health, and app count. |
+| `morphdb stop` | Stop the background server. |
+| `morphdb run` | Run in the **foreground** (blocking) instead — handy for watching logs. |
+| `morphdb dashboard` | Open a read-only web view of every app and its tables. |
+| `morphdb install-skill` | Install the bundled Claude Code skill (below). |
+| `morphdb --version` | Print the version. |
+
+`start` / `run` accept `--host` (default `127.0.0.1`), `--port` (default `8787`),
+and `--db` (a SQLite path or `:memory:`; default `~/.morphdb/data.sqlite3`).
+`dashboard` accepts `--port` (default `8788`), `--db`, and `--no-open`. Service
+state (pid, log, the default db) lives under `~/.morphdb` — relocate it with
+`$MORPHDB_HOME`.
+
+```bash
+morphdb start                          # background, default 127.0.0.1:8787
+morphdb start --port 9000 --db ./my.sqlite3
+morphdb status                         # -> running (pid …) at http://… [healthy]
+morphdb dashboard                      # opens http://127.0.0.1:8788
+morphdb stop
+morphdb run                            # foreground instead (Ctrl-C to quit)
+```
+
+### Install the Claude Code skill
+
+`install-skill` writes the bundled MorphDB skill into a Claude skills directory,
+so a coding agent automatically reaches for MorphDB when building a data-backed
+site:
+
+```bash
+morphdb install-skill                  # -> ~/.claude/skills/morphdb (all projects)
+morphdb install-skill --project        # -> ./.claude/skills/morphdb (current project)
+morphdb install-skill --project DIR    # -> DIR/.claude/skills/morphdb
+morphdb install-skill --force          # overwrite an existing copy
+```
+
+Restart Claude Code afterward to pick it up.
+
 ## Quickstart
 
 ```bash
