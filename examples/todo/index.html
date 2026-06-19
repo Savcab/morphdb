@@ -76,7 +76,7 @@ async function api(method, path, body) {
 // Self-bootstrapping: ensure the schema exists on load. Idempotent — this is the
 // recommended pattern so the app sets up its own backend. Morph it any time.
 async function ensureSchema() {
-  await api("PUT", "/schemas/objects/todo", {
+  await api("PUT", "/schema/todo", {
     merge: true,
     fields: { title: "string", done: "boolean", priority: "number" },
   });

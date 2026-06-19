@@ -67,31 +67,42 @@ def normalize_field_def(name, raw):
     return {"type": ftype, "required": required, "default": default}
 
 
+def validate_member_name(name, kind="field"):
+    """Validate a field or relation name.
+
+    Field and relation names share the object's body namespace and are
+    interpolated into SQL/JSON paths (json_extract '$.name', ORDER BY), so they
+    must be safe identifiers. Anchored with \\Z (not $) so a trailing newline
+    cannot sneak through; '__' is forbidden because it is the filter-operator
+    separator (field__gt); a leading underscore is reserved for system fields.
+    """
+    if not isinstance(name, str) or not name:
+        raise bad_request(f"{kind.capitalize()} name must be a non-empty string, got {name!r}.")
+    if name.startswith("_"):
+        raise bad_request(
+            f"{kind.capitalize()} name '{name}' is reserved (leading underscore is "
+            "for system fields like _guid/_type)."
+        )
+    if not _FIELD_NAME_RE.match(name):
+        raise bad_request(
+            f"Invalid {kind} name '{name}'. Use a letter followed by letters, "
+            "digits, or underscores (e.g. 'title', 'due_date')."
+        )
+    if "__" in name:
+        raise bad_request(
+            f"{kind.capitalize()} name '{name}' may not contain '__' (reserved for "
+            "filter operators like field__gt)."
+        )
+    return name
+
+
 def normalize_fields(fields):
     """Normalize a whole ``{name: def}`` mapping. Validates field names."""
     if not isinstance(fields, dict):
         raise bad_request("'fields' must be an object mapping field name -> type.")
     out = {}
     for name, raw in fields.items():
-        if not isinstance(name, str) or not name:
-            raise bad_request(f"Field name must be a non-empty string, got {name!r}.")
-        if name.startswith("_"):
-            raise bad_request(
-                f"Field name '{name}' is reserved (leading underscore is reserved "
-                "for system fields like _guid/_type)."
-            )
-        if not _FIELD_NAME_RE.match(name):
-            raise bad_request(
-                f"Invalid field name '{name}'. Use a letter followed by letters, "
-                "digits, or underscores (e.g. 'title', 'due_date')."
-            )
-        if "__" in name:
-            # '__' is the filter operator separator (e.g. field__gt); a field
-            # name containing it would be unqueryable, so forbid it.
-            raise bad_request(
-                f"Field name '{name}' may not contain '__' (reserved for filter "
-                "operators like field__gt)."
-            )
+        validate_member_name(name, "field")
         out[name] = normalize_field_def(name, raw)
     return out
 

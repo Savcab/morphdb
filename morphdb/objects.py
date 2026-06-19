@@ -1,33 +1,38 @@
 """Object instances — the data the website reads and writes.
 
 Every object has a globally unique ``_guid`` and belongs to one object type.
-Stored as a JSON blob; projected through the current schema on every read so
-that schema edits never require touching rows (lazy invalidation).
+Raw field values are stored as a JSON blob and projected through the current
+schema on every read (lazy invalidation), so schema edits never touch rows.
+Relations are *not* in the blob — they live as edges (see :mod:`associations`)
+and are folded into the object body on read / exploded into edges on write, so
+the frontend treats a link like any other field.
 
 Output shape is flat with underscore-prefixed system fields:
 
-    {"_guid", "_type", "_created_at", "_updated_at", <field>: <value>, ...}
+    {"_guid", "_type", "_created_at", "_updated_at", <field>: <value>,
+     <relation>: <neighbor-guid | [neighbor-guids]>, ...}
 
-Schema field names may not start with ``_`` (enforced at schema-define time),
-so there is never a collision between system fields and user fields.
+Schema field/relation names may not start with ``_`` (enforced at schema-define
+time), so there is never a collision with system fields.
 """
 
 import json
 
+from . import associations as assoc
 from . import db
 from .errors import bad_request, not_found
 from .fieldtypes import project_data, validate_against_schema
 from .schema import get_object_schema
 from .util import new_guid, now_iso
 
-RESERVED_QUERY_KEYS = {"limit", "offset", "sort", "order", "expand"}
+RESERVED_QUERY_KEYS = {"limit", "offset", "sort", "order"}
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
 _OPS = {"eq", "ne", "gt", "gte", "lt", "lte", "contains", "in", "exists"}
 
 
-def _project(row, fields):
+def _project_fields(row, fields):
     data = project_data(json.loads(row["data"]), fields)
     out = {
         "_guid": row["guid"],
@@ -39,57 +44,89 @@ def _project(row, fields):
     return out
 
 
+def _project_full(row, fields, object_type):
+    """A single object's full body: system fields + fields + relation values."""
+    out = _project_fields(row, fields)
+    rels = assoc.project_relations([row["guid"]], object_type)[row["guid"]]
+    out.update(rels)
+    return out
+
+
+def _split_body(object_type, body, fields, c=None):
+    """Partition an incoming write into (field values, relation values).
+
+    Keys that are neither a declared field nor a relation (and not a system
+    ``_`` key echoed back from a read) are rejected, so typos surface early.
+    """
+    rel_keys = assoc.relation_keys(object_type, c)
+    field_part, rel_part = {}, {}
+    for k, v in body.items():
+        if k in fields:
+            field_part[k] = v
+        elif k in rel_keys:
+            rel_part[k] = v
+        elif k.startswith("_"):
+            continue  # tolerate _guid/_type echoed back from a prior read
+        else:
+            raise bad_request(
+                f"Unknown field/relation '{k}' on type '{object_type}'. "
+                f"Fields: {sorted(fields)}; relations: {sorted(rel_keys)}. "
+                "Update the schema first, or remove the stray key."
+            )
+    return field_part, rel_part
+
+
 # --- writes -------------------------------------------------------------------
 
 
 def create_object(object_type, data):
     schema = get_object_schema(object_type, required=True)
-    clean = validate_against_schema(data or {}, schema["fields"], partial=False)
+    fields = schema["fields"]
     guid = new_guid(object_type)
     ts = now_iso()
     with db.transaction() as c:
+        field_part, rel_part = _split_body(object_type, data or {}, fields, c)
+        clean = validate_against_schema(field_part, fields, partial=False)
         c.execute(
             "INSERT INTO objects (guid, object_type, data, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (guid, object_type, json.dumps(clean), ts, ts),
         )
+        if rel_part:
+            assoc.apply_relation_writes(c, guid, object_type, rel_part)
         row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
-    return _project(row, schema["fields"])
+    return _project_full(row, fields, object_type)
 
 
 def upsert_object(object_type, guid, data, partial=True):
     """Create-or-update an object at a caller-supplied guid.
 
-    ``partial`` (default) merges the provided fields into the existing blob, so
-    a caller can patch one field. With ``partial=False`` the object's data is
-    fully replaced by ``data``.
+    Fields follow ``partial``: PATCH (partial=True) merges the given fields, PUT
+    (partial=False) replaces the field set (and re-checks required fields).
+    Relations are always patch-style: only relation keys present in the body are
+    touched; each present relation's value becomes its full set (set-as-field).
     """
     schema = get_object_schema(object_type, required=True)
+    fields = schema["fields"]
     ts = now_iso()
     with db.transaction() as c:
         existing = c.execute(
             "SELECT * FROM objects WHERE guid = ?", (guid,)
         ).fetchone()
-
         if existing is not None and existing["object_type"] != object_type:
             raise bad_request(
                 f"Object '{guid}' already exists with type "
                 f"'{existing['object_type']}', not '{object_type}'."
             )
 
-        # PUT (partial=False) is replace semantics and must re-validate required
-        # fields, even when the object already exists. PATCH (partial=True) only
-        # touches the provided fields.
-        clean = validate_against_schema(
-            data or {}, schema["fields"], partial=partial
-        )
+        field_part, rel_part = _split_body(object_type, data or {}, fields, c)
+        clean = validate_against_schema(field_part, fields, partial=partial)
 
         if existing is None:
-            blob = clean
             c.execute(
                 "INSERT INTO objects (guid, object_type, data, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (guid, object_type, json.dumps(blob), ts, ts),
+                (guid, object_type, json.dumps(clean), ts, ts),
             )
         else:
             blob = json.loads(existing["data"]) if partial else {}
@@ -98,8 +135,10 @@ def upsert_object(object_type, guid, data, partial=True):
                 "UPDATE objects SET data = ?, updated_at = ? WHERE guid = ?",
                 (json.dumps(blob), ts, guid),
             )
+        if rel_part:
+            assoc.apply_relation_writes(c, guid, object_type, rel_part)
         row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
-    return _project(row, schema["fields"])
+    return _project_full(row, fields, object_type)
 
 
 def delete_object(guid):
@@ -108,6 +147,7 @@ def delete_object(guid):
         if row is None:
             raise not_found(f"No object with guid '{guid}'.")
         c.execute("DELETE FROM objects WHERE guid = ?", (guid,))
+        # Remove this object's edges only; neighbor objects are left intact.
         c.execute(
             "DELETE FROM associations WHERE from_guid = ? OR to_guid = ?",
             (guid, guid),
@@ -129,7 +169,7 @@ def get_object(guid, object_type=None):
             f"Object '{guid}' is of type '{row['object_type']}', not '{object_type}'."
         )
     schema = get_object_schema(row["object_type"], required=True)
-    return _project(row, schema["fields"])
+    return _project_full(row, schema["fields"], row["object_type"])
 
 
 def _parse_filter_key(key, fields):
@@ -143,7 +183,7 @@ def _parse_filter_key(key, fields):
     if field not in fields:
         raise bad_request(
             f"Cannot filter on unknown field '{field}'. "
-            f"Declared fields: {sorted(fields)}."
+            f"Declared fields: {sorted(fields)}. (Filtering is on fields, not relations.)"
         )
     return field, op
 
@@ -333,8 +373,13 @@ def list_objects(object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
         params + sort_params + [limit, offset],
     ).fetchall()
 
+    projected = [_project_fields(r, fields) for r in rows]
+    relmap = assoc.project_relations([r["guid"] for r in rows], object_type)
+    for p in projected:
+        p.update(relmap[p["_guid"]])
+
     return {
-        "objects": [_project(r, fields) for r in rows],
+        "objects": projected,
         "total": total,
         "limit": limit,
         "offset": offset,

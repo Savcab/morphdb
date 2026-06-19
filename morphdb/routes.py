@@ -1,6 +1,16 @@
-"""HTTP route definitions. Pure glue between the router and the logic modules."""
+"""HTTP route definitions. Pure glue between the router and the logic modules.
 
-from . import associations as assoc
+Two surfaces only:
+
+* **Schema** (the coding agent reshapes the data model):
+  GET/PUT/DELETE ``/schema`` and ``/schema/{type}``.
+* **Objects** (the frontend reads/writes data, including relations as fields):
+  ``/objects/{type}`` and ``/object/{guid}``.
+
+Relations are not their own endpoints — they are declared inside a type's schema
+and read/written as fields on objects.
+"""
+
 from . import objects as objs
 from . import schema as sch
 from .errors import bad_request
@@ -12,9 +22,9 @@ router = Router()
 def _obj_body(req):
     """Return the request body as a dict, or raise 400.
 
-    An empty/absent body is treated as ``{}`` (a valid empty write), but a
-    non-object JSON value (list, string, number, ``null``) is rejected rather
-    than silently dropped — that would create blank objects from bad input.
+    An empty/absent body is treated as ``{}`` (a valid empty write); a non-object
+    JSON value (list, string, number, ``null``) is rejected rather than silently
+    dropped.
     """
     b = req.body
     if b is None or b == {}:
@@ -47,126 +57,50 @@ def help_(req):
     return {"endpoints": ENDPOINT_REFERENCE}
 
 
+# --- schema (for the coding agent) --------------------------------------------
+
+
 @router.route("GET", "/schema")
 def full_schema(req):
-    return {
-        "objects": sch.list_object_schemas(),
-        "associations": assoc.list_association_schemas(),
-    }
+    return {"types": sch.list_type_docs()}
 
 
-# --- object schemas (for the coding agent) ------------------------------------
+@router.route("GET", "/schema/{type}")
+def get_type(req):
+    return sch.get_type_doc(req.params["type"], required=True)
 
 
-@router.route("GET", "/schemas/objects")
-def list_object_schemas(req):
-    return {"schemas": sch.list_object_schemas()}
+def _type_body(body):
+    """Parse a schema-write body into (fields, relations, merge).
+
+    Accepts a structured doc ``{fields?, relations?, merge?}`` or, as a
+    shorthand, a bare ``{name: type}`` field map. A ``None`` fields/relations
+    means "leave that part untouched".
+    """
+    if not isinstance(body, dict):
+        raise bad_request(
+            "Body must be a schema document {fields?, relations?, merge?} or a "
+            "bare field map."
+        )
+    if any(k in body for k in ("fields", "relations", "merge")):
+        fields = body.get("fields")
+        relations = body.get("relations")
+        if fields is not None and not isinstance(fields, dict):
+            raise bad_request("'fields' must be an object mapping name -> type.")
+        return fields, relations, bool(body.get("merge", False))
+    return body, None, False     # bare field map
 
 
-@router.route("GET", "/schemas/objects/{type}")
-def get_object_schema(req):
-    return sch.get_object_schema(req.params["type"], required=True)
+@router.route("PUT", "/schema/{type}")
+def put_type(req):
+    fields, relations, merge = _type_body(_obj_body(req))
+    return sch.upsert_type(req.params["type"], fields=fields,
+                           relations=relations, merge=merge)
 
 
-def _fields_and_merge(body):
-    if isinstance(body, dict) and "fields" in body and isinstance(body["fields"], dict):
-        return body["fields"], bool(body.get("merge", False))
-    if isinstance(body, dict):
-        return body, False
-    raise bad_request("Body must be an object of field definitions, or {fields, merge}.")
-
-
-@router.route("POST", "/schemas/objects")
-def create_object_schema(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    name = body.get("name")
-    if not name:
-        raise bad_request("POST /schemas/objects requires a 'name'.")
-    fields = body.get("fields", {})
-    merge = bool(body.get("merge", False))
-    return 201, sch.upsert_object_schema(name, fields, merge=merge)
-
-
-@router.route("PUT", "/schemas/objects/{type}")
-def put_object_schema(req):
-    fields, merge = _fields_and_merge(req.body)
-    return sch.upsert_object_schema(req.params["type"], fields, merge=merge)
-
-
-@router.route("DELETE", "/schemas/objects/{type}")
-def delete_object_schema(req):
-    cascade = req.query_bool("cascade", default=True)
-    return sch.delete_object_schema(req.params["type"], cascade=cascade)
-
-
-@router.route("POST", "/schemas/objects/{type}/delete-fields")
-def delete_object_fields_post(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    return sch.delete_object_fields(req.params["type"], body.get("fields"))
-
-
-@router.route("DELETE", "/schemas/objects/{type}/fields")
-def delete_object_fields_del(req):
-    body = req.body if isinstance(req.body, dict) else {}
-    return sch.delete_object_fields(req.params["type"], body.get("fields"))
-
-
-# --- association schemas (for the coding agent) -------------------------------
-
-
-@router.route("GET", "/schemas/associations")
-def list_assoc_schemas(req):
-    return {"schemas": assoc.list_association_schemas()}
-
-
-@router.route("GET", "/schemas/associations/{name}")
-def get_assoc_schema(req):
-    return assoc.get_association_schema(req.params["name"], required=True)
-
-
-def _assoc_schema_args(body):
-    return dict(
-        from_type=body.get("from_type"),
-        to_type=body.get("to_type"),
-        forward_name=body.get("forward_name"),
-        # inverse_name is optional for symmetric relationships (defaults to
-        # forward_name); validated in the logic layer otherwise.
-        inverse_name=body.get("inverse_name"),
-        cardinality=body.get("cardinality"),
-        # Pass through raw; the logic layer parses it (bool("false") is True!).
-        symmetric=body.get("symmetric", False),
-    )
-
-
-@router.route("POST", "/schemas/associations")
-def create_assoc_schema(req):
-    body = _obj_body(req)
-    name = body.get("name")
-    if not name:
-        raise bad_request("POST /schemas/associations requires a 'name'.")
-    args = _assoc_schema_args(body)
-    _require(args, "from_type", "to_type", "forward_name", "cardinality")
-    return 201, assoc.upsert_association_schema(name, **args)
-
-
-@router.route("PUT", "/schemas/associations/{name}")
-def put_assoc_schema(req):
-    body = _obj_body(req)
-    args = _assoc_schema_args(body)
-    _require(args, "from_type", "to_type", "forward_name", "cardinality")
-    return assoc.upsert_association_schema(req.params["name"], **args)
-
-
-@router.route("DELETE", "/schemas/associations/{name}")
-def delete_assoc_schema(req):
-    cascade = req.query_bool("cascade", default=True)
-    return assoc.delete_association_schema(req.params["name"], cascade=cascade)
-
-
-def _require(args, *keys):
-    missing = [k for k in keys if args.get(k) in (None, "")]
-    if missing:
-        raise bad_request(f"Missing required field(s): {missing}.")
+@router.route("DELETE", "/schema/{type}")
+def delete_type(req):
+    return sch.delete_type(req.params["type"])
 
 
 # --- objects (for the website) ------------------------------------------------
@@ -184,8 +118,7 @@ def list_objects(req):
     offset = q.pop("offset", 0)
     sort = q.pop("sort", None)
     order = q.pop("order", "asc")
-    q.pop("expand", None)
-    # everything left in q is a filter
+    # everything left in q is a field filter
     return objs.list_objects(
         req.params["type"], filters=q, limit=limit, offset=offset,
         sort=sort, order=order,
@@ -214,98 +147,46 @@ def delete_object(req):
     return objs.delete_object(req.params["guid"])
 
 
-@router.route("GET", "/objects/{type}/{guid}/associations")
-def object_associations_typed(req):
-    # Type-check the {type} segment for consistency with GET /objects/{type}/{guid}.
-    objs.get_object(req.params["guid"], object_type=req.params["type"])
-    return _read_associations(req, req.params["guid"])
-
-
-# --- objects by guid alone (guids are globally unique) ------------------------
-
-
 @router.route("GET", "/object/{guid}")
 def get_object_by_guid(req):
     return objs.get_object(req.params["guid"])
 
 
-@router.route("GET", "/object/{guid}/associations")
-def object_associations(req):
-    return _read_associations(req, req.params["guid"])
-
-
-def _read_associations(req, guid):
-    return assoc.get_associations(
-        guid,
-        name=req.query.get("name"),
-        relation=req.query.get("relation"),
-        direction=req.query.get("direction"),
-        expand=req.query_bool("expand", default=False),
-    )
-
-
-# --- associations (for the website) -------------------------------------------
-
-
-@router.route("POST", "/associations")
-def create_association(req):
-    body = _obj_body(req)
-    name = body.get("assoc_name") or body.get("name")
-    if not name:
-        raise bad_request("Provide the association type as 'assoc_name' (or 'name').")
-    from_guid = body.get("from_guid")
-    to_guid = body.get("to_guid")
-    if not from_guid or not to_guid:
-        raise bad_request("Provide 'from_guid' and 'to_guid'.")
-    replace = req.query_bool("replace", default=False) or bool(body.get("replace", False))
-    return 201, assoc.create_association(name, from_guid, to_guid, replace=replace)
-
-
-@router.route("DELETE", "/associations")
-def delete_association(req):
-    return _do_delete_association(_obj_body(req))
-
-
-@router.route("POST", "/associations/delete")
-def delete_association_post(req):
-    return _do_delete_association(_obj_body(req))
-
-
-def _do_delete_association(body):
-    name = body.get("assoc_name") or body.get("name")
-    from_guid = body.get("from_guid")
-    to_guid = body.get("to_guid")
-    if not (name and from_guid and to_guid):
-        raise bad_request("Provide 'assoc_name', 'from_guid', and 'to_guid'.")
-    return assoc.delete_association(name, from_guid, to_guid)
-
-
 # --- self-documenting reference (served at GET /help) -------------------------
 
 ENDPOINT_REFERENCE = {
-    "schema_management (for the agent)": {
-        "GET /schema": "View all object + association schemas at once.",
-        "GET /schemas/objects": "List object type schemas.",
-        "GET /schemas/objects/{type}": "View one object type schema.",
-        "POST /schemas/objects": "Create/replace a type. Body: {name, fields, merge?}.",
-        "PUT /schemas/objects/{type}": "Create/replace a type. Body: {fields, merge?} or a raw fields map.",
-        "DELETE /schemas/objects/{type}?cascade=true": "Delete a type (and, by default, its objects).",
-        "POST /schemas/objects/{type}/delete-fields": "Remove fields. Body: {fields: [..]}.",
-        "GET /schemas/associations": "List association (relationship) types.",
-        "POST /schemas/associations": "Create/replace a relationship type. Body: {name, from_type, to_type, forward_name, inverse_name, cardinality, symmetric?}. Set symmetric:true (from_type==to_type, one_to_one|many_to_many) for mutual relations like friends.",
-        "DELETE /schemas/associations/{name}?cascade=true": "Delete a relationship type (and its edges).",
+    "schema endpoints (you, the agent — reshape the data model)": {
+        "GET /schema": "View all type schemas (fields + relations + inverse relations).",
+        "GET /schema/{type}": "View one type's schema.",
+        "PUT /schema/{type}": (
+            "Create/replace a type. Body: {fields?, relations?, merge?} or a bare "
+            "field map. merge:true adds without dropping; merge:false replaces. "
+            "Absent 'fields'/'relations' are left untouched."
+        ),
+        "DELETE /schema/{type}": (
+            "Delete a type, its objects, and edges touching them. Neighbor objects "
+            "of other types are NOT deleted."
+        ),
     },
-    "data (for the website)": {
-        "POST /objects/{type}": "Create an object. Body: field values. Returns the object with its _guid.",
-        "GET /objects/{type}": "List/query objects. Query: field filters (field, field__gt, field__contains, field__in, ...), limit, offset, sort, order.",
-        "GET /objects/{type}/{guid}": "Read one object.",
+    "object endpoints (your frontend — read/write data)": {
+        "POST /objects/{type}": "Create an object. Body: field + relation values. Returns it with _guid.",
+        "GET /objects/{type}": "List/query. Query: field filters (field, field__gt, field__contains, field__in, ...), limit, offset, sort, order.",
+        "GET /objects/{type}/{guid}": "Read one object (fields + relation guids).",
         "GET /object/{guid}": "Read one object by guid alone.",
-        "PUT /objects/{type}/{guid}": "Replace an object's data (create if absent).",
-        "PATCH /objects/{type}/{guid}": "Merge fields into an object (create if absent).",
-        "DELETE /objects/{type}/{guid}": "Delete an object and its edges.",
-        "GET /object/{guid}/associations": "List edges touching an object. Query: name, relation, direction, expand.",
-        "POST /associations": "Create an edge. Body: {assoc_name, from_guid, to_guid}. Query/body: replace.",
-        "DELETE /associations": "Delete an edge. Body: {assoc_name, from_guid, to_guid}.",
+        "PUT /objects/{type}/{guid}": "Replace an object's fields (create if absent). Relations present in the body are set.",
+        "PATCH /objects/{type}/{guid}": "Merge fields into an object (create if absent). Relations present in the body are set.",
+        "DELETE /objects/{type}/{guid}": "Delete an object and its edges (neighbors survive).",
+    },
+    "relations": {
+        "declare": (
+            "In a type's schema under 'relations': "
+            "{\"assignee\": {\"to\": \"user\", \"cardinality\": \"many_to_one\", "
+            "\"inverse\": \"tasks\"}}. Declared once; the inverse ('tasks') appears "
+            "automatically on the other type."
+        ),
+        "read": "Relation values appear in the object body: a guid (to-one) or list of guids (to-many).",
+        "write": "Set a relation like a field: {\"assignee\": \"<guid>\"} or {\"tags\": [\"<g1>\", \"<g2>\"]}. null/[] clears. Last write wins on conflict.",
+        "symmetric": "Set symmetric:true (to == this type, one_to_one|many_to_many) for mutual links like friends — one shared label, edge counted once.",
     },
     "field_types": ["string", "number", "boolean", "json", "datetime"],
     "cardinalities": ["one_to_one", "one_to_many", "many_to_one", "many_to_many"],
@@ -315,6 +196,7 @@ ENDPOINT_REFERENCE = {
     "notes": [
         "datetime values are validated as ISO-8601 (or epoch seconds) and normalized.",
         "number fields reject NaN/Infinity.",
-        "defaults are materialized on write, so they are queryable like any value.",
+        "schema edits are O(1) and lazy: after a field retype, an old-typed value reads as unset until rewritten.",
+        "relations are stored as single-row edges and read/written as object fields; filtering is on fields, not relations.",
     ],
 }

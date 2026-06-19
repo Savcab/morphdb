@@ -1,15 +1,19 @@
-"""Object schema management — the part a coding agent edits constantly.
+"""Object type schemas — the thing a coding agent edits constantly.
 
-A schema is ``{name, fields, created_at, updated_at}`` where ``fields`` maps a
-field name to its normalized definition. Editing a schema is O(1): we never
-touch stored objects. Reads reinterpret old rows through the current schema
-(lazy invalidation), so adding/removing fields is instant regardless of how
-many objects exist.
+A *type* bundles raw ``fields`` and ``relations`` (links to other types) into a
+single schema document. Editing it is O(1): we never rewrite stored objects.
+Reads reinterpret old rows through the current schema (lazy invalidation), so
+adding/removing/retyping a field is instant regardless of object count.
+
+Relations are stored in their own table (see :mod:`associations`) because they
+have cardinality and two ends, but from the agent's point of view they live
+right inside the type document alongside fields — declared once, on one side.
 """
 
 import json
 import re
 
+from . import associations as assoc
 from . import db
 from .errors import bad_request, not_found
 from .fieldtypes import normalize_fields
@@ -28,7 +32,22 @@ def _validate_type_name(name):
     return name
 
 
-def _row_to_schema(row):
+# --- low-level fields access (used internally by objects/associations) --------
+
+
+def get_object_schema(name, required=False):
+    """Return the raw ``{name, fields, created_at, updated_at}`` for a type.
+
+    Just the stored fields map — relations are resolved separately. This is the
+    hot path for object reads/writes.
+    """
+    row = db.conn().execute(
+        "SELECT * FROM object_schemas WHERE name = ?", (name,)
+    ).fetchone()
+    if row is None:
+        if required:
+            raise not_found(f"No object type named '{name}'. Define it first.")
+        return None
     return {
         "name": row["name"],
         "fields": json.loads(row["fields"]),
@@ -37,101 +56,123 @@ def _row_to_schema(row):
     }
 
 
-def upsert_object_schema(name, fields, merge=False):
-    """Create or replace an object type's schema.
+# --- full type documents (the agent-facing schema surface) --------------------
 
-    By default the provided ``fields`` fully define the type (replace semantics).
-    With ``merge=True`` the given fields are merged into any existing definition,
-    which is handy when an agent wants to add a column without restating the rest.
+
+def get_type_doc(name, required=False):
+    """The full schema document for one type: fields + relations + inverses."""
+    base = get_object_schema(name, required=required)
+    if base is None:
+        return None
+    relations, inverse = assoc.schema_relations(name)
+    return {
+        "name": base["name"],
+        "fields": base["fields"],
+        "relations": relations,
+        "inverse_relations": inverse,
+        "created_at": base["created_at"],
+        "updated_at": base["updated_at"],
+    }
+
+
+def list_type_docs():
+    rows = db.conn().execute(
+        "SELECT name FROM object_schemas ORDER BY name"
+    ).fetchall()
+    return [get_type_doc(r["name"], required=True) for r in rows]
+
+
+def upsert_type(name, fields=None, relations=None, merge=False):
+    """Create or update a type from a schema document.
+
+    ``fields`` / ``relations`` that are ``None`` (absent from the request) are
+    left untouched, so a partial edit is natural. When present:
+
+      * ``merge=True``  — add/update the given fields/relations, drop nothing.
+      * ``merge=False`` — replace: fields become exactly the given map; relations
+        authored on this type become exactly the given set (omitted ones, and
+        their edges, are removed). Inverse relations (authored elsewhere) are
+        never affected.
     """
     _validate_type_name(name)
-    new_fields = normalize_fields(fields)
-    ts = now_iso()
+    if relations is not None and not isinstance(relations, dict):
+        raise bad_request("'relations' must be an object mapping name -> definition.")
 
     with db.transaction() as c:
         existing = c.execute(
             "SELECT * FROM object_schemas WHERE name = ?", (name,)
         ).fetchone()
+        ts = now_iso()
 
-        old_fields = json.loads(existing["fields"]) if existing else {}
-        if existing and merge:
-            merged = dict(old_fields)
-            merged.update(new_fields)
-            new_fields = merged
+        # --- fields ---
+        if fields is not None:
+            new_fields = normalize_fields(fields)
+            if existing and merge:
+                final = dict(json.loads(existing["fields"]))
+                final.update(new_fields)
+            else:
+                final = new_fields
+        else:
+            final = json.loads(existing["fields"]) if existing else {}
 
         if existing:
-            # Purely lazy: a schema edit (add/drop/retype) only rewrites this
-            # one metadata row, never the stored objects. A value left at the
-            # wrong type after a retype simply reads as unset (the field's
-            # default) until it is written again — see fieldtypes.project_data
-            # and objects._field_expr, which both apply that rule consistently.
             c.execute(
                 "UPDATE object_schemas SET fields = ?, updated_at = ? WHERE name = ?",
-                (json.dumps(new_fields), ts, name),
+                (json.dumps(final), ts, name),
             )
         else:
             c.execute(
                 "INSERT INTO object_schemas (name, fields, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?)",
-                (name, json.dumps(new_fields), ts, ts),
+                (name, json.dumps(final), ts, ts),
             )
 
-        row = c.execute(
-            "SELECT * FROM object_schemas WHERE name = ?", (name,)
-        ).fetchone()
-    return _row_to_schema(row)
+        # --- relations ---
+        touched = {name}
+        if relations is not None:
+            for key, raw in relations.items():
+                d = assoc.upsert_relation(c, name, key, raw)
+                touched.add(d["to_type"])
+            if not merge:
+                assoc.prune_forward_relations(c, name, set(relations.keys()))
+
+        # Field names and relation names share the object body namespace, so they
+        # must not collide on any affected type.
+        for t in touched:
+            _assert_no_collisions(c, t)
+
+    return get_type_doc(name, required=True)
 
 
-def get_object_schema(name, required=False):
-    row = db.conn().execute(
-        "SELECT * FROM object_schemas WHERE name = ?", (name,)
+def _assert_no_collisions(c, type_name):
+    row = c.execute(
+        "SELECT fields FROM object_schemas WHERE name = ?", (type_name,)
     ).fetchone()
     if row is None:
-        if required:
-            raise not_found(f"No object type named '{name}'. Define it first.")
-        return None
-    return _row_to_schema(row)
+        return
+    field_keys = set(json.loads(row["fields"]).keys())
+    seen = set()
+    for v in assoc.relation_views(type_name, c):
+        k = v["key"]
+        if k in field_keys:
+            raise bad_request(
+                f"Relation '{k}' on type '{type_name}' collides with a field of the "
+                "same name. Rename one of them."
+            )
+        if k in seen:
+            raise bad_request(
+                f"Type '{type_name}' ends up with two relations named '{k}'. "
+                "Give the inverse a distinct name."
+            )
+        seen.add(k)
 
 
-def list_object_schemas():
-    rows = db.conn().execute(
-        "SELECT * FROM object_schemas ORDER BY name"
-    ).fetchall()
-    return [_row_to_schema(r) for r in rows]
+def delete_type(name):
+    """Delete a type, its own objects, and every edge touching those objects.
 
-
-def delete_object_fields(name, field_names):
-    """Remove fields from a schema. Stored data is left untouched (lazy).
-
-    The removed fields simply stop appearing on read.
-    """
-    if not isinstance(field_names, (list, tuple)) or not field_names:
-        raise bad_request("Provide a non-empty list of field names to delete.")
-    with db.transaction() as c:
-        row = c.execute(
-            "SELECT * FROM object_schemas WHERE name = ?", (name,)
-        ).fetchone()
-        if row is None:
-            raise not_found(f"No object type named '{name}'.")
-        fields = json.loads(row["fields"])
-        missing = [f for f in field_names if f not in fields]
-        if missing:
-            raise bad_request(f"Field(s) {missing} are not in schema '{name}'.")
-        for f in field_names:
-            del fields[f]
-        c.execute(
-            "UPDATE object_schemas SET fields = ?, updated_at = ? WHERE name = ?",
-            (json.dumps(fields), now_iso(), name),
-        )
-        row = c.execute(
-            "SELECT * FROM object_schemas WHERE name = ?", (name,)
-        ).fetchone()
-    return _row_to_schema(row)
-
-
-def delete_object_schema(name, cascade=True):
-    """Delete an object type. With ``cascade`` (default) also remove its objects
-    and any associations touching them; otherwise refuse if objects exist.
+    Neighbor objects of *other* types are never deleted — only the relationship
+    metadata and the edge rows go. Relations where this type was an endpoint are
+    removed from the other types' schemas too.
     """
     with db.transaction() as c:
         row = c.execute(
@@ -141,33 +182,17 @@ def delete_object_schema(name, cascade=True):
             raise not_found(f"No object type named '{name}'.")
 
         guids = [
-            r["guid"]
-            for r in c.execute(
+            r["guid"] for r in c.execute(
                 "SELECT guid FROM objects WHERE object_type = ?", (name,)
             ).fetchall()
         ]
-
-        if guids and not cascade:
-            raise bad_request(
-                f"Object type '{name}' still has {len(guids)} object(s). "
-                "Pass cascade=true to delete them too."
-            )
-
         if guids:
             qmarks = ",".join("?" * len(guids))
             c.execute(f"DELETE FROM objects WHERE guid IN ({qmarks})", guids)
-            c.execute(
-                f"DELETE FROM associations WHERE from_guid IN ({qmarks}) "
-                f"OR to_guid IN ({qmarks})",
-                guids + guids,
-            )
 
-        # Also drop association schemas that reference this type — they are no
-        # longer satisfiable.
-        c.execute(
-            "DELETE FROM association_schemas WHERE from_type = ? OR to_type = ?",
-            (name, name),
-        )
+        # Drop relationships (and their edges) where this type is an endpoint;
+        # this also clears any edges from this type's objects to neighbors.
+        assoc.delete_relations_touching_type(c, name)
         c.execute("DELETE FROM object_schemas WHERE name = ?", (name,))
 
     return {"deleted": name, "objects_removed": len(guids)}

@@ -43,15 +43,17 @@ CREATE TABLE IF NOT EXISTS objects (
 CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(object_type);
 
 CREATE TABLE IF NOT EXISTS association_schemas (
-    name         TEXT PRIMARY KEY,
-    from_type    TEXT NOT NULL,
-    to_type      TEXT NOT NULL,
-    forward_name TEXT NOT NULL,
-    inverse_name TEXT NOT NULL,
-    cardinality  TEXT NOT NULL,
-    symmetric    INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    name                TEXT PRIMARY KEY,
+    from_type           TEXT NOT NULL,
+    to_type             TEXT NOT NULL,
+    forward_name        TEXT NOT NULL,
+    inverse_name        TEXT NOT NULL,
+    cardinality         TEXT NOT NULL,
+    symmetric           INTEGER NOT NULL DEFAULT 0,
+    forward_description TEXT,
+    inverse_description TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS associations (
@@ -101,6 +103,14 @@ def _migrate(conn):
         conn.execute(
             "ALTER TABLE association_schemas ADD COLUMN symmetric "
             "INTEGER NOT NULL DEFAULT 0"
+        )
+    if "forward_description" not in cols:
+        conn.execute(
+            "ALTER TABLE association_schemas ADD COLUMN forward_description TEXT"
+        )
+    if "inverse_description" not in cols:
+        conn.execute(
+            "ALTER TABLE association_schemas ADD COLUMN inverse_description TEXT"
         )
 
 

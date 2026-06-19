@@ -1,133 +1,185 @@
 ---
 name: morphdb
-description: Spin up an instant, schema-fluid backend for a vibe-coded app. Use when you are building an HTML/CSS/JS frontend that needs to persist and query data (todos, CRM, dashboard, tracker, any CRUD app) but you do not want to hand-write and re-migrate a database schema as the design churns. MorphDB gives you generic, stable REST endpoints; you reshape the schema with one call whenever the app's needs change, and the frontend never has to change which endpoints it calls. Trigger when the user asks for a "backend for this", "make it save data", "add a database", or "persist this" for a small/local web app.
+description: Spin up an instant, schema-fluid backend for a vibe-coded app. Use when you are building an HTML/CSS/JS frontend that needs to persist and query data (todos, CRM, dashboard, tracker, any CRUD app) but you do not want to hand-write and re-migrate a database schema as the design churns. MorphDB gives you generic, stable REST endpoints; you reshape the schema with one command whenever the app's needs change, and the frontend never has to change which endpoints it calls. Trigger when the user asks for a "backend for this", "make it save data", "add a database", or "persist this" for a small/local web app.
 ---
 
 # MorphDB — instant morphable backend for AI-built apps
 
-MorphDB is a single Python process (zero dependencies, backed by SQLite) that
-exposes **generic REST endpoints**. You — the coding agent — define and freely
-reshape the data schema through one set of endpoints, while the frontend you
-build reads and writes through another fixed set. The frontend never changes
-the *endpoints* it calls, even as you iterate the schema dozens of times.
+MorphDB is a single Python process (zero dependencies, backed by SQLite) with
+**two surfaces**:
 
-The whole point: **schema changes are O(1) and instant** (lazy invalidation —
-no migrations, no rewriting rows), so you can iterate the data model as fast as
-you iterate the UI.
+- **Schema** — the data model. *You*, the agent, reshape it with the
+  `morphdb_schema` CLI (don't hand-write curl for schema edits).
+- **Objects** — the data. The *frontend you build* reads/writes it over plain
+  HTTP (`fetch`/curl), because that frontend will call these endpoints directly
+  in the running app.
+
+Schema changes are **O(1) and instant** (lazy invalidation — no migrations, no
+rewriting rows), so you iterate the data model as fast as you iterate the UI,
+and the frontend never changes which endpoints it calls.
 
 ## When to use it
 
-Use MorphDB when building a small data-backed web app and you want persistence
-without committing to a rigid backend early. Todo apps, trackers, CRMs,
-dashboards, inventory tools, note apps — anything that is "CRUD + relationships".
+Small data-backed web app that wants persistence without a rigid backend: todos,
+trackers, CRMs, dashboards, inventory, notes — "CRUD + relationships".
 
-Do **not** reach for it when the user already has a real backend/database, or
-needs multi-tenant auth, horizontal scale, or strong durability guarantees.
-It is a localhost-scale dev tool.
+Do **not** use it when the user already has a real backend/database, or needs
+multi-tenant auth, horizontal scale, or strong durability. It is a
+localhost-scale dev tool.
 
 ## Start the server
 
 ```bash
 # from the morphdb repo (no install needed — pure stdlib):
 python3 -m morphdb --port 8787 --db ./app.sqlite3
-# or, if installed:  morphdb --port 8787 --db ./app.sqlite3
 ```
 
-It serves on `http://127.0.0.1:8787`. Data persists in the SQLite file. CORS is
-wide open, so a frontend served from any origin (a `file://` page, a Vite dev
-server, etc.) can call it directly.
+Serves on `http://127.0.0.1:8787`. Data persists in the SQLite file. CORS is
+wide open, so a frontend on any origin can call it. `curl .../help` prints the
+live endpoint reference.
 
-`curl http://127.0.0.1:8787/help` prints the full live endpoint reference.
+## Mental model
 
-## The two-layer workflow
+A **type** is one schema document: `fields` (raw values) + `relations` (links to
+other types). An **object** is an instance with a `_guid`. A **relation** is
+declared once on one type and is read/written **like a field** on the object —
+a neighbor guid (to-one) or a list of guids (to-many). It shows up on both
+types automatically (the inverse).
 
-### 1. Define the schema (you, the agent)
+System fields on every object: `_guid`, `_type`, `_created_at`, `_updated_at`.
+Field types: `string`, `number`, `boolean`, `json`, `datetime`.
 
-Object types have typed fields. Field types: `string`, `number`, `boolean`,
-`json`, `datetime`.
+## 1. Reshape the schema with the CLI (you, the agent)
+
+Use `skill/scripts/morphdb_schema.py` (set `MORPHDB_URL` or pass `--url`; default
+`http://127.0.0.1:8787`). Don't curl the schema endpoints by hand.
 
 ```bash
-curl -X POST http://127.0.0.1:8787/schemas/objects -d '{
-  "name": "task",
-  "fields": { "title": "string", "done": "boolean", "priority": "number" }
-}'
+S="python3 skill/scripts/morphdb_schema.py"      # adjust path to the skill dir
+
+# create / extend a type — add-field is idempotent (merge), so safe to re-run
+$S add-field task title  string
+$S add-field task done   boolean --default false
+$S add-field task priority number
+
+# a relation: declared once on `task`; `user.tasks` appears automatically.
+# many tasks → one user, so task.assignee is one guid and user.tasks is a list.
+$S add-relation task assignee --to user --cardinality many_to_one --inverse tasks
+
+# a mutual relation within one type (friends): symmetric, one shared label
+$S add-relation user friends --to user --cardinality many_to_many --symmetric
+
+# inspect / drop
+$S show task
+$S list
+$S drop-field   task priority      # data hidden, not destroyed; re-add to recover
+$S drop-relation task assignee     # also removes its edges
+$S delete-type  task               # type + its objects + their edges (neighbors survive)
 ```
 
-Change your mind later? Just morph it — existing data is untouched and reread
-through the new schema:
+For anything the subcommands don't cover, send a raw schema document:
 
 ```bash
-# add a field (merge keeps the rest)
-curl -X PUT http://127.0.0.1:8787/schemas/objects/task \
-  -d '{ "merge": true, "fields": { "due": "datetime", "tags": "json" } }'
-
-# drop a field (its data is hidden, not destroyed — re-add it to recover values)
-curl -X POST http://127.0.0.1:8787/schemas/objects/task/delete-fields \
-  -d '{ "fields": ["priority"] }'
+$S set task --json '{"merge":true,"fields":{"due":"datetime"},
+  "relations":{"tags":{"to":"tag","cardinality":"many_to_many","inverse":"tasks"}}}'
 ```
 
-Relationships are "association types" with a cardinality
-(`one_to_one`, `one_to_many`, `many_to_one`, `many_to_many`) and a human label
-for each direction:
+Cardinalities: `one_to_one`, `one_to_many`, `many_to_one`, `many_to_many`
+(`X_to_Y` → the *from* side sees `Y`, the *to* side sees `X`).
 
-```bash
-curl -X POST http://127.0.0.1:8787/schemas/associations -d '{
-  "name": "assignment", "from_type": "user", "to_type": "task",
-  "forward_name": "tasks", "inverse_name": "assignee",
-  "cardinality": "one_to_many"
-}'
+## 2. Read & write data through the object endpoints (the frontend you build)
+
+The **object endpoints** are the stable, generic surface the frontend calls at
+runtime — they never change as you morph the schema. The frontend is what calls
+them, so write `fetch` against them (don't route FE data access through the
+schema CLI; that's for you, the agent, editing the model).
+
+Relations are just fields on the object body: a guid for to-one, a list of guids
+for to-many.
+
+### The object endpoints
+
+| Method & path | Purpose |
+| --- | --- |
+| `POST /objects/{type}` | Create. Body = field + relation values. Returns the object with `_guid`. |
+| `GET /objects/{type}` | List/query. `?field=…`, `field__gt/gte/lt/lte/ne/contains/in/exists`, `sort`, `order`, `limit`, `offset`. |
+| `GET /objects/{type}/{guid}` | Read one (type-checked). |
+| `GET /object/{guid}` | Read one by guid alone. |
+| `PATCH /objects/{type}/{guid}` | Merge fields; set any relations present (create if absent). |
+| `PUT /objects/{type}/{guid}` | Replace fields; set any relations present (create if absent). |
+| `DELETE /objects/{type}/{guid}` | Delete object + its edges (neighbors survive). |
+
+List returns `{objects, total, limit, offset}` (`total` = full filtered count).
+
+### A drop-in FE client
+
+```js
+// MorphDB object-endpoint client — paste into the frontend you build.
+const BASE = "http://127.0.0.1:8787";
+
+async function db(method, path, body) {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = res.status === 204 ? null : await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+// create — set relations inline, just like fields
+const ann  = await db("POST", "/objects/user", { name: "Ann" });
+const task = await db("POST", "/objects/task",
+  { title: "buy milk", done: false, assignee: ann._guid });
+
+// read — relations come back as guids (task.assignee; and on the user: tasks)
+await db("GET", `/objects/task/${task._guid}`);   // { …, assignee: "user_…" }
+await db("GET", `/objects/user/${ann._guid}`);     // { …, tasks: ["task_…"] }
+
+// list + query
+const { objects, total } = await db("GET",
+  "/objects/task?done=false&sort=priority&order=desc&limit=20");
+
+// update — relations are set-as-field (the value becomes the whole set)
+await db("PATCH", `/objects/task/${task._guid}`, { done: true });
+await db("PATCH", `/objects/task/${task._guid}`, { assignee: otherUserGuid }); // re-link (last write wins)
+await db("PATCH", `/objects/user/${ann._guid}`,  { tasks: [t1, t2] });          // set the whole set
+await db("PATCH", `/objects/task/${task._guid}`, { assignee: null });           // clear
+await db("DELETE", `/objects/task/${task._guid}`);
 ```
 
-For a mutual relationship within one type (friends, peers) add `"symmetric": true`
-(requires `from_type == to_type`, cardinality `one_to_one` or `many_to_many`).
-A–B and B–A are then the same edge — created once in either order, counted once,
-traversable from both ends.
-
-### 2. Read & write data (the frontend you build)
-
-Every object gets a globally unique `_guid`. System fields are `_guid`, `_type`,
-`_created_at`, `_updated_at`; everything else is your fields, flat.
+Quick manual poke from the shell (same endpoints):
 
 ```bash
-# create  -> returns the object incl. _guid
-curl -X POST http://127.0.0.1:8787/objects/task -d '{"title":"buy milk","done":false}'
-
-# read one
-curl http://127.0.0.1:8787/objects/task/<guid>
-
-# list + query (operators: __gt __gte __lt __lte __ne __contains __in __exists)
-curl "http://127.0.0.1:8787/objects/task?done=false&sort=priority&order=desc&limit=20"
-
-# patch (merge) / put (replace) / delete
-curl -X PATCH  http://127.0.0.1:8787/objects/task/<guid> -d '{"done":true}'
-curl -X DELETE http://127.0.0.1:8787/objects/task/<guid>
-
-# link two objects, then traverse
-curl -X POST http://127.0.0.1:8787/associations \
-  -d '{"assoc_name":"assignment","from_guid":"<user>","to_guid":"<task>"}'
-curl "http://127.0.0.1:8787/object/<user>/associations?relation=tasks&expand=true"
+B=http://127.0.0.1:8787
+curl -X POST $B/objects/task -d '{"title":"buy milk","done":false}'
+curl "$B/objects/task?done=false&sort=priority&order=desc&limit=20"
 ```
 
 ## Recipe for building an app
 
 1. Start MorphDB pointed at a project-local `.sqlite3` file.
-2. Sketch the object types and define them with `POST /schemas/objects`.
-3. Build the frontend (plain `fetch`) against the generic data endpoints.
-   Point all calls at `http://127.0.0.1:8787`.
-4. When the UI needs a new field or relationship, morph the schema with **one**
-   call — do not rewrite stored data, do not touch the frontend's endpoint URLs.
-5. Have the frontend ensure its own schema on load (idempotent `PUT
-   /schemas/objects/<type>`), so the app is self-bootstrapping.
+2. Define the object types and relations with the `morphdb_schema` CLI.
+3. Build the frontend (plain `fetch`) against `/objects/...` — relations are
+   fields, so the UI just reads/writes guids.
+4. When the UI needs a new field or relation, run **one** CLI command — no data
+   rewrite, no change to the frontend's endpoint URLs.
 
 ## Gotchas
 
-- Writing a field not in the schema is rejected (400) — add it to the schema
-  first. This catches typos early.
+- Writing a field/relation not in the schema is rejected (400) — declare it
+  first. Catches typos early.
 - Values are coerced to the declared type; `"yes"`/`1` → boolean `true`, numeric
   strings → numbers. A boolean for a `number` field is rejected.
-- Associations enforce cardinality and return 409 on conflict; pass
-  `?replace=true` to steal an existing exclusive edge.
-- Self edges (`from_guid == to_guid`) are rejected.
-- Deleting an object type cascades to its objects and their edges by default.
+- A relation may not share a name with a field on the same type. A non-symmetric
+  self-relation needs distinct forward/inverse names (or use `--symmetric`).
+- Setting a relation is set-as-field (the value becomes its full set). For a
+  single-valued slot already taken, **last write wins** (the old link is moved).
+  `null`/`[]` clears.
+- Deleting an object removes only its edges; neighbor objects survive. Deleting
+  a *type* removes its own objects + their edges, but not neighbor objects.
+- After a field **retype**, an old-typed value reads as unset (default/null)
+  until rewritten. Filtering is on fields, not relations.
 
 See the repo `README.md` for the complete reference.
