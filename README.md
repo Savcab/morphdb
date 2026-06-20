@@ -7,6 +7,8 @@ keeps calling the same small set of generic, deterministic endpoints. One
 process hosts many isolated apps (one per site), zero dependencies, backed by
 SQLite.
 
+📖 **[Visual explainer → morphdb.pages.dev](https://morphdb.pages.dev)** — the whole idea (schema-fluid, API-stable), the agent/frontend split, relations, and how Claude plugs in over MCP, on one page.
+
 ## Install
 
 ```bash

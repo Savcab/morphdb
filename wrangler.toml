@@ -1,0 +1,5 @@
+# Cloudflare Pages config for the MorphDB explainer site (site/index.html).
+# Production lives at https://morphdb.pages.dev — redeploy with:
+#   CLOUDFLARE_ACCOUNT_ID=<id> npx wrangler pages deploy
+name = "morphdb"
+pages_build_output_dir = "site"
