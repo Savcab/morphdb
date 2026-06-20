@@ -34,11 +34,18 @@ localhost-scale dev tool.
 
 ## The MorphDB tools (how you reshape the data model)
 
-These come from the `morphdb` MCP server. If you can see tools named `add_field`,
-`describe_type`, etc. (in Claude Code they appear as `mcp__morphdb__add_field`),
-use them. They each take the app key as `app` (or default to the `$MORPHDB_APP`
-env var). The tools talk to the backend for you and **auto-start it** if it is
-not running, so you don't have to manage the server in the common case.
+These come from the `morphdb` MCP server. **First, check which path you're on:**
+look for tools named `add_field` / `add_relation` (in Claude Code they appear as
+`mcp__morphdb__add_field`). **If you see them, use them** (this section). **If you
+don't** — a hosted `MORPHDB_HOST` setup, or the MCP server just isn't wired up —
+don't keep trying to call them and don't give up: skip to the **"Fallback: no
+MorphDB tools available?"** section at the end and drive the bundled script
+instead. Everything else in this skill (the data model, the endpoints, the
+queries) applies either way.
+
+When the tools are present, they each take the app key as `app` (or default to the
+`$MORPHDB_APP` env var). The tools talk to the backend for you and **auto-start it**
+if it is not running, so you don't have to manage the server in the common case.
 
 | Tool | What it does |
 | --- | --- |
@@ -276,6 +283,12 @@ applies here — cheap context that keeps later edits consistent.
   strings → numbers. A boolean for a `number` field is rejected.
 - A relation may not share a name with a field on the same type. A non-symmetric
   self-relation needs distinct forward/inverse names (or use `symmetric`).
+- The **inverse** of a relation shows up on the *other* type, not in the
+  `add_relation` response — `describe_type` the target type to see it (declare
+  `order.customer`, and `customer.orders` appears on `customer`). Inverse names only
+  need to be unique on the type they land on, so two relations can reuse an inverse
+  label when they point at **different** target types (`review.book` and
+  `review.author` can both use inverse `reviews`).
 - Setting a relation is set-as-field (the value becomes its full set). For a
   single-valued slot already taken, **last write wins** (the old link is moved).
   `null`/`[]` clears.
@@ -296,12 +309,15 @@ still do schema edits with the bundled zero-dependency script — it hits the sa
 HTTP API and takes `--app KEY` (or `$MORPHDB_APP`):
 
 ```bash
-S="python3 ~/.claude/skills/morphdb/scripts/morphdb_schema.py"
-$S register-app my-cool-site
+# define a helper (a function works in both bash and zsh; a "VAR=…; $VAR"
+# alias does NOT word-split in zsh, so use this form)
+mdb() { python3 ~/.claude/skills/morphdb/scripts/morphdb_schema.py "$@"; }
+mdb register-app my-cool-site
 export MORPHDB_APP=my-cool-site
-$S add-field task title string
-$S add-relation task assignee --to user --cardinality many_to_one --inverse tasks
-$S list ; $S show task
+mdb add-field task title string
+mdb add-field task status string --index   # --index → filterable/sortable (like index:true)
+mdb add-relation task assignee --to user --cardinality many_to_one --inverse tasks
+mdb list ; mdb show task
 ```
 
 Prefer the tools when they exist; the script is the no-MCP fallback. To wire the

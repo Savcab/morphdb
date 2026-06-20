@@ -23,7 +23,7 @@ Usage:
     list                          Show every type in the app (fields + relations).
     show   <type>                 Show one type's schema.
 
-    add-field    <type> <name> <ftype> [--default V] [--required]
+    add-field    <type> <name> <ftype> [--default V] [--required] [--index]
     drop-field   <type> <name>
 
     add-relation <type> <name> --to T --cardinality C
@@ -43,6 +43,10 @@ Cardinalities: one_to_one, one_to_many, many_to_one, many_to_many.
 A relation is declared once (on the "from" side); its inverse appears
 automatically on the other type. Use --symmetric for mutual links within one
 type (to == <type>, cardinality one_to_one or many_to_many).
+
+Indexing: a field can only be filtered or sorted (GET /objects/{type}?field=…)
+if it was added with --index (json fields can't be indexed). Relations are
+always filterable without a flag. Index the few fields you actually query.
 """
 
 import argparse
@@ -141,6 +145,8 @@ def cmd_add_field(url, app, args):
         fdef["default"] = _parse_default(args.default)
     if args.required:
         fdef["required"] = True
+    if args.index:
+        fdef["index"] = True
     # merge:true so existing fields/relations are untouched.
     doc = {"merge": True, "fields": {args.name: fdef}}
     _pretty(_put_type(url, app, args.type, doc))
@@ -222,7 +228,8 @@ def cmd_set(url, app, args):
 def build_parser():
     p = argparse.ArgumentParser(prog="morphdb_schema", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--url", default=DEFAULT_URL, help=f"MorphDB base URL (default {DEFAULT_URL})")
+    p.add_argument("--url", default=DEFAULT_URL,
+                   help=f"MorphDB base URL (default {DEFAULT_URL}; or set $MORPHDB_HOST)")
     p.add_argument("--app", default=None,
                    help="App key (default $MORPHDB_APP). Required except for register-app/delete-app.")
     sub = p.add_subparsers(dest="command", required=True)
@@ -241,6 +248,9 @@ def build_parser():
     sp.add_argument("type"); sp.add_argument("name")
     sp.add_argument("ftype", choices=["string", "number", "boolean", "json", "datetime"])
     sp.add_argument("--default"); sp.add_argument("--required", action="store_true")
+    sp.add_argument("--index", action="store_true",
+                    help="make this field filterable/sortable (backfills existing "
+                         "objects; json can't be indexed)")
     sp.set_defaults(func=cmd_add_field)
 
     sp = sub.add_parser("drop-field")
