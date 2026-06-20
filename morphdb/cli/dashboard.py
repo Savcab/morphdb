@@ -4,10 +4,11 @@ Operator-facing and local-only — it opens the SQLite file directly (read-only)
 rather than going through the HTTP API, so it can list apps without adding a
 "list apps" endpoint to the public surface (which is intentionally absent).
 
-The page renders each app's types as an interactive ER-style graph (type nodes +
-crow's-foot relation edges) plus a complete table; the graph and modals are
-progressive enhancement over server-rendered HTML, with zero external
-dependencies (inline CSS/SVG/JS only).
+The page has two tabs: a **Data model** view (each app's types as an interactive
+ER-style graph — type nodes + crow's-foot relation edges — plus a complete table)
+and a **Tables · raw** view (every underlying SQLite table with its columns and
+rows, capped per table). The graph and modals are progressive enhancement over
+server-rendered HTML, with zero external dependencies (inline CSS/SVG/JS only).
 """
 
 import html
@@ -68,9 +69,44 @@ def gather(db):
                 "SELECT COUNT(*) FROM associations WHERE app=?", (app,)).fetchone()[0]
             out.append({"app": app, "types": types,
                         "relations": relations, "edges": edges})
-        return {"apps": out}
+        return {"apps": out, "tables": _gather_tables(c)}
     finally:
         c.close()
+
+
+# Per-table row cap for the raw "Tables" explorer — keeps the generated page a
+# sane size even when a type has tens of thousands of objects. The total is still
+# reported, so a truncated table reads as "first N of TOTAL", never as "all".
+_ROW_CAP = 250
+
+# Show the logical tables in dependency order (tenant root first), then anything
+# else SQLite reports, so the explorer reads top-down like the data model.
+_TABLE_ORDER = ["apps", "object_schemas", "objects", "field_index",
+                "association_schemas", "associations"]
+
+
+def _gather_tables(c, cap=_ROW_CAP):
+    """Every real table in the database with its columns and (capped) rows::
+
+        [{name, columns: [str], rows: [[cell, ...]], total: int, shown: int}]
+
+    Reads straight from ``sqlite_master`` so it shows whatever tables exist,
+    skipping SQLite's internal ``sqlite_*`` bookkeeping tables.
+    """
+    names = [r["name"] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%'")]
+    names.sort(key=lambda n: (_TABLE_ORDER.index(n) if n in _TABLE_ORDER
+                              else len(_TABLE_ORDER), n))
+    tables = []
+    for name in names:
+        cols = [r["name"] for r in c.execute(f'PRAGMA table_info("{name}")')]
+        total = c.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+        rows = [[r[col] for col in cols]
+                for r in c.execute(f'SELECT * FROM "{name}" LIMIT {int(cap)}')]
+        tables.append({"name": name, "columns": cols, "rows": rows,
+                       "total": total, "shown": len(rows)})
+    return tables
 
 
 # --- presentation -------------------------------------------------------------
@@ -239,6 +275,35 @@ footer b { color:var(--dim); }
 .rel small { color:var(--faint); }
 .none { color:var(--faint); font:12px/1.4 var(--mono); }
 
+/* tabs */
+.tabs { display:flex; gap:2px; margin:6px 0 20px; border-bottom:1px solid var(--line); }
+.tab { background:none; border:0; border-bottom:2px solid transparent; color:var(--dim);
+       font:600 13px/1 var(--sans); letter-spacing:.01em; padding:11px 16px 12px;
+       cursor:pointer; margin-bottom:-1px; }
+.tab:hover { color:var(--ink); }
+.tab--on { color:var(--accent); border-bottom-color:var(--accent); }
+.view { display:none; } .view--on { display:block; }
+
+/* raw table explorer */
+.rawtable .panel__cap h3 { font:600 13.5px/1 var(--mono); text-transform:none;
+                           letter-spacing:0; color:var(--ink); }
+.rawtable .panel__cap h3::before { content:"⊞ "; color:var(--violet); }
+.rawnote { color:var(--dim); font:11.5px/1 var(--mono); white-space:nowrap; }
+.rawnote b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+.tscroll { overflow:auto; max-height:540px; border-radius:0 0 11px 11px; }
+table.raw { min-width:100%; border-collapse:collapse; }
+table.raw thead th { position:sticky; top:0; z-index:1; background:var(--node);
+  color:var(--dim); font:600 11px/1 var(--mono); text-transform:none; letter-spacing:0;
+  text-align:left; white-space:nowrap; padding:9px 13px;
+  border-bottom:1px solid var(--line); }
+table.raw td { padding:7px 13px; border-bottom:1px solid var(--line-soft);
+  font:12px/1.5 var(--mono); color:var(--ink); white-space:nowrap; vertical-align:top;
+  max-width:420px; overflow:hidden; text-overflow:ellipsis; }
+table.raw tbody tr:hover td { background:var(--node); }
+table.raw tbody tr:last-child td { border-bottom:0; }
+.raw .null { color:var(--faint); font-style:italic; }
+.rawempty { color:var(--faint); text-align:center; padding:22px; }
+
 @media (prefers-reduced-motion: no-preference) {
   .app__body { animation:fade .26s ease; }
   .gedge, .gfoot { stroke-dasharray:1; }
@@ -304,28 +369,72 @@ def _app_card(a, idx):
         f"<div class='app__body'>{body}</div></section>")
 
 
+def _cell(v):
+    """One raw table cell: NULLs marked, long values clipped (full text on hover)."""
+    if v is None:
+        return "<span class='null'>NULL</span>"
+    s = str(v)
+    if len(s) > 200:
+        return f"<span title=\"{_esc(s)}\">{_esc(s[:200])}…</span>"
+    return _esc(s)
+
+
+def _raw_tables_html(tables):
+    """The 'Tables · raw' view: every SQLite table with its columns and rows."""
+    if not tables:
+        return "<div class='empty'>No tables in this database.</div>"
+    out = []
+    for t in tables:
+        head = "".join(f"<th>{_esc(col)}</th>" for col in t["columns"])
+        if t["rows"]:
+            body = "".join(
+                "<tr>" + "".join(f"<td>{_cell(v)}</td>" for v in row) + "</tr>"
+                for row in t["rows"])
+        else:
+            span = max(1, len(t["columns"]))
+            body = f"<tr><td colspan='{span}' class='rawempty'>— empty —</td></tr>"
+        capped = t["total"] > t["shown"]
+        note = (f"showing first <b>{t['shown']:,}</b> of <b>{t['total']:,}</b> rows"
+                if capped else f"<b>{t['total']:,}</b> row{'s' * (t['total'] != 1)}")
+        out.append(
+            "<div class='panel rawtable'>"
+            f"<div class='panel__cap'><h3>{_esc(t['name'])}</h3>"
+            f"<span class='rawnote'>{note}</span></div>"
+            f"<div class='tscroll'><table class='raw'><thead><tr>{head}</tr></thead>"
+            f"<tbody>{body}</tbody></table></div></div>")
+    return "".join(out)
+
+
 def render(data, db):
     if data.get("error"):
         body = (f"<div class='err'>{_esc(data['error'])}<br><br>"
                 f"Point the dashboard at a MorphDB database with "
                 f"<code>morphdb dashboard --db PATH</code>.</div>")
-    elif not data["apps"]:
-        body = ("<div class='empty'>No apps yet. Register one with "
-                "<code>POST /app</code> (or the <code>register_app</code> tool) and "
-                "it shows up here.</div>")
     else:
         apps = data["apps"]
-        n_obj = sum(t["count"] for a in apps for t in a["types"])
-        n_types = sum(len(a["types"]) for a in apps)
-        n_rel = sum(len(a["relations"]) for a in apps)
-        summary = (
-            "<div class='summary'>"
-            f"<div class='stat'><div class='num'>{len(apps):,}</div><div class='lab'>Apps</div></div>"
-            f"<div class='stat'><div class='num'>{n_types:,}</div><div class='lab'>Types</div></div>"
-            f"<div class='stat'><div class='num'>{n_rel:,}</div><div class='lab'>Relations</div></div>"
-            f"<div class='stat'><div class='num'>{n_obj:,}</div><div class='lab'>Objects</div></div>"
-            "</div>")
-        body = summary + "".join(_app_card(a, i) for i, a in enumerate(apps))
+        if apps:
+            n_obj = sum(t["count"] for a in apps for t in a["types"])
+            n_types = sum(len(a["types"]) for a in apps)
+            n_rel = sum(len(a["relations"]) for a in apps)
+            summary = (
+                "<div class='summary'>"
+                f"<div class='stat'><div class='num'>{len(apps):,}</div><div class='lab'>Apps</div></div>"
+                f"<div class='stat'><div class='num'>{n_types:,}</div><div class='lab'>Types</div></div>"
+                f"<div class='stat'><div class='num'>{n_rel:,}</div><div class='lab'>Relations</div></div>"
+                f"<div class='stat'><div class='num'>{n_obj:,}</div><div class='lab'>Objects</div></div>"
+                "</div>")
+            model_view = summary + "".join(_app_card(a, i) for i, a in enumerate(apps))
+        else:
+            model_view = ("<div class='empty'>No apps yet. Register one with "
+                          "<code>POST /app</code> (or the <code>register_app</code> "
+                          "tool) and it shows up here.</div>")
+        body = (
+            "<div class='tabs'>"
+            "<button class='tab tab--on' type='button' data-view='model'>Data model</button>"
+            "<button class='tab' type='button' data-view='tables'>Tables · raw</button>"
+            "</div>"
+            f"<div class='view view--on' id='view-model'>{model_view}</div>"
+            f"<div class='view' id='view-tables'>{_raw_tables_html(data.get('tables', []))}</div>")
 
     model = json.dumps(data.get("apps", [])).replace("</", "<\\/")
     return (
@@ -715,6 +824,23 @@ _JS = r"""
     row.addEventListener('click', go);
     row.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+    });
+  });
+
+  // --- tabs: Data model <-> Tables (raw) ---
+  document.querySelectorAll('.tab').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var v = btn.dataset.view;
+      document.querySelectorAll('.tab').forEach(function (b) {
+        b.classList.toggle('tab--on', b === btn);
+      });
+      document.querySelectorAll('.view').forEach(function (view) {
+        view.classList.toggle('view--on', view.id === 'view-' + v);
+      });
+      // graphs measure their container, so (re)build any now-visible open ones
+      if (v === 'model') {
+        document.querySelectorAll('.app--open .graph[data-app]').forEach(buildGraph);
+      }
     });
   });
 
