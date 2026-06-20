@@ -132,14 +132,20 @@ guid for to-one, a list of guids for to-many). Use `query_objects` only when
 | Method & path | Purpose |
 | --- | --- |
 | `POST /objects/{type}` | Create. Body = field + relation values. Returns the object with `_guid`. |
-| `GET /objects/{type}` | List/query. Field filters `?field=…` (`field__gt/gte/lt/lte/ne/contains/in/exists`); **relation filters** `?rel=<guid>` (`rel__in/__ne/__exists`); `sort`, `order`, `limit`, `offset`. |
-| `GET /objects/{type}/{guid}` | Read one (type-checked). |
-| `GET /object/{guid}` | Read one by guid alone. |
+| `GET /objects/{type}` | List/query. Field filters `?field=…` (`__gt/gte/lt/lte/ne/contains/in/exists`, **indexed fields only**); **relation filters** `?rel=<guid>` (`rel__in/__ne/__exists`); **`include`** to nest relations; `sort`, `order`, `limit`, `offset`. |
+| `GET /objects/{type}/{guid}` | Read one (type-checked). `?include=…` nests relations. |
+| `GET /object/{guid}` | Read one by guid alone. Supports `?include=…`. |
 | `PATCH /objects/{type}/{guid}` | Merge fields; set any relations present (create if absent). |
 | `PUT /objects/{type}/{guid}` | Replace fields; set any relations present (create if absent). |
 | `DELETE /objects/{type}/{guid}` | Delete object + its edges (neighbors survive). |
 
 List returns `{objects, total, limit, offset}` (`total` = full filtered count).
+
+**Nested reads — `include`.** By default a relation comes back as a guid (to-one)
+or list of guids (to-many). Add `?include=<rel>,<rel>.<subrel>` to replace those
+with the full neighbor object(s), nested Prisma-style — `?include=author,comments.author`
+(comma-separated paths, dots go deeper). Read-only, depth ≤ 4, batched (no N+1).
+Writes stay flat: create/update with guids, never nested objects.
 
 ### A drop-in FE client
 
@@ -171,6 +177,10 @@ const task = await db("POST", "/objects/task",
 // read — relations come back as guids (task.assignee; and on the user: tasks)
 await db("GET", `/objects/task/${task._guid}`);   // { …, assignee: "user_…" }
 await db("GET", `/objects/user/${ann._guid}`);     // { …, tasks: ["task_…"] }
+
+// …or hydrate relations into nested objects with include (Prisma-style)
+await db("GET", `/objects/task/${task._guid}?include=assignee`); // assignee = {…full user}
+await db("GET", `/objects/user/${ann._guid}?include=tasks`);     // tasks = [{…full task}]
 
 // list + query (field filters)
 const { objects, total } = await db("GET",

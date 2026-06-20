@@ -342,12 +342,16 @@ TOOLS = [
     _tool("query_objects",
           "Read-only: list/query objects of a type for DEBUGGING (inspect data the "
           "site wrote). The frontend should call the HTTP object endpoints itself; "
-          "this is for you to peek. query is a raw query string, e.g. "
-          "'done=false&sort=priority&order=desc&limit=20'.",
+          "this is for you to peek. query is a raw query string of filters (on "
+          "INDEXED fields), sort, pagination, and include — e.g. "
+          "'done=false&sort=priority&order=desc&limit=20' or "
+          "'include=author,comments.by' to hydrate relations into nested objects.",
           {**_APP,
            "type": {"type": "string"},
            "query": {"type": "string",
-                     "description": "Optional URL query string of filters."}},
+                     "description": "Optional URL query string: filters on indexed "
+                                    "fields, sort, limit/offset, and "
+                                    "include=<rel>,<rel>.<subrel> to nest relations."}},
           ["type"]),
 ]
 

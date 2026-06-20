@@ -334,6 +334,22 @@ comparisons (`gt`/`lt`/`contains`) are field-only; relations support
 `eq`/`ne`/`in`/`exists`. So **model a foreign key as a relation, not a string
 field** — you keep one-read traversal *and* get filtering, indexed, for free.
 
+### Including related objects
+
+By default a relation reads back as a guid (to-one) or list of guids (to-many).
+Add `?include=` with comma-separated relation paths (dots nest) to hydrate them
+into the full neighbor objects, nested Prisma-style:
+
+```
+GET /objects/post?include=author,comments,comments.author
+# each post.author becomes a full user; post.comments a list of full comments,
+# and each comment.author a full user too.
+```
+
+Works on the list endpoint and both single-object reads. Read-only, depth ≤ 4,
+and batched (one query per relation per level — no N+1). Writes stay flat: create
+and update with guids, never nested objects.
+
 ## Errors
 
 JSON shape: `{"error": {"code": "...", "message": "...", ...extra}}`.

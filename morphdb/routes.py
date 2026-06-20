@@ -151,17 +151,19 @@ def list_objects(req):
     offset = q.pop("offset", 0)
     sort = q.pop("sort", None)
     order = q.pop("order", "asc")
+    include = q.pop("include", None)
     # everything left in q is a field filter
     return objs.list_objects(
         app, req.params["type"], filters=q, limit=limit, offset=offset,
-        sort=sort, order=order,
+        sort=sort, order=order, include=include,
     )
 
 
 @router.route("GET", "/objects/{type}/{guid}")
 def get_object_typed(req):
     app = apps.require_app(req)
-    return objs.get_object(app, req.params["guid"], object_type=req.params["type"])
+    return objs.get_object(app, req.params["guid"], object_type=req.params["type"],
+                           include=req.query.get("include"))
 
 
 @router.route("PUT", "/objects/{type}/{guid}")
@@ -187,7 +189,7 @@ def delete_object(req):
 @router.route("GET", "/object/{guid}")
 def get_object_by_guid(req):
     app = apps.require_app(req)
-    return objs.get_object(app, req.params["guid"])
+    return objs.get_object(app, req.params["guid"], include=req.query.get("include"))
 
 
 # --- self-documenting reference (served at GET /help) -------------------------
@@ -218,9 +220,9 @@ ENDPOINT_REFERENCE = {
     },
     "object endpoints (your frontend — read/write data)": {
         "POST /objects/{type}": "Create an object. Body: field + relation values. Returns it with _guid.",
-        "GET /objects/{type}": "List/query. Query: field filters (field, field__gt, field__contains, field__in, ...), relation filters (rel=<guid>, rel__in, rel__ne, rel__exists), limit, offset, sort, order.",
-        "GET /objects/{type}/{guid}": "Read one object (fields + relation guids).",
-        "GET /object/{guid}": "Read one object by guid alone.",
+        "GET /objects/{type}": "List/query. Query: field filters on INDEXED fields (field, field__gt, field__contains, field__in, ...), relation filters (rel=<guid>, rel__in, rel__ne, rel__exists), limit, offset, sort (indexed field), order, include.",
+        "GET /objects/{type}/{guid}": "Read one object (fields + relation guids). ?include=<paths> hydrates relations into nested objects.",
+        "GET /object/{guid}": "Read one object by guid alone. Supports ?include=<paths>.",
         "PUT /objects/{type}/{guid}": "Replace an object's fields (create if absent). Relations present in the body are set.",
         "PATCH /objects/{type}/{guid}": "Merge fields into an object (create if absent). Relations present in the body are set.",
         "DELETE /objects/{type}/{guid}": "Delete an object and its edges (neighbors survive).",
@@ -235,6 +237,7 @@ ENDPOINT_REFERENCE = {
         "read": "Relation values appear in the object body: a guid (to-one) or list of guids (to-many).",
         "write": "Set a relation like a field: {\"assignee\": \"<guid>\"} or {\"tags\": [\"<g1>\", \"<g2>\"]}. null/[] clears. Last write wins on conflict.",
         "filter": "Filter a list by a relation, like an ORM foreign key: ?assignee=<guid> (linked to it), ?assignee__in=<g1>,<g2>, ?assignee__ne=<guid>, ?assignee__exists=true|false. Combine with field filters/sort/pagination. Resolved through the indexed edge table, so it is index-backed.",
+        "include": "Hydrate relations into nested objects instead of guids: ?include=author,comments,comments.author (comma-separated, dots nest). Works on the list and single-object reads; read-only, depth <= 4, batched (no N+1). Without include a relation stays a guid / list of guids.",
         "symmetric": "Set symmetric:true (to == this type, one_to_one|many_to_many) for mutual links like friends — one shared label, edge counted once.",
     },
     "headers": {
@@ -249,7 +252,9 @@ ENDPOINT_REFERENCE = {
         "datetime values are validated as ISO-8601 (or epoch seconds) and normalized.",
         "number fields reject NaN/Infinity.",
         "schema edits are O(1) and lazy: after a field retype, an old-typed value reads as unset until rewritten.",
+        "a field is filterable/sortable only when declared with index:true; otherwise a filter/sort on it returns 400. Enabling the flag backfills existing objects; json fields can't be indexed.",
         "relations are stored as single-row edges and read/written as object fields; they are filterable on the list endpoint (?rel=<guid>, __in/__ne/__exists), resolved through the indexed edge table — think ORM foreign key, not a separate join.",
+        "include hydrates relations into nested objects on reads (?include=author,comments.author); read-only, depth <= 4, batched (no N+1). Writes stay flat — create/update with guids, never nested objects.",
         "relation targets must be objects in the same app; cross-app links are rejected.",
     ],
 }

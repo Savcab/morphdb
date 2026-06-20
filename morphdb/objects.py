@@ -176,7 +176,7 @@ def delete_object(app, guid):
 # --- reads --------------------------------------------------------------------
 
 
-def get_object(app, guid, object_type=None):
+def get_object(app, guid, object_type=None, include=None):
     row = db.conn().execute(
         "SELECT * FROM objects WHERE app = ? AND guid = ?", (app, guid)
     ).fetchone()
@@ -187,7 +187,10 @@ def get_object(app, guid, object_type=None):
             f"Object '{guid}' is of type '{row['object_type']}', not '{object_type}'."
         )
     schema = get_object_schema(app, row["object_type"], required=True)
-    return _project_full(app, row, schema["fields"], row["object_type"])
+    full = _project_full(app, row, schema["fields"], row["object_type"])
+    if include:
+        _resolve_includes(app, full["_type"], [full], _parse_include(include))
+    return full
 
 
 def _classify_filter_key(key, fields, rel_views):
@@ -472,7 +475,7 @@ def _build_where(app, object_type, filters, fields, rel_views):
 
 
 def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
-                 sort=None, order="asc"):
+                 sort=None, order="asc", include=None):
     schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     filters = filters or {}
@@ -555,9 +558,110 @@ def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
     for p in projected:
         p.update(relmap[p["_guid"]])
 
+    if include:
+        _resolve_includes(app, object_type, projected, _parse_include(include))
+
     return {
         "objects": projected,
         "total": total,
         "limit": limit,
         "offset": offset,
     }
+
+
+# --- nested includes (graph-shaped reads) -------------------------------------
+
+MAX_INCLUDE_DEPTH = 4
+
+
+def _parse_include(include):
+    """Parse an ``include`` spec into a nested tree of relation names.
+
+    Accepts a comma-separated string of dotted paths (``"comments,comments.author"``)
+    or a list of paths. ``comments.author`` means: include each comment, and within
+    each comment include its author. Returns e.g. ``{"comments": {"author": {}}}``.
+    Paths deeper than :data:`MAX_INCLUDE_DEPTH` relations are rejected.
+    """
+    if not include:
+        return {}
+    paths = include.split(",") if isinstance(include, str) else list(include)
+    tree = {}
+    for path in paths:
+        path = path.strip()
+        if not path:
+            continue
+        parts = [p.strip() for p in path.split(".")]
+        if any(not p for p in parts):
+            raise bad_request(f"Malformed include path '{path}'.")
+        if len(parts) > MAX_INCLUDE_DEPTH:
+            raise bad_request(
+                f"include path '{path}' is too deep (max {MAX_INCLUDE_DEPTH} relations).")
+        node = tree
+        for part in parts:
+            node = node.setdefault(part, {})
+    return tree
+
+
+def _fetch_projected(app, object_type, guids):
+    """Fetch + project objects of one type by guid into ``{guid: body}``.
+
+    One batched query (chunked under SQLite's bind-variable limit) plus one batched
+    relation projection — no per-object fan-out. Missing guids (e.g. a since-deleted
+    neighbor) are simply absent from the result.
+    """
+    seen = list(dict.fromkeys(g for g in guids if g))
+    if not seen:
+        return {}
+    fields = get_object_schema(app, object_type, required=True)["fields"]
+    rows = []
+    c = db.conn()
+    CHUNK = 400
+    for i in range(0, len(seen), CHUNK):
+        part = seen[i:i + CHUNK]
+        qmarks = ",".join("?" * len(part))
+        rows.extend(c.execute(
+            f"SELECT * FROM objects WHERE app=? AND object_type=? AND guid IN ({qmarks})",
+            [app, object_type, *part]).fetchall())
+    projected = [_project_fields(r, fields) for r in rows]
+    relmap = assoc.project_relations(app, [r["guid"] for r in rows], object_type)
+    out = {}
+    for p in projected:
+        p.update(relmap[p["_guid"]])
+        out[p["_guid"]] = p
+    return out
+
+
+def _resolve_includes(app, object_type, bodies, include_tree):
+    """Hydrate relation values on ``bodies`` in place, per ``include_tree``.
+
+    For each included relation, the guid(s) it holds are replaced by the full
+    neighbor object(s) (nested, Prisma-style); deeper levels recurse. Resolved
+    breadth-first and batched: one fetch per relation per level, so a page of N
+    objects with an included relation is a handful of queries, not N+1.
+    """
+    if not include_tree or not bodies:
+        return
+    rel_views = {v["key"]: v for v in assoc.relation_views(app, object_type)}
+    for key, subtree in include_tree.items():
+        view = rel_views.get(key)
+        if view is None:
+            raise bad_request(
+                f"Cannot include '{key}' on type '{object_type}': it is not a "
+                f"relation. Relations: {sorted(rel_views)}.")
+        neighbor_type = view["neighbor_type"]
+        guids = []
+        for body in bodies:
+            val = body.get(key)
+            if isinstance(val, list):
+                guids.extend(val)
+            elif val is not None:
+                guids.append(val)
+        fetched = _fetch_projected(app, neighbor_type, guids)
+        if subtree:
+            _resolve_includes(app, neighbor_type, list(fetched.values()), subtree)
+        for body in bodies:
+            val = body.get(key)
+            if isinstance(val, list):
+                body[key] = [fetched[g] for g in val if g in fetched]
+            elif val is not None:
+                body[key] = fetched.get(val)
