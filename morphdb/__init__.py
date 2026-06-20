@@ -5,4 +5,4 @@ coding agent iterates, while the frontend keeps calling the same small set of
 generic, deterministic endpoints.
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
