@@ -21,6 +21,7 @@ object_schemas      (app, name) PK, fields JSON, timestamps
 objects             guid PK, app, object_type, data JSON blob, timestamps
 association_schemas (app, name) PK, from/to type, forward/inverse label, ...
 associations        id PK, app, assoc_name, from_guid, to_guid  (one row/edge)
+field_index         (object_id, field_name) PK, app, object_type, typed value cols
 
 Within an app, type names are unique (the composite primary key enforces it);
 the same name may be reused freely in a different app.
@@ -63,6 +64,25 @@ CREATE TABLE IF NOT EXISTS objects (
     updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_objects_app_type ON objects(app, object_type);
+
+-- Derived field-value index: one row per (object, scalar field), value held in a
+-- typed, indexed column so filters/sorts are index-backed instead of scanning the
+-- JSON blob. Purely an accelerator (objects.data stays source of truth); rebuilt
+-- by morphdb.fieldindex.backfill. The ON DELETE CASCADE to objects(guid) clears an
+-- object's rows when it (or, transitively, its type / app) is deleted.
+CREATE TABLE IF NOT EXISTS field_index (
+    app         TEXT NOT NULL,
+    object_id   TEXT NOT NULL REFERENCES objects(guid) ON DELETE CASCADE,
+    object_type TEXT NOT NULL,
+    field_name  TEXT NOT NULL,
+    str_val     TEXT,
+    num_val     NUMERIC,
+    bool_val    INTEGER,
+    PRIMARY KEY (object_id, field_name)
+);
+CREATE INDEX IF NOT EXISTS idx_fi_str  ON field_index(app, object_type, field_name, str_val);
+CREATE INDEX IF NOT EXISTS idx_fi_num  ON field_index(app, object_type, field_name, num_val);
+CREATE INDEX IF NOT EXISTS idx_fi_bool ON field_index(app, object_type, field_name, bool_val);
 
 CREATE TABLE IF NOT EXISTS association_schemas (
     app                 TEXT NOT NULL REFERENCES apps(key) ON DELETE CASCADE,
@@ -142,6 +162,17 @@ def _migrate(conn):
             "be opened. Point --db at a fresh file (or remove the old one); the "
             "app model requires a clean schema."
         )
+
+    # field_index (schema version 1) is a derived accelerator added after the
+    # original schema. Populate it once from existing object blobs, gated by
+    # user_version so it runs exactly once. Fresh databases created by SCHEMA_SQL
+    # have no objects yet, so this is a no-op for them. Purely additive — it never
+    # touches object blobs, so it is safe to run against live data on upgrade.
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version < 1:
+        from . import fieldindex
+        fieldindex.backfill(conn)
+        conn.execute("PRAGMA user_version = 1")
 
 
 @contextmanager

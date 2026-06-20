@@ -4,6 +4,9 @@
 *.sqlite3-shm
 *.db
 
+# cloudflare wrangler local state
+.wrangler/
+
 # python
 __pycache__/
 *.py[cod]

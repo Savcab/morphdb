@@ -156,6 +156,8 @@ def _t_add_field(args):
         fdef["default"] = args["default"]
     if args.get("required"):
         fdef["required"] = True
+    if args.get("index"):
+        fdef["index"] = True
     # merge:true so existing fields/relations are untouched (idempotent re-runs).
     return _http("PUT", "/schema/" + type_,
                  {"merge": True, "fields": {name: fdef}}, app=app)
@@ -287,7 +289,11 @@ TOOLS = [
            "default": {"description": "Optional default value (any JSON; coerced "
                                       "to the field type)."},
            "required": {"type": "boolean",
-                        "description": "Whether the field is required."}},
+                        "description": "Whether the field is required."},
+           "index": {"type": "boolean",
+                     "description": "Index this field so it can be filtered or "
+                                    "sorted in query_objects (default false). "
+                                    "Filtering/sorting an un-indexed field errors."}},
           ["type", "name", "field_type"]),
     _tool("drop_field",
           "Remove a field from a type. Existing values are hidden, not destroyed "

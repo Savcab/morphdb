@@ -9,6 +9,7 @@
     morphdb dashboard     open the read-only admin dashboard
     morphdb mcp           run the MCP server (stdio; spawned by Claude Code)
     morphdb install-skill install the bundled Claude Code skill
+    morphdb reindex       rebuild the field-value index from object data
 
 ``python -m morphdb`` remains the plain foreground server (what `start` and the
 skill spawn under the hood); this CLI only wraps it.
@@ -123,6 +124,18 @@ def cmd_install_skill(args):
     return 0
 
 
+def cmd_reindex(args):
+    from .. import fieldindex
+    from ..db import init_db, transaction
+    path = args.db or service.default_db()
+    init_db(path)
+    with transaction() as c:
+        n = fieldindex.backfill(c, app=args.app)
+    scope = f" in app '{args.app}'" if args.app else ""
+    print(f"Reindexed field_index for {n} object(s){scope}.")
+    return 0
+
+
 def _add_server_opts(sp):
     sp.add_argument("--host", default=service.DEFAULT_HOST,
                     help=f"bind host (default {service.DEFAULT_HOST})")
@@ -177,6 +190,15 @@ def build_parser():
                     help="install into a project's .claude (DIR, default cwd) "
                          "instead of ~/.claude")
     sp.set_defaults(func=cmd_install_skill)
+
+    sp = sub.add_parser("reindex",
+                        help="rebuild the field-value index from object data "
+                             "(maintenance/repair; normally automatic on upgrade)")
+    sp.add_argument("--db", default=None,
+                    help="database to reindex (default the server's)")
+    sp.add_argument("--app", default=None,
+                    help="limit to one app key (default: all apps)")
+    sp.set_defaults(func=cmd_reindex)
 
     return p
 

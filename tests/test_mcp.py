@@ -284,7 +284,7 @@ class TestQueryObjects(_Base):
         _call("add_field", app=APP, type="task", name="title",
               field_type="string")
         _call("add_field", app=APP, type="task", name="done",
-              field_type="boolean", default=False)
+              field_type="boolean", default=False, index=True)
         # the frontend writes objects over HTTP; simulate that via the harness
         harness.req("POST", "/objects/task", {"title": "a", "done": False}, app=APP)
         harness.req("POST", "/objects/task", {"title": "b", "done": True}, app=APP)

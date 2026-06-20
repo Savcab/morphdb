@@ -54,7 +54,9 @@ H="X-App-Key: my-site"
 # 1. define types + a relation
 curl -X PUT $BASE/schema/user -H "$H" -d '{"fields":{"name":"string"}}'
 curl -X PUT $BASE/schema/task -H "$H" -d '{
-  "fields": {"title":"string","done":"boolean","priority":"number"},
+  "fields": {"title":"string",
+             "done":{"type":"boolean","index":true},
+             "priority":{"type":"number","index":true}},
   "relations": {"assignee":{"to":"user","cardinality":"many_to_one","inverse":"tasks"}}}'
 
 # 2. create + read + query
@@ -296,12 +298,19 @@ Every schema and object request must send the app key as the `X-App-Key` header
 
 ### Query operators
 
-Append `__op` to a **field** name: `eq` (default), `ne`, `gt`, `gte`, `lt`,
-`lte`, `contains` (substring), `in` (comma-separated), `exists` (`true`/`false`).
+A field is filterable/sortable only if its schema marks it **`"index": true`**
+(opt-in, default off). Filtering or sorting an un-indexed field returns a 400
+telling you to index it; turning the flag on backfills existing objects
+automatically, turning it off is instant. `json` fields can't be indexed.
+
+Append `__op` to an **indexed field** name: `eq` (default), `ne`, `gt`, `gte`,
+`lt`, `lte`, `contains` (substring), `in` (comma-separated), `exists`
+(`true`/`false`).
 
 ```
+# priority, title, done, status all declared with "index": true
 GET /objects/task?priority__gte=3&title__contains=buy&done=false
-GET /objects/task?status__in=open,blocked&sort=_created_at&order=desc&limit=50
+GET /objects/task?status__in=open,blocked&sort=priority&order=desc&limit=50
 ```
 
 You can also filter by a **relation** — treat it like an ORM foreign key, not a
@@ -359,8 +368,10 @@ allowed, `413` body too large, `500` internal.
   old type simply reads as unset (the field's default, or null) until it's
   written again; reads and queries apply this rule identically, so they always
   agree. Re-adding a dropped field at the same type recovers its values.
-- **Filtering is field-only.** Query operators apply to raw fields; relations
-  are read/written on the object body but not filtered server-side (yet).
+- **Filtering/sorting is opt-in per field.** Only a field marked `"index": true`
+  can be filtered or sorted (it gets a row in the indexed `field_index` table);
+  an un-indexed field is storage-only and a filter/sort on it is a 400. Relations
+  are always filterable via the indexed edge table — no flag needed.
 - **Integer magnitude.** Numbers are stored and read back exactly at any size.
   Filtering/sorting on integers beyond ±2⁶³ uses floating-point comparison (a
   SQLite limitation), so equality/range queries on such huge integers may be

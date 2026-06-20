@@ -182,7 +182,8 @@ class TestRelationFiltering(Base):
                         "symmetric": True}})
         self.put_type("tag", fields={"label": "string"})
         self.put_type("task",
-            fields={"title": "string", "done": "boolean", "priority": "number"},
+            fields={"title": "string", "done": "boolean",
+                    "priority": {"type": "number", "index": True}},
             relations={
                 "assignee": {"to": "user", "cardinality": "many_to_one",
                              "inverse": "tasks"},

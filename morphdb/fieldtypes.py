@@ -41,14 +41,18 @@ _DT_CANON = "%Y-%m-%dT%H:%M:%S.%fZ"
 def normalize_field_def(name, raw):
     """Accept shorthand (``"string"``) or rich (``{"type": ...}``) field defs.
 
-    Returns the canonical ``{"type", "required", "default"}`` form.
+    Returns the canonical ``{"type", "required", "default", "index"}`` form.
+    ``index`` (default False) opts the field into the indexed ``field_index``
+    table so it can be filtered/sorted; un-indexed fields are storage-only and a
+    filter/sort on them is rejected. ``index`` is invalid on a ``json`` field.
     """
     if isinstance(raw, str):
-        ftype, required, default = raw, False, None
+        ftype, required, default, index = raw, False, None, False
     elif isinstance(raw, dict):
         ftype = raw.get("type")
         required = bool(raw.get("required", False))
         default = raw.get("default")
+        index = bool(raw.get("index", False))
     else:
         raise bad_request(
             f"Field '{name}' must be a type string or an object, got {type(raw).__name__}."
@@ -60,11 +64,17 @@ def normalize_field_def(name, raw):
             f"Valid types: {sorted(FIELD_TYPES)}."
         )
 
+    if index and ftype == "json":
+        raise bad_request(
+            f"Field '{name}' is json and cannot be indexed (json values aren't "
+            'comparable/sortable). Remove "index", or use a scalar type.'
+        )
+
     # Validate the default eagerly so a bad default is caught at schema-define time.
     if default is not None:
         default = coerce_value(name, default, ftype)
 
-    return {"type": ftype, "required": required, "default": default}
+    return {"type": ftype, "required": required, "default": default, "index": index}
 
 
 def validate_member_name(name, kind="field"):

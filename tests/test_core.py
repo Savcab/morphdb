@@ -119,7 +119,9 @@ class TestQuery(Base):
     def setUp(self):
         super().setUp()
         self.put_type("task", fields={
-            "title": "string", "done": "boolean", "priority": "number"})
+            "title": {"type": "string", "index": True},
+            "done": {"type": "boolean", "index": True},
+            "priority": {"type": "number", "index": True}})
         for t, d, p in [("a", False, 1), ("b", True, 3), ("c", False, 2)]:
             self.create("task", {"title": t, "done": d, "priority": p})
 
@@ -162,9 +164,9 @@ class TestLazyMorph(Base):
 
     def test_retype_reads_as_unset_and_query_agrees(self):
         # purely lazy: a value left at the old type reads as unset after retype
-        self.put_type("t", fields={"v": "string"})
+        self.put_type("t", fields={"v": {"type": "string", "index": True}})
         o = self.create("t", {"v": "42"})
-        self.put_type("t", merge=True, fields={"v": "number"})
+        self.put_type("t", merge=True, fields={"v": {"type": "number", "index": True}})
         self.assertIsNone(self.read("t", o["_guid"])["v"])
         self.assertEqual(self.total("/objects/t?v=42"), 0)
         self.assertEqual(self.total("/objects/t?v__gt=0"), 0)

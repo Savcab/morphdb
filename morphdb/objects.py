@@ -24,6 +24,7 @@ import json
 
 from . import associations as assoc
 from . import db
+from . import fieldindex
 from .errors import bad_request, not_found
 from .fieldtypes import project_data, validate_against_schema
 from .schema import get_object_schema
@@ -96,6 +97,7 @@ def create_object(app, object_type, data):
             "VALUES (?, ?, ?, ?, ?, ?)",
             (guid, app, object_type, json.dumps(clean), ts, ts),
         )
+        fieldindex.apply_index_writes(c, app, object_type, guid, clean, fields)
         if rel_part:
             assoc.apply_relation_writes(c, app, guid, object_type, rel_part)
         row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
@@ -135,6 +137,7 @@ def upsert_object(app, object_type, guid, data, partial=True):
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (guid, app, object_type, json.dumps(clean), ts, ts),
             )
+            stored = clean
         else:
             blob = json.loads(existing["data"]) if partial else {}
             blob.update(clean)
@@ -142,6 +145,10 @@ def upsert_object(app, object_type, guid, data, partial=True):
                 "UPDATE objects SET data = ?, updated_at = ? WHERE guid = ?",
                 (json.dumps(blob), ts, guid),
             )
+            stored = blob
+        # Rebuild this object's index rows from its full stored blob, in the same
+        # transaction as the blob write (delete-then-insert inside apply_index_writes).
+        fieldindex.apply_index_writes(c, app, object_type, guid, stored, fields)
         if rel_part:
             assoc.apply_relation_writes(c, app, guid, object_type, rel_part)
         row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
@@ -156,6 +163,8 @@ def delete_object(app, guid):
         if row is None:
             raise not_found(f"No object with guid '{guid}'.")
         c.execute("DELETE FROM objects WHERE app = ? AND guid = ?", (app, guid))
+        # field_index rows for this object are removed automatically by the
+        # ON DELETE CASCADE foreign key (field_index.object_id -> objects.guid).
         # Remove this object's edges only; neighbor objects are left intact.
         c.execute(
             "DELETE FROM associations WHERE app = ? AND (from_guid = ? OR to_guid = ?)",
@@ -242,41 +251,6 @@ def _safe_bind(v):
     return v
 
 
-# JSON storage types (per SQLite json_type) that satisfy each field type.
-_JSON_TYPES_FOR = {
-    "number": ("'integer'", "'real'"),
-    "boolean": ("'true'", "'false'"),
-    "string": ("'text'",),
-    "datetime": ("'text'",),
-}
-
-
-def _field_expr(field, fdef, params):
-    """SQL expression for a field that mirrors read-time projection exactly.
-
-    A stored value counts only if its JSON type matches the field's current type
-    (the same rule fieldtypes.project_data applies on read). Anything else — an
-    absent key, a stored null, or a value left over at the wrong type after a
-    retype — falls back to the field's default (or NULL). Reads and queries are
-    therefore always in lockstep, with no row rewrites.
-
-    Any parameter the expression needs (the default) is appended to ``params``
-    in evaluation order, so the caller must add comparison params *after*.
-    """
-    raw = f"json_extract(data, '$.{field}')"
-    jt = f"json_type(data, '$.{field}')"
-    ftype = fdef["type"]
-    if ftype == "json":
-        valid = f"{jt} IS NOT NULL"
-    else:
-        valid = f"{jt} IN ({','.join(_JSON_TYPES_FOR[ftype])})"
-    default = fdef.get("default")
-    if default is not None:
-        params.append(_safe_bind(default))
-        return f"(CASE WHEN {valid} THEN {raw} ELSE ? END)"
-    return f"(CASE WHEN {valid} THEN {raw} ELSE NULL END)"
-
-
 # Operators meaningful on a relation (a set of neighbor guids) rather than a
 # scalar field. A relation filter resolves through the indexed associations
 # table; scalar comparisons (gt/lt/contains) are field-only.
@@ -356,7 +330,115 @@ def _relation_clause(app, view, op, raw):
     return f"guid {'NOT IN' if negate else 'IN'} ({inner})", iparams
 
 
-def _build_where(app, filters, fields, rel_views):
+# Filter operator -> its SQL comparison, applied to the indexed value column.
+# exists / in / contains are handled separately below.
+_CMP_SQL = {"eq": "=", "ne": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+
+
+def _like_contains(default, val):
+    """Python view of SQLite ``LIKE '%val%'`` (ASCII-case-insensitive substring),
+    used only to decide whether default-valued rows join a ``contains`` filter."""
+    try:
+        return str(val).lower() in str(default).lower()
+    except Exception:
+        return False
+
+
+def _absent_matches(default, op, val):
+    """Would an object with no indexed value for this field satisfy ``op``/``val``?
+
+    Such an object (field absent, or stale at the wrong type after a retype) is
+    shown by the read path as the field's ``default`` (possibly None). It matches
+    iff ``default <op> val`` does — mirroring read-time projection
+    (:func:`fieldtypes.project_data`), so index filtering and reads stay in
+    lockstep. ``default`` is a single known constant, evaluated here in Python.
+    """
+    d = default
+    if op == "eq":
+        return d == val
+    if op == "ne":                       # null-safe: a None default "is not val"
+        return d != val
+    if op == "exists":
+        return (d is not None) if val else (d is None)
+    if op == "in":
+        return d is not None and d in val
+    if op == "contains":
+        return d is not None and _like_contains(d, val)
+    if d is None:                        # gt/gte/lt/lte against a null default
+        return False
+    try:
+        if op == "gt":
+            return d > val
+        if op == "gte":
+            return d >= val
+        if op == "lt":
+            return d < val
+        if op == "lte":
+            return d <= val
+    except TypeError:
+        return False
+    return False
+
+
+def _indexed_field_clause(app, object_type, field, fdef, op, val):
+    """A WHERE fragment filtering this type's objects by one scalar field, via the
+    indexed ``field_index`` table. Returns ``(clause_sql, params)``.
+
+    Up to two parts, OR-ed:
+      * present — objects whose indexed value matches the comparison (an index
+        probe on field_index);
+      * default — objects with *no* current-type value (absent, or stale after a
+        retype), which the read path shows as the field's default; included only
+        when the default itself satisfies the comparison (:func:`_absent_matches`).
+
+    Together these reproduce read-time projection semantics exactly, while the
+    common case (a real stored value) is served by the index.
+    """
+    col = fieldindex.column_for_type(fdef["type"])
+    default = fdef.get("default")
+    prefix = "app = ? AND object_type = ? AND field_name = ?"
+    pre = [app, object_type, field]
+
+    def present(pred_sql, pred_params):
+        return (f"guid IN (SELECT object_id FROM field_index "
+                f"WHERE {prefix} AND {pred_sql})", pre + pred_params)
+
+    def no_value():
+        # Objects with no non-null value in the current-type column -> read as
+        # default (covers both absent fields and stale rows in the wrong column).
+        return (f"guid NOT IN (SELECT object_id FROM field_index "
+                f"WHERE {prefix} AND {col} IS NOT NULL)", list(pre))
+
+    if op == "exists":
+        if val:
+            # "has an effective value." With a default, every object has one.
+            if default is not None:
+                return "1", []
+            return (f"guid IN (SELECT object_id FROM field_index "
+                    f"WHERE {prefix} AND {col} IS NOT NULL)", list(pre))
+        if default is not None:
+            return "0", []
+        return no_value()
+
+    if op == "in":
+        if not val:                      # empty IN matches nothing
+            return "0", []
+        qmarks = ",".join("?" * len(val))
+        clause, params = present(f"{col} IN ({qmarks})", [_safe_bind(v) for v in val])
+    elif op == "contains":
+        esc = (str(val).replace("\\", "\\\\")
+               .replace("%", "\\%").replace("_", "\\_"))
+        clause, params = present(f"{col} LIKE ? ESCAPE '\\'", [f"%{esc}%"])
+    else:
+        clause, params = present(f"{col} {_CMP_SQL[op]} ?", [_safe_bind(val)])
+
+    if _absent_matches(default, op, val):
+        nclause, nparams = no_value()
+        return f"({clause} OR {nclause})", params + nparams
+    return clause, params
+
+
+def _build_where(app, object_type, filters, fields, rel_views):
     """Translate a ``{key: value}`` filter mapping into a SQL WHERE fragment.
 
     Field filters support operators via ``field__op`` keys: eq, ne, gt, gte, lt,
@@ -374,49 +456,18 @@ def _build_where(app, filters, fields, rel_views):
             continue
         fdef = fields[field]
         ftype = fdef["type"]
+        if ftype == "json":
+            raise bad_request(
+                f"Field '{field}' is json and can't be filtered (json values "
+                "aren't indexable). Filter on a scalar, indexed field instead.")
+        if not fdef.get("index"):
+            raise bad_request(
+                f"Field '{field}' is not indexed, so it can't be filtered. Add "
+                f"\"index\": true to '{field}' in its schema to filter or sort on it.")
         val = _coerce_filter_value(field, op, raw, ftype)
-
-        # Empty IN matches nothing; handle before building expr so we don't emit
-        # an orphan default parameter.
-        if op == "in" and not val:
-            clauses.append("0")
-            continue
-
-        # expr is used exactly once per clause (so its COALESCE default, if any,
-        # maps to exactly one bound parameter).
-        expr = _field_expr(field, fdef, params)
-        if op == "eq":
-            clauses.append(f"{expr} = ?")
-            params.append(_safe_bind(val))
-        elif op == "ne":
-            # Null-safe inequality: also matches rows where the value is null.
-            clauses.append(f"{expr} IS NOT ?")
-            params.append(_safe_bind(val))
-        elif op == "gt":
-            clauses.append(f"{expr} > ?")
-            params.append(_safe_bind(val))
-        elif op == "gte":
-            clauses.append(f"{expr} >= ?")
-            params.append(_safe_bind(val))
-        elif op == "lt":
-            clauses.append(f"{expr} < ?")
-            params.append(_safe_bind(val))
-        elif op == "lte":
-            clauses.append(f"{expr} <= ?")
-            params.append(_safe_bind(val))
-        elif op == "contains":
-            # Escape LIKE metacharacters so the match is a literal substring,
-            # not a wildcard pattern.
-            esc = (str(val).replace("\\", "\\\\")
-                   .replace("%", "\\%").replace("_", "\\_"))
-            clauses.append(f"{expr} LIKE ? ESCAPE '\\'")
-            params.append(f"%{esc}%")
-        elif op == "in":
-            qmarks = ",".join("?" * len(val))
-            clauses.append(f"{expr} IN ({qmarks})")
-            params.extend(_safe_bind(v) for v in val)
-        elif op == "exists":
-            clauses.append(f"{expr} IS NOT NULL" if val else f"{expr} IS NULL")
+        clause, p = _indexed_field_clause(app, object_type, field, fdef, op, val)
+        clauses.append(clause)
+        params.extend(p)
     return clauses, params
 
 
@@ -429,7 +480,7 @@ def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
 
     clauses = ["app = ?", "object_type = ?"]
     params = [app, object_type]
-    fc, fp = _build_where(app, filters, fields, rel_views)
+    fc, fp = _build_where(app, object_type, filters, fields, rel_views)
     clauses.extend(fc)
     params.extend(fp)
     where = " AND ".join(clauses)
@@ -449,9 +500,26 @@ def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
                    "_guid": "guid"}[sort]
             order_clause = f"{col} {order_sql}, guid ASC"
         elif sort in fields:
-            if fields[sort]["type"] == "json":
+            fsort = fields[sort]
+            if fsort["type"] == "json":
                 raise bad_request(f"Cannot sort on json field '{sort}'.")
-            sort_expr = _field_expr(sort, fields[sort], sort_params)
+            if not fsort.get("index"):
+                raise bad_request(
+                    f"Field '{sort}' is not indexed, so it can't be sorted on. Add "
+                    f"\"index\": true to '{sort}' in its schema to sort on it.")
+            # Order by the indexed value (PK-backed correlated lookup), falling
+            # back to the field's default for objects with no current-type value,
+            # so the order matches what reads project — same rule as filters.
+            col = fieldindex.column_for_type(fsort["type"])
+            sub = (f"(SELECT {col} FROM field_index "
+                   f"WHERE object_id = objects.guid AND field_name = ?)")
+            sort_params.append(sort)
+            default = fsort.get("default")
+            if default is not None:
+                sort_expr = f"COALESCE({sub}, ?)"
+                sort_params.append(_safe_bind(default))
+            else:
+                sort_expr = sub
             order_clause = f"{sort_expr} {order_sql}, guid ASC"
         else:
             raise bad_request(

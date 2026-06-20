@@ -46,7 +46,7 @@ not running, so you don't have to manage the server in the common case.
 | `delete_app(key)` | Delete an app and cascade-delete everything under it. |
 | `list_types(app)` | List every type with its fields + relations + inverse relations. |
 | `describe_type(app, type)` | Show one type's full schema. |
-| `add_field(app, type, name, field_type, default?, required?)` | Add/update a field. Idempotent; creates the type if new. |
+| `add_field(app, type, name, field_type, default?, required?, index?)` | Add/update a field. Idempotent; creates the type if new. `index: true` makes it filterable/sortable. |
 | `drop_field(app, type, name)` | Remove a field (values hidden, not destroyed). |
 | `add_relation(app, type, name, to, cardinality, inverse?, symmetric?, description?, inverse_description?)` | Declare a relation (inverse appears automatically on the other type). |
 | `drop_relation(app, type, name)` | Remove a relation + its edges (drop from the authoring side). |
@@ -66,10 +66,20 @@ not running, so you don't have to manage the server in the common case.
 > index-backed via the edge table, composable with field filters, `sort`, and
 > pagination — and it also gives you the **inverse for free** (one read traverses
 > both ways: `business.stages` and `stage.business`) and keeps edges
-> cascade-clean. A raw id-field has none of that and scans the JSON blob on every
-> query. Use a field only for a genuine scalar you store *on* the object (title,
-> price, status, a timestamp); anything that references another object is a
-> relation. (Filter a relation with `?rel=<guid>`, `__in`, `__ne`, `__exists`.)
+> cascade-clean. A raw id-field has none of that — no inverse, no cascade, and it
+> is not filterable at all unless you index it. Use a field only for a genuine
+> scalar you store *on* the object (title, price, status, a timestamp); anything
+> that references another object is a relation. (Filter a relation with
+> `?rel=<guid>`, `__in`, `__ne`, `__exists`.)
+
+> **Indexing rule — set `index: true` on a field to filter or sort on it.** Fields
+> are storage-only by default. A field filter (`?status=…`, `__gt`/`__lt`/`__in`/
+> `__contains`/`__exists`) or `sort=field` on an **un-indexed** field is a hard
+> error telling you to index it. Index the few fields you actually query (a status,
+> a priority, a timestamp); leave the rest (long text, json blobs) un-indexed so
+> writes stay cheap. Turning the flag on backfills existing objects automatically;
+> turning it off is instant. `json` can't be indexed; relations are always
+> filterable and need no flag.
 
 ## 0. Register your app first (once)
 
@@ -91,8 +101,8 @@ and relations in one shot (other apps are untouched).
 A worked example — a todo app with users:
 
 - `add_field(app, type="task", name="title", field_type="string")`
-- `add_field(app, type="task", name="done", field_type="boolean", default=false)`
-- `add_field(app, type="task", name="priority", field_type="number")`
+- `add_field(app, type="task", name="done", field_type="boolean", default=false, index=true)` — filtered, so indexed
+- `add_field(app, type="task", name="priority", field_type="number", index=true)` — sorted, so indexed
 - A relation, declared once on `task`; `user.tasks` then appears automatically.
   Many tasks → one user, so `task.assignee` is one guid and `user.tasks` is a
   list: `add_relation(app, type="task", name="assignee", to="user",

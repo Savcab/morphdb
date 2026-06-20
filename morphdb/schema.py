@@ -18,6 +18,7 @@ import re
 
 from . import associations as assoc
 from . import db
+from . import fieldindex
 from .errors import bad_request, not_found
 from .fieldtypes import normalize_fields
 from .util import now_iso
@@ -130,6 +131,24 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
                 "VALUES (?, ?, ?, ?, ?)",
                 (app, name, json.dumps(final), ts, ts),
             )
+
+        # Reconcile field_index with the new fields' index flags. Only an index
+        # flag flip (or an indexed field's type change) touches the index —
+        # ordinary edits stay O(1). Enabling backfills that one field once;
+        # disabling, or dropping the field, deletes its rows.
+        old_fields = json.loads(existing["fields"]) if existing else {}
+        for fname, fdef in final.items():
+            new_idx = bool(fdef.get("index"))
+            old = old_fields.get(fname)
+            old_idx = bool(old.get("index")) if isinstance(old, dict) else False
+            if new_idx and (not old_idx or
+                            (isinstance(old, dict) and old.get("type") != fdef["type"])):
+                fieldindex.reindex_field(c, app, name, fname, fdef)
+            elif old_idx and not new_idx:
+                fieldindex.drop_field(c, app, name, fname)
+        for fname, old in old_fields.items():
+            if fname not in final and isinstance(old, dict) and old.get("index"):
+                fieldindex.drop_field(c, app, name, fname)
 
         # --- relations ---
         touched = {name}

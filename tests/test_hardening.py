@@ -59,7 +59,7 @@ class TestNumbers(Base):
 class TestDatetime(Base):
     def setUp(self):
         super().setUp()
-        self.put_type("e", fields={"at": "datetime"})
+        self.put_type("e", fields={"at": {"type": "datetime", "index": True}})
 
     def test_equivalent_forms_normalize_equal(self):
         for v in ("2020-01-01T12:00:00Z", "2020-01-01T12:00:00+00:00",
