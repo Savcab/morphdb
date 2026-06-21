@@ -287,7 +287,7 @@ def _relation_clause(app, view, op, raw):
     # params. Returns (None, []) for an empty ``in`` list (matches no edge).
     def neighbor_pred(nb_col):
         if op == "exists":
-            return "1", []                               # any edge counts
+            return "TRUE", []                            # any edge counts
         if op == "in":
             guids = raw.split(",") if isinstance(raw, str) else list(raw)
             guids = [str(g) for g in guids]
@@ -323,7 +323,7 @@ def _relation_clause(app, view, op, raw):
 
     if inner is None:                                    # empty __in list
         # eq/in match nothing; ne/exists-false match everything.
-        return ("0", []) if op in ("eq", "in") else ("1", [])
+        return ("FALSE", []) if op in ("eq", "in") else ("TRUE", [])
 
     if op == "exists":
         from .fieldtypes import coerce_value
@@ -416,22 +416,24 @@ def _indexed_field_clause(app, object_type, field, fdef, op, val):
         if val:
             # "has an effective value." With a default, every object has one.
             if default is not None:
-                return "1", []
+                return "TRUE", []
             return (f"guid IN (SELECT object_id FROM field_index "
                     f"WHERE {prefix} AND {col} IS NOT NULL)", list(pre))
         if default is not None:
-            return "0", []
+            return "FALSE", []
         return no_value()
 
     if op == "in":
         if not val:                      # empty IN matches nothing
-            return "0", []
+            return "FALSE", []
         qmarks = ",".join("?" * len(val))
         clause, params = present(f"{col} IN ({qmarks})", [_safe_bind(v) for v in val])
     elif op == "contains":
         esc = (str(val).replace("\\", "\\\\")
                .replace("%", "\\%").replace("_", "\\_"))
-        clause, params = present(f"{col} LIKE ? ESCAPE '\\'", [f"%{esc}%"])
+        # SQLite LIKE is case-insensitive; Postgres needs ILIKE for the same
+        # substring semantics (kept in lockstep with _like_contains below).
+        clause, params = present(f"{col} {db.like_ci()} ? ESCAPE '\\'", [f"%{esc}%"])
     else:
         clause, params = present(f"{col} {_CMP_SQL[op]} ?", [_safe_bind(val)])
 

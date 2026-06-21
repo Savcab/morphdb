@@ -1,24 +1,27 @@
 """Read-only admin dashboard: every app and its data model, in one local page.
 
-Operator-facing and local-only — it opens the SQLite file directly (read-only)
-rather than going through the HTTP API, so it can list apps without adding a
-"list apps" endpoint to the public surface (which is intentionally absent).
+Operator-facing and local-only — it opens the database directly (through the
+storage backend, SQLite or Postgres) rather than going through the HTTP API, so
+it can list apps without adding a "list apps" endpoint to the public surface
+(which is intentionally absent).
 
 The page has two tabs: a **Data model** view (each app's types as an interactive
 ER-style graph — type nodes + crow's-foot relation edges — plus a complete table)
-and a **Tables · raw** view (every underlying SQLite table with its columns and
-rows, capped per table). The graph and modals are progressive enhancement over
+and a **Tables · raw** view (every underlying table with its columns and rows,
+capped per table). The graph and modals are progressive enhancement over
 server-rendered HTML, with zero external dependencies (inline CSS/SVG/JS only).
 """
 
 import html
 import json
-import sqlite3
+import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .. import backend as _backend
 
-def gather(db):
+
+def gather(target):
     """A read-only snapshot of every app and its data model::
 
         {apps: [{
@@ -28,17 +31,20 @@ def gather(db):
             edges:     <int edge count>,
         }]}
 
-    Tolerates a missing/empty/locked database by returning an ``error`` string.
+    Reads through the storage backend (SQLite or Postgres). Tolerates a
+    missing/empty/unreachable database by returning an ``error`` string.
     """
     try:
-        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
-        c.row_factory = sqlite3.Row
+        be = _backend.from_target(target)
+        raw = be.connect()
     except Exception as e:
         return {"error": f"cannot open database: {e}", "apps": []}
+    # A private lock: this is a separate, short-lived inspection connection.
+    c = _backend.Connection(be, raw, threading.RLock())
     try:
         try:
             apps = [r["key"] for r in c.execute("SELECT key FROM apps ORDER BY key")]
-        except sqlite3.OperationalError:
+        except Exception:
             return {"error": "no MorphDB schema in this database yet", "apps": []}
         out = []
         for app in apps:
@@ -54,8 +60,8 @@ def gather(db):
                 except Exception:
                     pass
                 count = c.execute(
-                    "SELECT COUNT(*) FROM objects WHERE app=? AND object_type=?",
-                    (app, r["name"])).fetchone()[0]
+                    "SELECT COUNT(*) AS n FROM objects WHERE app=? AND object_type=?",
+                    (app, r["name"])).fetchone()["n"]
                 types.append({"name": r["name"], "fields": fields, "count": count})
             relations = [
                 {"name": r["name"], "from": r["from_type"], "to": r["to_type"],
@@ -63,15 +69,15 @@ def gather(db):
                  "cardinality": r["cardinality"], "symmetric": bool(r["symmetric"])}
                 for r in c.execute(
                     "SELECT name, from_type, to_type, forward_name, inverse_name, "
-                    "cardinality, symmetric FROM association_schemas WHERE app=? "
+                    "cardinality, \"symmetric\" FROM association_schemas WHERE app=? "
                     "ORDER BY name", (app,))]
             edges = c.execute(
-                "SELECT COUNT(*) FROM associations WHERE app=?", (app,)).fetchone()[0]
+                "SELECT COUNT(*) AS n FROM associations WHERE app=?", (app,)).fetchone()["n"]
             out.append({"app": app, "types": types,
                         "relations": relations, "edges": edges})
-        return {"apps": out, "tables": _gather_tables(c)}
+        return {"apps": out, "tables": _gather_tables(c, be, raw)}
     finally:
-        c.close()
+        raw.close()
 
 
 # Per-table row cap for the raw "Tables" explorer — keeps the generated page a
@@ -80,28 +86,26 @@ def gather(db):
 _ROW_CAP = 250
 
 # Show the logical tables in dependency order (tenant root first), then anything
-# else SQLite reports, so the explorer reads top-down like the data model.
+# else the backend reports, so the explorer reads top-down like the data model.
 _TABLE_ORDER = ["apps", "object_schemas", "objects", "field_index",
                 "association_schemas", "associations"]
 
 
-def _gather_tables(c, cap=_ROW_CAP):
+def _gather_tables(c, be, raw, cap=_ROW_CAP):
     """Every real table in the database with its columns and (capped) rows::
 
         [{name, columns: [str], rows: [[cell, ...]], total: int, shown: int}]
 
-    Reads straight from ``sqlite_master`` so it shows whatever tables exist,
-    skipping SQLite's internal ``sqlite_*`` bookkeeping tables.
+    Lists tables and columns through the backend, so it works on SQLite and
+    Postgres alike.
     """
-    names = [r["name"] for r in c.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND name NOT LIKE 'sqlite_%'")]
+    names = be.list_tables(raw)
     names.sort(key=lambda n: (_TABLE_ORDER.index(n) if n in _TABLE_ORDER
                               else len(_TABLE_ORDER), n))
     tables = []
     for name in names:
-        cols = [r["name"] for r in c.execute(f'PRAGMA table_info("{name}")')]
-        total = c.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+        cols = be.table_columns(raw, name)
+        total = c.execute(f'SELECT COUNT(*) AS n FROM "{name}"').fetchone()["n"]
         rows = [[r[col] for col in cols]
                 for r in c.execute(f'SELECT * FROM "{name}" LIMIT {int(cap)}')]
         tables.append({"name": name, "columns": cols, "rows": rows,
@@ -850,10 +854,15 @@ _JS = r"""
 """
 
 
-def serve(db, host="127.0.0.1", port=8788, open_browser=True):
+def serve(target, host="127.0.0.1", port=8788, open_browser=True):
+    try:
+        display = _backend.from_target(target).describe()   # masks any credentials
+    except Exception:
+        display = str(target)
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = render(gather(db), db).encode("utf-8")
+            body = render(gather(target), display).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -865,7 +874,7 @@ def serve(db, host="127.0.0.1", port=8788, open_browser=True):
 
     httpd = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{host}:{port}"
-    print(f"MorphDB admin dashboard: {url}\n  reading: {db}\n  Ctrl-C to stop.")
+    print(f"MorphDB admin dashboard: {url}\n  reading: {display}\n  Ctrl-C to stop.")
     if open_browser:
         try:
             webbrowser.open(url)

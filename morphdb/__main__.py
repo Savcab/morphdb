@@ -16,8 +16,10 @@ def main(argv=None):
                         help="Host/interface to bind (default: 127.0.0.1).")
     parser.add_argument("--port", type=int, default=8787,
                         help="Port to listen on (default: 8787).")
-    parser.add_argument("--db", default="morphdb.sqlite3",
-                        help="SQLite file path, or ':memory:' (default: morphdb.sqlite3).")
+    parser.add_argument("--db", default=None,
+                        help="SQLite file path, ':memory:', or a Postgres URL "
+                             "(postgresql://...). Defaults to $MORPHDB_DATABASE_URL "
+                             "or morphdb.sqlite3.")
     parser.add_argument("--version", action="version",
                         version=f"morphdb {__version__}")
     args = parser.parse_args(argv)

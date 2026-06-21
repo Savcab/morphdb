@@ -44,14 +44,25 @@ def log_file():
 
 
 def default_db():
-    """Where the local server keeps data: a per-user SQLite file.
+    """Where the local server keeps data by default: a per-user SQLite file.
 
     Override the file with ``--db`` (any path, or ``:memory:``) or move the whole
-    state dir with ``$MORPHDB_HOME``. To use a MorphDB hosted elsewhere instead of
-    a local one, you don't change this — you point *clients* at that server's URL
-    with ``$MORPHDB_HOST`` (see the skill); the engine itself is always SQLite.
+    state dir with ``$MORPHDB_HOME``. To persist to PostgreSQL instead of SQLite,
+    pass a URL — ``--db postgresql://...`` or ``$MORPHDB_DATABASE_URL`` (see
+    :func:`resolve_target`). To use a MorphDB hosted elsewhere, you instead point
+    *clients* at that server's URL with ``$MORPHDB_HOST`` (see the skill).
     """
     return _path("data.sqlite3")
+
+
+def resolve_target(db=None):
+    """The persistence target for the local server.
+
+    Precedence: an explicit ``--db`` value, then ``$MORPHDB_DATABASE_URL`` (a
+    Postgres URL or a path), then the per-user SQLite file from
+    :func:`default_db`.
+    """
+    return db or os.environ.get("MORPHDB_DATABASE_URL") or default_db()
 
 
 def read_meta():
@@ -110,10 +121,23 @@ def status():
     }
 
 
-def app_count(db):
-    """Read-only count of registered apps (for status). None if unreadable."""
+def app_count(target):
+    """Read-only count of registered apps (for status). None if unreadable.
+
+    Handles both a SQLite path and a Postgres URL.
+    """
+    from .. import backend as bemod
     try:
-        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1)
+        if bemod.is_url(target):
+            raw = bemod.from_target(target).connect()
+            try:
+                cur = raw.cursor()
+                cur.execute("SELECT COUNT(*) AS n FROM apps")
+                return cur.fetchone()["n"]
+            finally:
+                raw.close()
+        # SQLite: open read-only so a status check never creates the file.
+        c = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=1)
         try:
             return c.execute("SELECT COUNT(*) FROM apps").fetchone()[0]
         finally:
@@ -126,7 +150,7 @@ def start(host=DEFAULT_HOST, port=DEFAULT_PORT, db=None, wait=6.0):
     """Start the server detached. Returns (status_dict, attempted_start_bool)."""
     if status().get("running"):
         return status(), False
-    db = db or default_db()
+    db = resolve_target(db)
     log = open(log_file(), "ab")
     proc = subprocess.Popen(
         [sys.executable, "-m", "morphdb",

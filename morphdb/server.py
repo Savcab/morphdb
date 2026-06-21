@@ -178,12 +178,17 @@ class MorphServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def serve(host="127.0.0.1", port=8787, db_path="morphdb.sqlite3"):
-    db.init_db(db_path)
+def serve(host="127.0.0.1", port=8787, db_path=None):
+    # Target precedence: explicit --db, then $MORPHDB_DATABASE_URL (a Postgres
+    # URL or a path), then a local SQLite file. init_db routes path vs URL.
+    target = db_path or os.environ.get("MORPHDB_DATABASE_URL") or "morphdb.sqlite3"
+    db.init_db(target)
     httpd = MorphServer((host, port), Handler)
+    engine = db.backend()
+    where = engine.describe() if engine is not None else target
     sys.stderr.write(
         f"MorphDB v{__import__('morphdb').__version__} listening on "
-        f"http://{host}:{port}  (db: {db_path})\n"
+        f"http://{host}:{port}  ({engine.name if engine else '?'}: {where})\n"
         f"Try:  curl http://{host}:{port}/help\n"
     )
     try:

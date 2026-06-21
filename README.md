@@ -4,8 +4,9 @@
 
 Reshape the data model as fast as your coding agent iterates — the frontend
 keeps calling the same small set of generic, deterministic endpoints. One
-process hosts many isolated apps (one per site), zero dependencies, backed by
-SQLite.
+process hosts many isolated apps (one per site). Zero dependencies on the
+default SQLite engine; point it at PostgreSQL when you want a networked, managed
+database — same API, same code.
 
 📖 **[Visual explainer → morphdb.pages.dev](https://morphdb.pages.dev)** — the whole idea (schema-fluid, API-stable), the agent/frontend split, relations, and how Claude plugs in over MCP, on one page.
 
@@ -26,8 +27,9 @@ morphdb dashboard      # read-only web view of every app + its tables
 morphdb install-skill  # install the MorphDB Claude Code skill (into ~/.claude)
 ```
 
-Data lives in `~/.morphdb/data.sqlite3` (change it with `--db PATH` or
-`--db :memory:`; move the state dir with `$MORPHDB_HOME`). Server flags:
+Data lives in `~/.morphdb/data.sqlite3` (change it with `--db PATH`,
+`--db :memory:`, or a Postgres `--db postgresql://…` URL; move the state dir with
+`$MORPHDB_HOME`). Server flags:
 `--host`, `--port`, `--db`. From a source checkout with no install, the
 foreground server is `python3 -m morphdb --port 8787 --db ./app.sqlite3`.
 
@@ -39,6 +41,29 @@ to reload the new code (data in `~/.morphdb` is preserved across `0.1.x`).
 `window.MORPHDB_HOST` — calls that hosted server (running this same code) instead
 of localhost. It's a client-side setting that names a *backend*, not a database
 connection string.
+
+### Persistence: SQLite (default) or PostgreSQL
+
+By default MorphDB is an embedded SQLite database — zero dependencies, one file.
+To persist to **PostgreSQL** instead (a managed/networked database — RDS, Neon,
+Supabase, or your own server), install the extra and point the server at a
+connection URL:
+
+```bash
+pip install 'morphdb[postgres]'        # adds the psycopg driver
+
+# pass a URL as --db …
+morphdb start --db postgresql://user:pass@host:5432/mydb
+# … or set it in the environment (handy for containers / serverless)
+export MORPHDB_DATABASE_URL=postgresql://user:pass@host:5432/mydb
+morphdb start
+```
+
+Nothing else changes — the same endpoints, schema model, queries, includes, CLI,
+and dashboard work identically; the engine just talks to Postgres. This makes the
+MorphDB process a **stateless API tier** you can run as a container (or several,
+against one Postgres) with the durable state in your managed database. The core
+stays zero-dependency; `psycopg` is pulled in only for the Postgres backend.
 
 ## Use it
 
@@ -89,7 +114,8 @@ via a pid file under the state dir.
 | `morphdb --version` | Print the version. |
 
 `start` / `run` accept `--host` (default `127.0.0.1`), `--port` (default `8787`),
-and `--db` (a SQLite path or `:memory:`; default `~/.morphdb/data.sqlite3`).
+and `--db` (a SQLite path, `:memory:`, or a `postgresql://…` URL; default
+`$MORPHDB_DATABASE_URL` or `~/.morphdb/data.sqlite3`).
 `dashboard` accepts `--port` (default `8788`), `--db`, and `--no-open`. Service
 state (pid, log, the default db) lives under `~/.morphdb` — relocate it with
 `$MORPHDB_HOME`.
@@ -142,7 +168,7 @@ exists. Meanwhile the frontend talks to generic endpoints that never change.
    DELETE /schema/{type}        │     PATCH /objects/{type}/{guid}
             │                                    │
             └──────────────  MorphDB  ───────────┘
-            (one process · many apps · SQLite)
+       (one process · many apps · SQLite or Postgres)
                 every call: X-App-Key: <app>
 ```
 
@@ -201,7 +227,7 @@ curl -X PATCH $BASE/objects/user/<u> -d '{"tasks":["<t1>","<t2>"]}'
 
 ## Features
 
-- **Zero dependencies.** Pure Python standard library + SQLite. `python3 -m morphdb` and go.
+- **Zero dependencies by default.** Pure Python standard library + embedded SQLite (`python3 -m morphdb` and go). An optional PostgreSQL backend (`pip install morphdb[postgres]`) swaps in a networked, managed database with no other changes.
 - **Generic CRUD** over arbitrary object types with typed fields.
 - **Instant schema morphing** with lazy invalidation — O(1) regardless of data size.
 - **Relations as fields** — four cardinalities, bidirectional, declared once, read/written on the object.
@@ -211,8 +237,9 @@ curl -X PATCH $BASE/objects/user/<u> -d '{"tasks":["<t1>","<t2>"]}'
 - **A management CLI** — `morphdb start/status/stop`, a read-only admin dashboard, and one-command skill install.
 - **A Claude Code skill** (`morphdb/skill/SKILL.md`, install with `morphdb install-skill`) with a schema CLI so the agent edits the model without hand-writing curl.
 
-> Scope: a localhost-scale developer tool. Not built for multi-tenant auth,
-> horizontal scale, or production durability guarantees.
+> Scope: a small-scale developer tool. With the PostgreSQL backend it can run as
+> one or more stateless instances behind a managed database, but it ships no
+> multi-tenant auth or production durability guarantees.
 
 ## Data model
 
@@ -372,9 +399,12 @@ allowed, `413` body too large, `500` internal.
   filter by it, so apps can reuse type names and never see each other's data,
   and deleting an app is a single cascading delete. Type identity is the
   `(app, name)` pair, and relation targets must live in the same app.
-- **One connection, one lock.** All access is serialized through a single
-  SQLite connection guarded by a reentrant lock — simple and correct at
-  localhost scale; threaded request handling stays safe.
+- **Pluggable persistence.** The engine writes one SQLite-flavored dialect of
+  SQL behind a thin backend seam (`morphdb/backend.py`); SQLite (default) and
+  PostgreSQL are both first-class, selected by the `--db` target. All access is
+  serialized through a single connection guarded by a reentrant lock — simple and
+  correct at single-instance scale; threaded request handling stays safe. Run
+  several stateless instances against one Postgres for horizontal scale.
 
 ## Limitations
 
@@ -398,12 +428,20 @@ allowed, `413` body too large, `500` internal.
   a plain header — it isolates data between apps but is **not** authentication.
   Anyone who knows a key can use that app; the absence of a list-apps endpoint is
   light obscurity, not a security boundary.
-- Scope is a localhost-scale developer tool — no auth, no horizontal scale.
+- **Scale & auth.** With the default SQLite engine it's a localhost-scale tool;
+  with the PostgreSQL backend it can run as one or more stateless instances
+  against a managed database. Either way it ships no built-in authentication or
+  multi-tenant authorization.
 
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests   # full suite, zero deps
+python3 -m unittest discover -s tests   # full suite on SQLite, zero deps
+
+# run the same engine suite against PostgreSQL too:
+pip install 'morphdb[postgres,dev]'
+MORPHDB_TEST_DATABASE_URL=postgresql://localhost/morphdb_test \
+    python3 -m pytest tests/          # SQLite-specific tests auto-skip
 ```
 
 ## License

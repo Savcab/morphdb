@@ -145,7 +145,7 @@ def upsert_relation(c, app, from_type, key, raw):
     if exists:
         c.execute(
             "UPDATE association_schemas SET from_type=?, to_type=?, forward_name=?, "
-            "inverse_name=?, cardinality=?, symmetric=?, forward_description=?, "
+            "inverse_name=?, cardinality=?, \"symmetric\"=?, forward_description=?, "
             "inverse_description=?, updated_at=? WHERE app=? AND name=?",
             (d["from_type"], d["to_type"], d["forward_name"], d["inverse_name"],
              d["cardinality"], int(d["symmetric"]), d["forward_description"],
@@ -154,7 +154,7 @@ def upsert_relation(c, app, from_type, key, raw):
     else:
         c.execute(
             "INSERT INTO association_schemas (app, name, from_type, to_type, "
-            "forward_name, inverse_name, cardinality, symmetric, "
+            "forward_name, inverse_name, cardinality, \"symmetric\", "
             "forward_description, inverse_description, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (app, d["name"], d["from_type"], d["to_type"], d["forward_name"],

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "morphdb"
-version = "0.1.5"
+version = "0.2.0"
 description = "A coding-agent-friendly, multi-tenant backend for vibe-coded websites. One process hosts many isolated apps; reshape each app's schema as fast as your agent iterates while the frontend keeps calling the same generic endpoints."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "morphdb contributors" }]
-keywords = ["database", "ai", "agent", "schema", "sqlite", "backend", "vibe-coding"]
+keywords = ["database", "ai", "agent", "schema", "sqlite", "postgres", "postgresql", "backend", "vibe-coding"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -23,11 +23,14 @@ classifiers = [
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
-# Zero runtime dependencies — only the Python standard library.
+# Zero runtime dependencies for the default SQLite engine — only the Python
+# standard library. PostgreSQL support is an opt-in extra (see below).
 dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# Persist to PostgreSQL instead of SQLite: pip install morphdb[postgres]
+postgres = ["psycopg[binary]>=3.1"]
 
 [project.scripts]
 morphdb = "morphdb.cli.main:main"

@@ -1,8 +1,15 @@
-"""SQLite storage layer.
+"""Storage layer — schema + connection lifecycle over a pluggable backend.
 
-A single connection guarded by a reentrant lock. MorphDB is a localhost-scale
-tool; serializing access with one lock is simpler and plenty fast, and it keeps
-the logical tables consistent without per-statement transaction juggling.
+The actual SQL dialect lives in :mod:`morphdb.backend`, which targets either
+SQLite (default, zero-dependency) or PostgreSQL (``pip install morphdb[postgres]``).
+This module owns the canonical schema, opens/initializes a backend, and exposes
+the two access primitives the rest of the engine uses: :func:`conn` (a shared,
+thread-safe connection facade) and :func:`transaction` (an atomic block). The
+engine writes one SQLite-flavored dialect of SQL; the backend translates it.
+
+A single connection guarded by a reentrant lock serializes all access — simple
+and correct at single-instance scale (see :mod:`morphdb.backend` for the
+concurrency rationale and the multi-instance story).
 
 Multi-tenancy
 -------------
@@ -11,8 +18,8 @@ type and object belongs to exactly one app, identified by an app *key*. The
 ``apps`` table is the tenant root; every other table carries an ``app`` column
 with a ``REFERENCES apps(key) ON DELETE CASCADE`` foreign key, so deleting an
 app wipes all of its schemas, objects, relations, and edges in one statement.
-``PRAGMA foreign_keys=ON`` makes that cascade (and the "app must exist" check)
-real at the storage layer.
+Foreign keys are enforced at the storage layer (SQLite ``PRAGMA foreign_keys=ON``;
+Postgres always), making that cascade (and the "app must exist" check) real.
 
 Tables
 ------
@@ -33,12 +40,14 @@ consistency hazard of mirrored rows while still letting an object discover all
 of its relationships in one query.
 """
 
-import sqlite3
 import threading
 from contextlib import contextmanager
 
+from . import backend as _backend
+
 _LOCK = threading.RLock()
-_CONN = None
+_CONN = None        # backend.Connection facade (shared, lock-guarded)
+_BACKEND = None     # the active backend (SqliteBackend / PostgresBackend)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS apps (
@@ -92,7 +101,7 @@ CREATE TABLE IF NOT EXISTS association_schemas (
     forward_name        TEXT NOT NULL,
     inverse_name        TEXT NOT NULL,
     cardinality         TEXT NOT NULL,
-    symmetric           INTEGER NOT NULL DEFAULT 0,
+    "symmetric"         INTEGER NOT NULL DEFAULT 0,   -- quoted: reserved word in Postgres
     forward_description TEXT,
     inverse_description TEXT,
     created_at          TEXT NOT NULL,
@@ -119,81 +128,104 @@ CREATE INDEX IF NOT EXISTS idx_assoc_app_name ON associations(app, assoc_name);
 # already covered; objects/associations get explicit app indexes above.
 
 
-def init_db(path):
-    """Open (or create) the database at ``path`` and ensure the schema exists.
+def init_db(target):
+    """Open (or create) the database at ``target`` and ensure the schema exists.
 
-    ``path`` may be ``":memory:"`` for ephemeral use (tests). Safe to call more
-    than once; the second call replaces the connection (used by tests).
+    ``target`` is a SQLite path, ``":memory:"``, or a Postgres URL
+    (``postgresql://...``); see :func:`morphdb.backend.from_target`. Safe to call
+    more than once; the second call replaces the connection (used by tests).
     """
-    global _CONN
+    global _CONN, _BACKEND
     with _LOCK:
         if _CONN is not None:
-            try:
-                _CONN.close()
-            except Exception:
-                pass
-        conn = sqlite3.connect(path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-        conn.execute("PRAGMA foreign_keys=ON;")   # enforce the app cascade + FKs
-        conn.executescript(SCHEMA_SQL)
-        _migrate(conn)
-        conn.commit()
+            _CONN.close()
+            _CONN = None
+        be = _backend.from_target(target)
+        raw = be.connect()
+        be.create_schema(raw, SCHEMA_SQL)
+        conn = _backend.Connection(be, raw, _LOCK)
+        _migrate(be, raw, conn)
+        raw.commit()
+        _BACKEND = be
         _CONN = conn
     return _CONN
 
 
-def _migrate(conn):
-    """Guard against opening a database from before the multi-tenant 'app' model.
+def _reset_and_init(target):
+    """Wipe ``target`` and re-create a clean schema. Test-only helper used to
+    give each test a fresh database on a persistent backend (Postgres)."""
+    global _CONN, _BACKEND
+    with _LOCK:
+        if _CONN is not None:
+            _CONN.close()
+            _CONN = None
+        be = _backend.from_target(target)
+        raw = be.connect()
+        be.reset(raw)
+        be.create_schema(raw, SCHEMA_SQL)
+        conn = _backend.Connection(be, raw, _LOCK)
+        _migrate(be, raw, conn)
+        raw.commit()
+        _BACKEND = be
+        _CONN = conn
+    return _CONN
 
-    Apps make ``(app, name)`` the identity of a type, which changes table primary
-    keys — that is not an additive ``ALTER`` we can apply in place. Rather than
-    silently rehome old rows under some magic app key (and risk reinterpreting
-    data), refuse with a clear message. Fresh databases (and ``:memory:``) are
-    created app-aware by ``SCHEMA_SQL`` above and pass straight through.
+
+def _migrate(be, raw, conn):
+    """Guard against legacy databases and run one-time data migrations.
+
+    The legacy guard refuses a database from before the multi-tenant 'app' model:
+    apps make ``(app, name)`` a type's identity, which changes table primary keys
+    — not an additive migration. Fresh databases are created app-aware by
+    SCHEMA_SQL and pass straight through.
+
+    field_index (schema version 1) is a derived accelerator added after the
+    original schema; it is populated once from existing object blobs, gated by the
+    backend's user-version so it runs exactly once. Purely additive — it never
+    touches object blobs, so it is safe to run against live data on upgrade.
     """
-    info = conn.execute("PRAGMA table_info(object_schemas)").fetchall()
-    cols = {r["name"] for r in info}
-    if info and "app" not in cols:
+    cols = be.table_columns(raw, "object_schemas")
+    if cols and "app" not in cols:
         raise RuntimeError(
             "This database predates MorphDB's multi-tenant 'app' model and cannot "
-            "be opened. Point --db at a fresh file (or remove the old one); the "
-            "app model requires a clean schema."
+            "be opened. Point at a fresh database; the app model requires a clean "
+            "schema."
         )
 
-    # field_index (schema version 1) is a derived accelerator added after the
-    # original schema. Populate it once from existing object blobs, gated by
-    # user_version so it runs exactly once. Fresh databases created by SCHEMA_SQL
-    # have no objects yet, so this is a no-op for them. Purely additive — it never
-    # touches object blobs, so it is safe to run against live data on upgrade.
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version < 1:
+    if be.get_user_version(raw) < 1:
         from . import fieldindex
         fieldindex.backfill(conn)
-        conn.execute("PRAGMA user_version = 1")
+        be.set_user_version(raw, 1)
 
 
 @contextmanager
 def transaction():
-    """Yield the shared connection inside an exclusive, committed transaction.
+    """Yield the shared connection inside an atomic, committed transaction.
 
-    All reads and writes funnel through here so that multi-statement operations
-    (e.g. enforce cardinality then insert) are atomic with respect to each other.
+    All multi-statement writes funnel through here so they are atomic with
+    respect to each other (e.g. enforce cardinality, then insert). The shared
+    lock is held for the whole block; the backend manages commit/rollback.
     """
     if _CONN is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     with _LOCK:
-        try:
+        with _BACKEND.transaction(_CONN.raw):
             yield _CONN
-            _CONN.commit()
-        except Exception:
-            _CONN.rollback()
-            raise
 
 
 def conn():
     if _CONN is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     return _CONN
+
+
+def backend():
+    """The active backend (or None before init). Used by tooling that needs to
+    know the engine (e.g. the dashboard / status)."""
+    return _BACKEND
+
+
+def like_ci():
+    """The backend's case-insensitive LIKE keyword (SQLite ``LIKE`` is already
+    case-insensitive; Postgres needs ``ILIKE``) — used by the ``contains`` filter."""
+    return _BACKEND.like_ci() if _BACKEND is not None else "LIKE"

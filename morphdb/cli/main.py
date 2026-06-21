@@ -51,7 +51,7 @@ def cmd_start(args):
 
 def cmd_run(args):
     from ..server import serve as serve_fg
-    serve_fg(host=args.host, port=args.port, db_path=args.db or service.default_db())
+    serve_fg(host=args.host, port=args.port, db_path=service.resolve_target(args.db))
     return 0
 
 
@@ -106,7 +106,7 @@ def _follow(path):
 
 
 def cmd_dashboard(args):
-    dashboard.serve(args.db or service.default_db(), port=args.port,
+    dashboard.serve(service.resolve_target(args.db), port=args.port,
                     open_browser=not args.no_open)
     return 0
 
@@ -127,7 +127,7 @@ def cmd_install_skill(args):
 def cmd_reindex(args):
     from .. import fieldindex
     from ..db import init_db, transaction
-    path = args.db or service.default_db()
+    path = service.resolve_target(args.db)
     init_db(path)
     with transaction() as c:
         n = fieldindex.backfill(c, app=args.app)
@@ -142,7 +142,9 @@ def _add_server_opts(sp):
     sp.add_argument("--port", type=int, default=service.DEFAULT_PORT,
                     help=f"bind port (default {service.DEFAULT_PORT})")
     sp.add_argument("--db", default=None,
-                    help="SQLite path or :memory: (default ~/.morphdb/data.sqlite3)")
+                    help="SQLite path, :memory:, or a Postgres URL "
+                         "(postgresql://...). Default $MORPHDB_DATABASE_URL or "
+                         "~/.morphdb/data.sqlite3")
 
 
 def build_parser():
