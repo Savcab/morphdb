@@ -31,6 +31,7 @@ consistency. A connection pool is a future optimization, not a correctness need.
 
 import os
 import re
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 
 
@@ -153,10 +154,80 @@ class Connection:
             pass
 
 
+# --- the backend interface ----------------------------------------------------
+
+
+class Backend(ABC):
+    """The contract every storage engine must satisfy.
+
+    The rest of MorphDB only ever touches a backend through this interface (plus
+    the :class:`Connection` facade), so SQLite, PostgreSQL, and any future engine
+    are fully interchangeable: adding one means subclassing this and implementing
+    each method — nothing else in the codebase changes. Subclassing also makes the
+    contract *enforced*, not just hoped-for: Python refuses to instantiate a
+    backend that leaves any abstract method unimplemented.
+    """
+
+    #: Short engine label ("sqlite" / "postgres"), used in status and logging.
+    name = ""
+
+    @abstractmethod
+    def describe(self):
+        """A human-readable, credential-safe description of the target (shown in
+        status/logs/dashboard)."""
+
+    @abstractmethod
+    def connect(self):
+        """Open and return a configured DB-API connection — row factory set so
+        rows support ``row["col"]``, foreign keys / autocommit as the engine
+        needs."""
+
+    @abstractmethod
+    def translate(self, sql):
+        """Rewrite the engine's SQLite-flavored SQL (``?`` placeholders,
+        ``INSERT OR IGNORE``) into this dialect, returning SQL ready to
+        execute."""
+
+    @abstractmethod
+    def like_ci(self):
+        """The case-insensitive ``LIKE`` keyword this engine uses for the
+        ``contains`` filter (SQLite ``LIKE`` vs Postgres ``ILIKE``)."""
+
+    @abstractmethod
+    def create_schema(self, raw, schema_sql):
+        """Create the MorphDB schema (idempotently) on a raw connection,
+        translating any DDL the dialect needs."""
+
+    @abstractmethod
+    def reset(self, raw):
+        """Drop all MorphDB state — used to give a test a clean database."""
+
+    @abstractmethod
+    def transaction(self, raw):
+        """A context manager that runs its block as one committed transaction
+        (rolled back on error)."""
+
+    @abstractmethod
+    def get_user_version(self, raw):
+        """Return the stored schema version (0 if never set)."""
+
+    @abstractmethod
+    def set_user_version(self, raw, version):
+        """Persist the schema version."""
+
+    @abstractmethod
+    def table_columns(self, raw, table):
+        """An ordered list of a table's column names (``[]`` if absent)."""
+
+    @abstractmethod
+    def list_tables(self, raw):
+        """The names of all base tables in the database."""
+
+
 # --- SQLite -------------------------------------------------------------------
 
 
-class SqliteBackend:
+class SqliteBackend(Backend):
     """The default, zero-dependency backend: an embedded SQLite file."""
 
     name = "sqlite"
@@ -225,7 +296,7 @@ class SqliteBackend:
 # --- PostgreSQL ---------------------------------------------------------------
 
 
-class PostgresBackend:
+class PostgresBackend(Backend):
     """Optional backend targeting PostgreSQL via psycopg (v3).
 
     Requires ``pip install morphdb[postgres]``. The same engine SQL is translated

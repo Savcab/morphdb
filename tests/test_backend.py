@@ -100,5 +100,24 @@ class TestPostgresDialect(unittest.TestCase):
         self.assertNotIn("AUTOINCREMENT", ddl)
 
 
+class TestInterface(unittest.TestCase):
+    def test_both_backends_satisfy_the_interface(self):
+        self.assertIsInstance(backend.SqliteBackend(":memory:"), backend.Backend)
+        self.assertIsInstance(backend.PostgresBackend("postgresql://h/db"),
+                              backend.Backend)
+
+    def test_abstract_base_cannot_be_instantiated(self):
+        with self.assertRaises(TypeError):
+            backend.Backend()
+
+    def test_no_abstract_methods_left_unimplemented(self):
+        # If a backend forgot a method, instantiation raises TypeError; these
+        # succeed only because both implement the full contract.
+        self.assertEqual(backend.SqliteBackend(":memory:").__abstractmethods__,
+                         frozenset())
+        self.assertEqual(backend.PostgresBackend("postgresql://h/db").__abstractmethods__,
+                         frozenset())
+
+
 if __name__ == "__main__":
     unittest.main()
