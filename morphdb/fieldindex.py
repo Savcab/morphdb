@@ -75,6 +75,18 @@ def _bind_number(v):
     return v
 
 
+def _row(app, guid, object_type, field_name, col, v):
+    """One ``field_index`` row tuple: the value lands in column ``col``, the other
+    value columns stay NULL. Caller has already confirmed the value is present and
+    type-matches the field."""
+    if col == "num_val":
+        v = _bind_number(v)
+    vals = {c: None for c in _VALUE_COLUMNS}
+    vals[col] = v
+    return (app, guid, object_type, field_name,
+            vals["str_val"], vals["num_val"], vals["bool_val"])
+
+
 def index_rows_for(app, object_type, guid, blob, fields):
     """Build the ``field_index`` rows for one object's stored blob.
 
@@ -96,12 +108,7 @@ def index_rows_for(app, object_type, guid, blob, fields):
         v = blob[name]
         if v is None or not _matches_type(v, fdef["type"]):
             continue                          # null / stale-after-retype -> default
-        if col == "num_val":
-            v = _bind_number(v)
-        vals = {c: None for c in _VALUE_COLUMNS}
-        vals[col] = v
-        rows.append((app, guid, object_type, name,
-                     vals["str_val"], vals["num_val"], vals["bool_val"]))
+        rows.append(_row(app, guid, object_type, name, col, v))
     return rows
 
 
@@ -145,12 +152,7 @@ def reindex_field(c, app, object_type, field_name, fdef):
         v = blob[field_name]
         if v is None or not _matches_type(v, fdef["type"]):
             continue
-        if col == "num_val":
-            v = _bind_number(v)
-        vals = {cc: None for cc in _VALUE_COLUMNS}
-        vals[col] = v
-        rows.append((app, r["guid"], object_type, field_name,
-                     vals["str_val"], vals["num_val"], vals["bool_val"]))
+        rows.append(_row(app, r["guid"], object_type, field_name, col, v))
     if rows:
         c.executemany(_INSERT, rows)
     return len(rows)

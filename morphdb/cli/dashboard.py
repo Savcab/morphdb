@@ -689,15 +689,11 @@ _JS = r"""
       view.k = nk; apply();
     }
     function fit() {
-      var minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9;
-      nodes.forEach(function (n) {
-        minx = Math.min(minx, n.x - n.w / 2); maxx = Math.max(maxx, n.x + n.w / 2);
-        miny = Math.min(miny, n.y - n.h / 2); maxy = Math.max(maxy, n.y + n.h / 2);
-      });
-      var bw = Math.max(1, maxx - minx), bh = Math.max(1, maxy - miny), pad = 60;
+      var b = bbox(nodes);
+      var bw = Math.max(1, b.maxx - b.minx), bh = Math.max(1, b.maxy - b.miny), pad = 60;
       view.k = clampK(Math.min((cw - pad * 2) / bw, (ch - pad * 2) / bh, 2.0));
-      view.x = (cw - bw * view.k) / 2 - minx * view.k;
-      view.y = (ch - bh * view.k) / 2 - miny * view.k;
+      view.x = (cw - bw * view.k) / 2 - b.minx * view.k;
+      view.y = (ch - bh * view.k) / 2 - b.miny * view.k;
       apply();
     }
     svg.addEventListener('wheel', function (e) {

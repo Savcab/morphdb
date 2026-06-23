@@ -29,10 +29,9 @@ class Router:
         self._routes = []  # (method, compiled_regex, handler)
 
     def add(self, method, template, handler):
-        param_names = re.findall(r"{(\w+)}", template)
         pattern = re.sub(r"{(\w+)}", r"(?P<\1>[^/]+)", template)
         regex = re.compile("^" + pattern + "/?$")
-        self._routes.append((method.upper(), regex, handler, param_names))
+        self._routes.append((method.upper(), regex, handler))
 
     def route(self, method, template):
         def deco(fn):
@@ -49,7 +48,7 @@ class Router:
         # HEAD is served by the GET handler (the server omits the body).
         match_method = "GET" if method == "HEAD" else method
         path_matched = False
-        for m, regex, handler, _names in self._routes:
+        for m, regex, handler in self._routes:
             mo = regex.match(path)
             if mo:
                 path_matched = True

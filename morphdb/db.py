@@ -135,25 +135,22 @@ def init_db(target):
     (``postgresql://...``); see :func:`morphdb.backend.from_target`. Safe to call
     more than once; the second call replaces the connection (used by tests).
     """
-    global _CONN, _BACKEND
-    with _LOCK:
-        if _CONN is not None:
-            _CONN.close()
-            _CONN = None
-        be = _backend.from_target(target)
-        raw = be.connect()
-        be.create_schema(raw, SCHEMA_SQL)
-        conn = _backend.Connection(be, raw, _LOCK)
-        _migrate(be, raw, conn)
-        raw.commit()
-        _BACKEND = be
-        _CONN = conn
-    return _CONN
+    return _open(target, reset=False)
 
 
 def _reset_and_init(target):
     """Wipe ``target`` and re-create a clean schema. Test-only helper used to
     give each test a fresh database on a persistent backend (Postgres)."""
+    return _open(target, reset=True)
+
+
+def _open(target, reset):
+    """Shared open path for :func:`init_db` / :func:`_reset_and_init`.
+
+    Closes any existing connection, opens the backend, optionally wipes it
+    (``reset=True``), creates the schema, runs migrations, and installs the
+    result as the process-wide connection.
+    """
     global _CONN, _BACKEND
     with _LOCK:
         if _CONN is not None:
@@ -161,7 +158,8 @@ def _reset_and_init(target):
             _CONN = None
         be = _backend.from_target(target)
         raw = be.connect()
-        be.reset(raw)
+        if reset:
+            be.reset(raw)
         be.create_schema(raw, SCHEMA_SQL)
         conn = _backend.Connection(be, raw, _LOCK)
         _migrate(be, raw, conn)

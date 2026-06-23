@@ -30,7 +30,6 @@ from .fieldtypes import project_data, validate_against_schema
 from .schema import get_object_schema
 from .util import new_guid, now_iso
 
-RESERVED_QUERY_KEYS = {"limit", "offset", "sort", "order"}
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 

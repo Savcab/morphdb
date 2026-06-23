@@ -88,26 +88,9 @@
   .flist li .badge{color:var(--amber); font-size:.7rem; margin-left:8px}
   @keyframes pop{from{opacity:0; transform:translateY(-6px); background:rgba(255,192,97,.12)} to{opacity:1; transform:none}}
 
-  .codewell{background:var(--well); display:flex; flex-direction:column}
-  .codewell pre{margin:0; padding:16px 18px; font-family:var(--mono); font-size:.84rem;
-    line-height:1.6; color:var(--text); overflow-x:auto; flex:1}
-  .url{display:flex; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--line-soft)}
-  .url .verb{color:var(--amber); font-family:var(--mono); font-weight:700; font-size:.84rem}
-  .url .path{color:var(--text); font-family:var(--mono); font-size:.84rem}
-  .url .frozen{margin-left:auto; font-family:var(--mono); font-size:.62rem; letter-spacing:.14em;
-    color:var(--aqua); border:1px solid var(--line); border-radius:20px; padding:3px 9px; white-space:nowrap}
-  .ln{display:block}
-  .ln.add{color:var(--amber); background:rgba(255,192,97,.08)}
-  .ln .key{color:var(--aqua)} .ln .rkey{color:var(--violet)} .ln .str{color:#A7E0B0} .ln .num{color:var(--amber)} .ln .bool{color:var(--coral)}
-  .controls{display:flex; align-items:center; gap:14px; margin-top:20px; flex-wrap:wrap}
   .btn{font-family:var(--mono); font-size:.85rem; color:var(--ink); background:var(--aqua);
     border:none; border-radius:9px; padding:11px 18px; cursor:pointer; font-weight:700}
-  .btn:hover{filter:brightness(1.08)}
-  .btn.ghost{background:transparent; color:var(--dim); border:1px solid var(--line)}
-  .btn.ghost:hover{color:var(--text)}
-  .cap{font-family:var(--mono); font-size:.82rem; color:var(--faint)}
-  .cap b{color:var(--aqua); font-weight:400}
-  .cap i{color:var(--amber); font-style:normal}
+  .btn:hover:not(:disabled){filter:brightness(1.08)}
 
   /* ---- model nesting ---- */
   .nest{display:flex; flex-direction:column; gap:0; margin-top:30px; font-family:var(--mono)}
@@ -188,9 +171,99 @@
   footer{padding:54px 0 80px; color:var(--faint); font-family:var(--mono); font-size:.82rem}
   footer b{color:var(--aqua); font-weight:400}
 
+  /* ---- LIVE demo additions ---- */
+  .live-badges{display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; margin:24px 0 4px}
+  .appkey{font-family:var(--mono); font-size:.74rem; color:var(--violet);
+    border:1px solid rgba(201,160,255,.35); background:rgba(201,160,255,.07);
+    border-radius:20px; padding:6px 13px; display:inline-flex; gap:9px; align-items:center}
+  .appkey b{color:var(--text); font-weight:600}
+  .appkey .pulse{width:7px; height:7px; border-radius:50%; background:var(--violet); animation:beat 1.7s infinite}
+  .live-badges .hint{font-family:var(--sans); font-size:.86rem; color:var(--faint)}
+  .live-dot{width:7px; height:7px; border-radius:50%; background:var(--amber); animation:beat 1.6s infinite; display:inline-block}
+  @keyframes beat{0%,100%{opacity:.28} 50%{opacity:1}}
+
+  .returnbanner{margin-top:22px; font-family:var(--mono); font-size:.84rem; color:var(--aqua);
+    border:1px solid var(--line); border-left:3px solid var(--aqua); border-radius:10px;
+    padding:12px 15px; background:var(--panel)}
+  .returnbanner b{color:var(--text); font-weight:600}
+  .returnbanner a{text-decoration:underline; cursor:pointer}
+
+  .liveform{display:flex; gap:9px; margin-top:16px; flex-wrap:wrap}
+  .lf-input{flex:1; min-width:190px; font-family:var(--mono); font-size:.92rem; color:var(--text);
+    background:var(--well); border:1px solid var(--line); border-radius:9px; padding:11px 14px}
+  .lf-input:focus{outline:none; border-color:var(--aqua)}
+  .lf-input::placeholder{color:var(--faint)}
+  .btn:disabled{opacity:.45; cursor:progress}
+
+  .statusline{font-family:var(--mono); font-size:.83rem; color:var(--dim); margin-top:16px;
+    min-height:1.5em; display:flex; gap:9px; align-items:flex-start; line-height:1.55}
+  .statusline .sx{color:var(--amber); flex:none}
+  .statusline b{color:var(--text); font-weight:600}
+
+  .morphcta{margin-top:18px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    border:1px solid rgba(255,192,97,.28); border-radius:14px; padding:16px 18px; background:rgba(255,192,97,.04)}
+  .btn.morph{background:var(--amber); color:var(--ink); flex:none}
+  .btn.morph:disabled{opacity:.5; cursor:progress}
+  .ss-cap{flex:1; min-width:240px; font-family:var(--sans); font-size:.89rem; color:var(--dim); line-height:1.6}
+  .ss-cap b{color:var(--text)} .ss-cap .hl{color:var(--amber)}
+
+  @keyframes vanish{0%{background:rgba(255,126,107,.22)} 100%{opacity:0; transform:translateX(10px)}}
+  @keyframes restore{0%{opacity:0; transform:translateY(-6px); background:rgba(95,211,196,.28)} 100%{opacity:1; transform:none}}
+
+  /* the rendered frontend (right pane) — a real little app, not raw JSON */
+  .siteview{display:flex; flex-direction:column}
+  .appframe{flex:1; padding:13px; background:var(--panel2); min-height:152px}
+  .tasklist{display:flex; flex-direction:column; gap:9px}
+  .appempty{font-family:var(--sans); color:var(--faint); font-size:.92rem; text-align:center;
+    padding:30px 16px; line-height:1.6}
+  .taskcard{display:flex; gap:12px; align-items:flex-start; background:var(--panel);
+    border:1px solid var(--line-soft); border-radius:11px; padding:12px 13px; animation:pop .42s ease both}
+  .taskcard.focal{border-color:rgba(95,211,196,.5); box-shadow:0 0 0 1px rgba(95,211,196,.14)}
+  .tcheck{flex:none; width:22px; height:22px; border-radius:6px; border:1.5px solid var(--line);
+    background:var(--well); color:var(--aqua); cursor:pointer; font-size:.82rem; line-height:1;
+    display:flex; align-items:center; justify-content:center; padding:0}
+  .tcheck.on{background:var(--aqua); color:var(--ink); border-color:var(--aqua)}
+  .tcmain{flex:1; min-width:0}
+  .tctitle{font-family:var(--sans); font-size:1.01rem; color:var(--text); font-weight:600; word-break:break-word}
+  .tctitle.done{text-decoration:line-through; color:var(--dim)}
+  .tcmeta{display:flex; flex-wrap:wrap; gap:7px; margin-top:9px}
+  .tcmeta:empty{display:none}
+  .chip{font-family:var(--mono); font-size:.72rem; padding:4px 10px; border-radius:20px;
+    border:1px solid var(--line-soft); color:var(--dim); white-space:nowrap}
+  .chip.pri{border-color:rgba(255,192,97,.45); color:var(--amber)}
+  .chip.due{border-color:rgba(95,211,196,.38); color:var(--aqua)}
+  .chip.empty{color:var(--faint); border-color:var(--line-soft)}
+  .chip.chip-vanish{animation:vanish .6s ease both}
+  .chip.chip-restore{animation:restore .8s ease both}
+  .frame-foot{padding:11px 14px; border-top:1px solid var(--line-soft);
+    font-family:var(--mono); font-size:.72rem; color:var(--faint)}
+  .frame-foot .path{color:var(--aqua)} .frame-foot .frozenmini{color:var(--dim)}
+
+  /* ---- live multi-tenancy widget ---- */
+  .tenancy-live{display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:30px}
+  @media(max-width:680px){.tenancy-live{grid-template-columns:1fr}}
+  .tcol{background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden}
+  .tcol.you{border-top:3px solid var(--violet)} .tcol.them{border-top:3px solid var(--aqua)}
+  .tcol .tch{display:flex; align-items:center; gap:9px; padding:13px 16px; border-bottom:1px solid var(--line-soft);
+    font-family:var(--mono); font-size:.84rem}
+  .tcol.you .tch{color:var(--violet)} .tcol.them .tch{color:var(--aqua)}
+  .tcol .tkey{margin-left:auto; font-size:.7rem; color:var(--faint)}
+  .tbody{padding:10px; min-height:104px}
+  .trow{font-family:var(--mono); font-size:.8rem; color:var(--text); padding:9px 12px; border-radius:8px;
+    background:var(--panel2); border:1px solid var(--line-soft); margin:6px 0; display:flex; gap:10px; align-items:center}
+  .trow .done{font-size:.9rem} .trow .ttl{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .trow .td{margin-left:auto; font-size:.68rem; color:var(--faint); flex:none}
+  .tempty{font-family:var(--sans); font-size:.84rem; color:var(--faint); padding:16px 12px; line-height:1.6}
+  .sameurl{font-family:var(--mono); font-size:.79rem; color:var(--faint); text-align:center; margin-top:14px}
+  .sameurl .path{color:var(--aqua)} .sameurl .hk{color:var(--violet)}
+  .tnote{font-family:var(--sans); color:var(--dim); font-size:.96rem; max-width:64ch; margin:16px 0 0; line-height:1.65}
+  .tnote b{color:var(--text); font-weight:600}
+
   @media(prefers-reduced-motion:reduce){
     .pkt{animation:none} .flist li.isnew{animation:none}
     .pkt.req{left:30%} .pkt.res{right:30%}
+    .appkey .pulse,.live-dot{animation:none; opacity:.7}
+    .taskcard,.chip.chip-vanish,.chip.chip-restore{animation:none}
   }
 </style>
 </head>
@@ -211,29 +284,44 @@
 <header class="hero"><div class="wrap">
   <div class="eyebrow"><span class="n">//</span> a backend for vibe-coded sites <span class="rule"></span></div>
   <h1><span class="a">Schema fluid.</span><br><span class="b">API stable.</span></h1>
-  <p class="sub">A coding agent reshapes your data model as fast as it changes the UI — <b>no migrations</b> — while the site you ship keeps calling the <b>same unchanging endpoints</b>. Here's the whole idea in one demo:</p>
+  <p class="sub">A coding agent reshapes your data model as fast as it changes the UI — <b>no migrations</b> — while the site keeps hitting the <b>same frozen endpoints</b>. And one instance hosts <b>every site you build</b>, each a fully isolated tenant. The demo below isn't a mockup — it's wired to the <b>live database</b>. Try it:</p>
+
+  <div class="returnbanner" id="returnBanner" hidden></div>
+
+  <div class="live-badges">
+    <span class="appkey"><span class="pulse"></span>your app · <b id="appkeyVal">created on first write</b></span>
+    <span class="hint">a private, isolated tenant on the live database — only this key can read it</span>
+  </div>
 
   <div class="demo">
     <div class="pane">
-      <div class="pane-h"><span class="dot v"></span> schema · the agent edits this</div>
+      <div class="pane-h"><span class="dot v"></span> schema · <span style="color:var(--violet)">the agent edits this</span></div>
       <div class="typecard">
         <div class="tname">task</div>
-        <ul class="flist" id="flist"></ul>
+        <ul class="flist" id="flist"><li style="opacity:.5"><span class="fn">title</span><span class="ft">string</span></li><li style="opacity:.5"><span class="fn">done</span><span class="ft">boolean</span></li></ul>
       </div>
     </div>
-    <div class="pane codewell">
-      <div class="url">
-        <span class="verb">GET</span><span class="path">/objects/task/abc-123</span>
-        <span class="frozen">URL NEVER CHANGES</span>
+    <div class="pane siteview">
+      <div class="pane-h"><span class="dot q"></span> your site · <span style="color:var(--aqua)">what your users see</span><span class="live-dot" style="margin-left:auto"></span></div>
+      <div class="appframe">
+        <div class="tasklist" id="taskList"><div class="appempty">No tasks yet.<br>Persist one and your site renders it right here — like a real app would.</div></div>
       </div>
-      <pre id="resp"></pre>
+      <div class="frame-foot">rendered from <span class="path">GET /objects/task</span> · <span class="frozenmini">same URL forever, however the schema morphs</span></div>
     </div>
   </div>
-  <div class="controls">
-    <button class="btn" id="morphBtn">⟳ Morph the schema</button>
-    <button class="btn ghost" id="pauseBtn">pause auto</button>
-    <span class="cap">schema went from <b>lean</b> to <i>morphed</i> — the endpoint URL didn't move.</span>
+
+  <div class="liveform">
+    <input class="lf-input" id="titleInput" placeholder="Buy milk" maxlength="80" autocomplete="off" spellcheck="false">
+    <button class="btn" id="persistBtn">Persist task</button>
   </div>
+
+  <div class="statusline" id="statusLine"><span class="sx">//</span><span><b>Step 1.</b> Type a task and persist it — it saves to a real database and renders on the right.</span></div>
+
+  <div class="morphcta" id="morphCta" hidden>
+    <button class="btn morph" id="morphRun">▶ Morph the schema — live</button>
+    <span class="ss-cap" id="ssCap"><b>Step 2.</b> Watch one click add a field, set it, <span class="hl">drop the whole column</span>, and bring it back — all on your task above. Objects are raw JSON projected through the schema on read, so a drop only hides data. <b>Zero rows migrated.</b></span>
+  </div>
+
 </div></header>
 
 <!-- WHY -->
@@ -248,15 +336,24 @@
 <section id="model"><div class="wrap">
   <div class="eyebrow"><span class="n">02</span> the mental model <span class="rule"></span></div>
   <h2>Apps → types → objects.</h2>
-  <p class="lede">Three nested ideas. That's the whole data model.</p>
+  <p class="lede">Three nested ideas. The outermost one — the <b>app</b> — is the other half of the story: it's what makes MorphDB <b>multi-tenant</b>. Every site you ship is its own app, and they all live in one process behind one set of URLs.</p>
   <div class="nest">
-    <div class="nlayer l1"><div class="nh"><span class="tag">app</span><span class="nt">one per website · fully isolated</span></div>
-      <div class="nd">A single MorphDB process hosts many apps (tenants). Each carries an <span class="k">X-App-Key</span>; nothing leaks across apps.</div></div>
+    <div class="nlayer l1"><div class="nh"><span class="tag">app</span><span class="nt">one per website · a hard isolation boundary</span></div>
+      <div class="nd">A single MorphDB process hosts thousands of apps (tenants). Each request carries an <span class="k">X-App-Key</span>; that key — and nothing else — decides whose data you touch. No data, schema, or type name leaks across apps. <b>One deploy backs every site you build.</b></div></div>
     <div class="nlayer l2"><div class="nh"><span class="tag">type</span><span class="nt">fields + relations</span></div>
-      <div class="nd">Your data model <i>inside</i> an app — like <span class="k">task</span>, <span class="k">user</span>. Just a set of fields (raw values) and relations (links to other types). The agent reshapes these constantly.</div></div>
+      <div class="nd">Your data model <i>inside</i> an app — like <span class="k">task</span>, <span class="k">user</span>. Just a set of fields (raw values) and relations (links to other types). The agent reshapes these constantly. Two different apps can both own a <span class="k">task</span> type with totally different shapes.</div></div>
     <div class="nlayer l3"><div class="nh"><span class="tag">object</span><span class="nt">the instances · each has a _guid</span></div>
       <div class="nd">The actual rows — one task, one user. Written and read by the site over generic endpoints. Relations ride along as fields on the object body.</div></div>
   </div>
+
+  <div class="tenancy-live">
+    <div class="tcol you"><div class="tch"><span class="dot v"></span> your app<span class="tkey" id="youKey">created on first write</span></div>
+      <div class="tbody" id="youBody"><div class="tempty">Persist an object in the demo above — it lands in <em>your</em> app and shows up right here.</div></div></div>
+    <div class="tcol them"><div class="tch"><span class="dot q"></span> someone else's app<span class="tkey">acme_store</span></div>
+      <div class="tbody" id="themBody"><div class="tempty">loading a different tenant…</div></div></div>
+  </div>
+  <div class="sameurl">both panels call the exact same path — <span class="path">GET /objects/task</span> — only the <span class="hk">X-App-Key</span> header differs</div>
+  <p class="tnote"><b>That's multi-tenancy, live.</b> Same process, same URL, two apps that have never heard of each other. The key on the request is the only thing that picks a universe — which is exactly why a coding agent can spin up a fresh backend per project without standing up new infrastructure. <b>Schema-fluid is how fast you build one site; multi-tenant is how one MorphDB backs all of them.</b></p>
 </div></section>
 
 <!-- SPLIT -->
@@ -364,74 +461,184 @@
 
 <script>
 (function(){
-  var LEAN = {
-    fields:[["title","string"],["done","boolean"]],
-    rel:null,
-    json:[
-      {k:"_guid",  v:'"abc-123"', t:"str", key:"key"},
-      {k:"title",  v:'"Buy milk"', t:"str", key:"key"},
-      {k:"done",   v:"false",      t:"bool",key:"key"}
-    ]
-  };
-  var FULL = {
-    fields:[["title","string"],["done","boolean"],["priority","number",1],["due","datetime",1]],
-    rel:["assignee","→ user",1],
-    json:[
-      {k:"_guid",   v:'"abc-123"',   t:"str", key:"key"},
-      {k:"title",   v:'"Buy milk"',   t:"str", key:"key"},
-      {k:"done",    v:"false",        t:"bool",key:"key"},
-      {k:"priority",v:"2",            t:"num", key:"key", add:1},
-      {k:"due",     v:'"2026-07-01"', t:"str", key:"key", add:1},
-      {k:"assignee",v:'"user_9f2"',   t:"str", key:"rkey",add:1}
-    ]
-  };
-  var flist = document.getElementById("flist");
-  var resp  = document.getElementById("resp");
-  var state = 0; // 0 lean, 1 full
+  var LAMBDA="https://hjvvxxmlcrp6jzkfaohctk7cda0qshum.lambda-url.us-west-1.on.aws";
+  var TYPE="task", NEIGHBOR="acme_store";
+  var LSK_APP="morphdb_demo_appkey", LSK_GUID="morphdb_demo_guid";
+  var $=function(id){return document.getElementById(id);};
+  var flist=$("flist"), taskList=$("taskList"), statusLine=$("statusLine"),
+      morphCta=$("morphCta"), morphRunBtn=$("morphRun"), titleInput=$("titleInput"),
+      persistBtn=$("persistBtn"), appkeyVal=$("appkeyVal"),
+      returnBanner=$("returnBanner"), ssCap=$("ssCap"),
+      youKey=$("youKey"), youBody=$("youBody"), themBody=$("themBody");
 
-  function renderFields(s){
-    flist.innerHTML = "";
-    s.fields.forEach(function(f){
-      var li = document.createElement("li");
-      if(f[2]) li.className = "isnew";
-      li.innerHTML = '<span class="fn">'+f[0]+'</span><span class="ft">'+f[1]+(f[2]?'<span class="badge">+ new</span>':'')+'</span>';
+  function pause(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+
+  var appKey=localStorage.getItem(LSK_APP)||null;
+  var guid=localStorage.getItem(LSK_GUID)||null;   // focal task
+  var fields={}, tasks=[], busy=false;
+
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function rand(n){var s="",h="0123456789abcdef";for(var i=0;i<n;i++)s+=h[Math.floor(Math.random()*16)];return s;}
+
+  function api(method,path,body,opts){
+    opts=opts||{};
+    var headers={}, key=(opts.key!==undefined)?opts.key:appKey;
+    if(!opts.noKey&&key) headers["X-App-Key"]=key;
+    if(body) headers["Content-Type"]="application/json";
+    return fetch(LAMBDA+path,{method:method,headers:headers,body:body?JSON.stringify(body):undefined})
+      .then(function(res){
+        return res.text().then(function(txt){
+          var data; try{data=JSON.parse(txt);}catch(e){data=txt;}
+          if(!res.ok){var err=new Error("api");err.status=res.status;err.data=data;throw err;}
+          return data;
+        });
+      });
+  }
+
+  function setStatus(html,kind){
+    statusLine.innerHTML='<span class="sx">'+(kind==="ok"?"✓":kind==="err"?"✕":kind==="busy"?"…":"//")+'</span><span>'+html+'</span>';
+  }
+
+  // ---------- schema pane (what the agent edits) ----------
+  function renderFields(highlight){
+    flist.innerHTML="";
+    var names=Object.keys(fields);
+    if(!names.length){ flist.innerHTML='<li style="opacity:.5"><span class="fn">title</span><span class="ft">string</span></li>'; return; }
+    names.forEach(function(n){
+      var li=document.createElement("li");
+      if(n===highlight) li.className="isnew";
+      li.innerHTML='<span class="fn">'+esc(n)+'</span><span class="ft">'+esc(fields[n])+(n===highlight?'<span class="badge">+ new</span>':'')+'</span>';
       flist.appendChild(li);
     });
-    if(s.rel){
-      var li = document.createElement("li");
-      li.className = "rel" + (s.rel[2]?" isnew":"");
-      li.innerHTML = '<span class="fn">'+s.rel[0]+'</span><span class="ft">'+s.rel[1]+(s.rel[2]?'<span class="badge">+ relation</span>':'')+'</span>';
-      flist.appendChild(li);
-    }
   }
-  function renderJson(s){
-    var lines = ['<span class="ln">{</span>'];
-    s.json.forEach(function(o,i){
-      var comma = i < s.json.length-1 ? "," : "";
-      lines.push('<span class="ln'+(o.add?' add':'')+'">  '+
-        '"<span class="'+o.key+'">'+o.k+'</span>": '+
-        '<span class="'+o.t+'">'+o.v+'</span>'+comma+'</span>');
+
+  // ---------- rendered frontend (what users see) ----------
+  function focal(){ for(var i=0;i<tasks.length;i++) if(tasks[i]._guid===guid) return tasks[i]; return tasks[0]||null; }
+  function renderTasks(opt){
+    opt=opt||{};
+    if(!tasks.length){ taskList.innerHTML='<div class="appempty">No tasks yet.<br>Persist one and your site renders it right here — like a real app would.</div>'; return; }
+    var hasPri=("priority" in fields), hasDue=("due" in fields);
+    taskList.innerHTML=tasks.map(function(t){
+      var isF=t._guid===guid, meta="";
+      if(hasPri){ var pe=(t.priority==null); meta+='<span class="chip pri'+(pe?" empty":"")+'" data-chip="priority">priority '+(pe?"—":esc(String(t.priority)))+'</span>'; }
+      if(hasDue){ var de=(t.due==null); meta+='<span class="chip due'+(de?" empty":"")+'" data-chip="due">due '+(de?"—":esc(String(t.due).slice(0,10)))+'</span>'; }
+      return '<div class="taskcard'+(isF?" focal":"")+'" data-guid="'+esc(t._guid)+'">'+
+        '<button class="tcheck'+(t.done?" on":"")+'" data-act="toggle" data-guid="'+esc(t._guid)+'" aria-label="toggle done">'+(t.done?"✓":"")+'</button>'+
+        '<div class="tcmain"><div class="tctitle'+(t.done?" done":"")+'">'+esc(t.title||"(untitled)")+'</div>'+
+        '<div class="tcmeta">'+meta+'</div></div></div>';
+    }).join("");
+    if(opt.restore){ var c=taskList.querySelector('.taskcard.focal [data-chip="'+opt.restore+'"]'); if(c) c.className+=" chip-restore"; }
+  }
+
+  // ---------- control state ----------
+  function updateControls(){
+    var hasObj=!!guid;
+    morphCta.hidden=!hasObj;
+    morphRunBtn.disabled=!hasObj||busy;
+  }
+
+  // ---------- live multi-tenancy panels ----------
+  function tRows(objs){
+    if(!objs||!objs.length) return '<div class="tempty">no <span style="font-family:var(--mono)">task</span> objects in this app yet</div>';
+    return objs.slice(0,5).map(function(o){
+      return '<div class="trow"><span class="done">'+(o.done?"☑":"☐")+'</span><span class="ttl">'+esc(o.title||"(untitled)")+'</span><span class="td">'+esc((o._guid||"").slice(0,12))+'…</span></div>';
+    }).join("");
+  }
+  function loadNeighbor(){
+    api("GET","/objects/"+TYPE+"?limit=5",null,{key:NEIGHBOR}).then(function(d){ themBody.innerHTML=tRows(d.objects); })
+      .catch(function(){ themBody.innerHTML='<div class="tempty">neighbor app unavailable</div>'; });
+  }
+  function loadYou(){
+    if(!appKey){ youBody.innerHTML='<div class="tempty">Persist a task above — it lands in <em>your</em> app and shows up here.</div>'; return; }
+    api("GET","/objects/"+TYPE+"?limit=5").then(function(d){ youBody.innerHTML=tRows(d.objects); youKey.textContent=appKey; }).catch(function(){});
+  }
+
+  // ---------- ensure app + schema ----------
+  function ensureApp(){
+    if(appKey) return Promise.resolve(appKey);
+    var key="demo_"+rand(8);
+    return api("POST","/app",{key:key},{noKey:true}).then(function(){ appKey=key; localStorage.setItem(LSK_APP,key); paintKey(); return key; });
+  }
+  function paintKey(){ appkeyVal.textContent=appKey||"created on first write"; if(appKey&&youKey) youKey.textContent=appKey; }
+  function ensureSchema(){ return api("PUT","/schema/"+TYPE,{fields:{title:"string",done:"boolean"},merge:true}).then(syncSchema); }
+  function syncSchema(doc){ fields={}; if(doc&&doc.fields) Object.keys(doc.fields).forEach(function(n){ fields[n]=doc.fields[n].type; }); return doc; }
+  function fieldsPlus(name,type){ var f={}; Object.keys(fields).forEach(function(n){f[n]=fields[n];}); f[name]=type; return f; }
+  function fieldsMinus(name){ var f={}; Object.keys(fields).forEach(function(n){ if(n!==name) f[n]=fields[n]; }); return f; }
+  function loadTasks(opt){
+    return api("GET","/objects/"+TYPE+"?limit=20").then(function(d){
+      tasks=(d.objects||[]).slice().sort(function(a,b){return (b._created_at||"").localeCompare(a._created_at||"");});
+      renderTasks(opt); renderFields(); updateControls(); return tasks;
     });
-    lines.push('<span class="ln">}</span>');
-    resp.innerHTML = lines.join("");
   }
-  function render(){ var s = state? FULL : LEAN; renderFields(s); renderJson(s); }
-  function toggle(){ state = state?0:1; render(); }
+  function lock(b){ busy=b; persistBtn.disabled=b; updateControls(); }
 
-  render();
+  // ---------- actions ----------
+  function persist(){
+    if(busy) return;
+    var title=(titleInput.value||"").trim();
+    if(!title){ titleInput.focus(); setStatus("type a title first — anything works.","err"); return; }
+    lock(true); setStatus("registering your app, declaring the schema, saving the task…","busy");
+    ensureApp().then(ensureSchema).then(function(){ return api("POST","/objects/"+TYPE,{title:title,done:false}); })
+      .then(function(o){
+        guid=o._guid; localStorage.setItem(LSK_GUID,guid);
+        setStatus("saved to a real database and rendered by your site. Refresh the page later — it's still there. Now morph the schema underneath it ↓","ok");
+        titleInput.value=""; return loadTasks();
+      }).then(function(){ loadYou(); })
+      .catch(function(e){ setStatus("write failed ("+(e.status||"network")+"). The serverless backend may be cold — give it one more click.","err"); })
+      .then(function(){ lock(false); });
+  }
 
-  var auto = null, paused = false;
-  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches;
-  function startAuto(){ if(reduce||paused) return; auto = setInterval(toggle, 3600); }
-  function stopAuto(){ if(auto){ clearInterval(auto); auto=null; } }
-  startAuto();
+  // ---------- the one-click morph: add → set → drop → restore, on the live card ----------
+  async function morphRun(){
+    if(busy||!guid) return;
+    lock(true);
+    try{
+      setStatus("<b>Adding</b> a <span style=\"color:var(--amber)\">priority</span> field and setting it to 2 — one metadata write, zero rows migrated…","busy");
+      if(!("priority" in fields)){ syncSchema(await api("PUT","/schema/"+TYPE,{fields:fieldsPlus("priority","number"),merge:true})); renderFields("priority"); await pause(650); }
+      await api("PATCH","/objects/"+TYPE+"/"+guid,{priority:2}); await loadTasks();
+      setStatus("Your task now shows <b>priority 2</b>; any older task reads it as empty. <b>Nothing was migrated.</b>","ok"); await pause(1500);
 
-  document.getElementById("morphBtn").addEventListener("click", function(){ toggle(); });
-  document.getElementById("pauseBtn").addEventListener("click", function(e){
-    paused = !paused;
-    e.target.textContent = paused ? "resume auto" : "pause auto";
-    if(paused) stopAuto(); else startAuto();
+      setStatus("Now <b>dropping the whole priority column</b> from the schema…","busy"); await pause(450);
+      syncSchema(await api("PUT","/schema/"+TYPE,{fields:fieldsMinus("priority"),merge:false}));
+      var chip=taskList.querySelector('.taskcard.focal [data-chip="priority"]'); if(chip) chip.className+=" chip-vanish"; await pause(620);
+      await loadTasks();
+      setStatus("The badge is <b>gone</b>. Looks like your data was just deleted…","ok"); await pause(1700);
+
+      setStatus("<b>Re-adding</b> the priority field…","busy");
+      syncSchema(await api("PUT","/schema/"+TYPE,{fields:fieldsPlus("priority","number"),merge:true})); renderFields("priority");
+      await loadTasks({restore:"priority"});
+      var back=focal()&&focal().priority!=null;
+      setStatus(back?"✦ <b>priority = 2 is back — your data never left.</b> Dropping a column only hid it; objects are raw JSON projected through the schema on read. Zero migrations, ten rows or ten million.":"re-added (the value was empty before this run).","ok");
+      morphRunBtn.textContent="▶ Run the morph again";
+    }catch(e){ setStatus("morph failed ("+((e&&e.status)||"network")+"). The serverless backend may be cold — try again.","err"); }
+    lock(false);
+  }
+
+  // ---------- wire ----------
+  persistBtn.addEventListener("click",persist);
+  titleInput.addEventListener("keydown",function(e){ if(e.key==="Enter") persist(); });
+  morphRunBtn.addEventListener("click",morphRun);
+  taskList.addEventListener("click",function(e){
+    var btn=(e.target&&e.target.closest)?e.target.closest('[data-act="toggle"]'):null;
+    if(!btn||busy) return;
+    var g=btn.getAttribute("data-guid"), cur=null;
+    for(var i=0;i<tasks.length;i++) if(tasks[i]._guid===g) cur=tasks[i];
+    lock(true); api("PATCH","/objects/"+TYPE+"/"+g,{done:!(cur&&cur.done)}).then(function(){ return loadTasks(); })
+      .then(function(){ loadYou(); }).catch(function(){}).then(function(){ lock(false); });
   });
+
+  // ---------- init ----------
+  paintKey(); loadNeighbor();
+  if(appKey&&guid){
+    setStatus("welcome back — re-reading the task you saved earlier…","busy");
+    api("GET","/schema/"+TYPE).then(syncSchema).then(function(){ return loadTasks(); }).then(function(){
+      returnBanner.hidden=false;
+      returnBanner.innerHTML='✦ <b>Still here.</b> You saved this on an earlier visit — your site just re-rendered it live from the database. <a id="rbRefetch">re-read it</a>.';
+      var rb=document.getElementById("rbRefetch"); if(rb) rb.addEventListener("click",function(){ if(!busy) loadTasks(); });
+      setStatus("your saved task, rendered live. Hit <b>Morph the schema</b> below to watch it survive a column drop.","ok");
+      loadYou();
+    }).catch(function(){ localStorage.removeItem(LSK_GUID); guid=null; renderTasks(); updateControls(); loadYou(); });
+  } else { loadYou(); }
 })();
 </script>
 </body>

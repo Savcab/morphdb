@@ -23,14 +23,18 @@ import urllib.error
 import urllib.request
 
 from .. import __version__
+from ..associations import CARDINALITIES as _CARDINALITIES
+from ..fieldtypes import FIELD_TYPES as _FIELD_TYPES
 
 # Advertised when the client doesn't pin a version. We echo the client's
 # requested protocolVersion when present (our wire format is stable across the
 # revisions that matter), which maximizes compatibility.
 _DEFAULT_PROTOCOL = "2025-06-18"
 
-FIELD_TYPES = ["string", "number", "boolean", "json", "datetime"]
-CARDINALITIES = ["one_to_one", "one_to_many", "many_to_one", "many_to_many"]
+# Single source of truth lives in the engine (sets); the tool schema needs an
+# ordered list for its JSON `enum`, so sort the canonical sets.
+FIELD_TYPES = sorted(_FIELD_TYPES)
+CARDINALITIES = sorted(_CARDINALITIES)
 
 
 # --- backend plumbing ---------------------------------------------------------

@@ -6,7 +6,8 @@
     morphdb stop          stop the background server
     morphdb logs          show the background server's log (-f to follow)
     morphdb run           run the server in the foreground (blocking)
-    morphdb dashboard     open the read-only admin dashboard
+    morphdb dashboard     run the read-only admin dashboard in the background
+    morphdb dashboard stop   stop the background dashboard
     morphdb mcp           run the MCP server (stdio; spawned by Claude Code)
     morphdb install-skill install the bundled Claude Code skill
     morphdb reindex       rebuild the field-value index from object data
@@ -59,6 +60,11 @@ def cmd_status(args):
     print(_fmt_status(service.status()))
     from . import mcp
     print(f"  mcp:  {mcp.registration_summary()}")
+    dst = service.dashboard_status()
+    if dst.get("running"):
+        print(f"  dash: http://{dst['host']}:{dst['port']} (pid {dst['pid']})")
+    else:
+        print("  dash: not running  (start with `morphdb dashboard`)")
     return 0
 
 
@@ -105,9 +111,51 @@ def _follow(path):
             pass
 
 
+def _fmt_dash_status(st):
+    if not st.get("running"):
+        msg = "Dashboard is not running."
+        if st.get("stale"):
+            msg += "  (cleared a stale pid file)"
+        return msg
+    health = "healthy" if st.get("healthy") else "starting / not responding yet"
+    return (f"Dashboard is running (pid {st['pid']}) at "
+            f"http://{st['host']}:{st['port']}  [{health}]\n"
+            f"  reading: {st.get('db')}")
+
+
 def cmd_dashboard(args):
-    dashboard.serve(service.resolve_target(args.db), port=args.port,
-                    open_browser=not args.no_open)
+    # Internal: the blocking server the background daemon actually runs.
+    if getattr(args, "foreground", False):
+        dashboard.serve(service.resolve_target(args.db), host=args.host,
+                        port=args.port, open_browser=False)
+        return 0
+
+    action = getattr(args, "action", None) or "start"
+    if action == "stop":
+        print("Dashboard stopped." if service.dashboard_stop()
+              else "Dashboard was not running.")
+        return 0
+    if action == "status":
+        print(_fmt_dash_status(service.dashboard_status()))
+        return 0
+
+    # action == "start": launch the dashboard as a detached background daemon.
+    st, _ = service.dashboard_start(host=args.host, port=args.port, db=args.db)
+    if st.get("port_in_use"):
+        print(f"Something is already listening on http://{st['host']}:{st['port']}. "
+              f"Stop it (or pass --port) and try again. Dashboard not started.")
+        return 1
+    print(_fmt_dash_status(st))
+    if not st.get("running"):
+        print(f"  (dashboard exited on startup — check the log: {service.dash_log_file()})")
+        return 1
+    if not args.no_open:
+        url = f"http://{st['host']}:{st['port']}"
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
     return 0
 
 
@@ -176,10 +224,19 @@ def build_parser():
                     help="stream new log lines until Ctrl-C")
     sp.set_defaults(func=cmd_logs)
 
-    sp = sub.add_parser("dashboard", help="open the read-only admin dashboard")
-    sp.add_argument("--port", type=int, default=8788, help="dashboard port (default 8788)")
+    sp = sub.add_parser("dashboard",
+                        help="run the read-only admin dashboard in the background")
+    sp.add_argument("action", nargs="?", choices=["start", "stop", "status"],
+                    default="start",
+                    help="start (default), stop, or status the dashboard daemon")
+    sp.add_argument("--host", default=service.DEFAULT_HOST,
+                    help=f"bind host (default {service.DEFAULT_HOST})")
+    sp.add_argument("--port", type=int, default=service.DEFAULT_DASH_PORT,
+                    help=f"dashboard port (default {service.DEFAULT_DASH_PORT})")
     sp.add_argument("--db", default=None, help="database to inspect (default the server's)")
     sp.add_argument("--no-open", action="store_true", help="don't auto-open a browser")
+    # internal: run the dashboard server in the foreground (what the daemon execs)
+    sp.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
     sp.set_defaults(func=cmd_dashboard)
 
     sub.add_parser("mcp", help="run the MCP server over stdio (Claude Code spawns "

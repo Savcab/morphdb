@@ -15,8 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import db
 from .errors import ApiError
-from .router import Request
-from .routes import router
+from .routes import dispatch
 
 MAX_BODY = 16 * 1024 * 1024  # 16 MB cap to avoid runaway memory on bad input
 _BODY_METHODS = ("POST", "PUT", "PATCH", "DELETE")
@@ -138,16 +137,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             body = self._parse_body(raw) if self.command in _BODY_METHODS else {}
-            handler, params, path_matched = router.match(self.command, path)
-            if handler is None:
-                if path_matched:
-                    raise ApiError(405, "method_not_allowed",
-                                   f"{self.command} not allowed on {path}.")
-                raise ApiError(404, "not_found",
-                               f"No route for {self.command} {path}. See GET /help.")
-            req = Request(self.command, path, params, query, body, self.headers)
-            result = handler(req)
-            status, payload = result if isinstance(result, tuple) else (200, result)
+            status, payload = dispatch(self.command, path, query, body, self.headers)
             self._send_json(status, payload)
         except ApiError as e:
             self._send_json(e.status, e.to_dict())

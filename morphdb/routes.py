@@ -20,10 +20,29 @@ on objects.
 from . import apps
 from . import objects as objs
 from . import schema as sch
-from .errors import bad_request
-from .router import Router
+from .errors import ApiError, bad_request
+from .router import Request, Router
 
 router = Router()
+
+
+def dispatch(method, path, query, body, headers):
+    """Match a request to its handler and run it; return ``(status, payload)``.
+
+    The transport-neutral core every front end shares (the stdlib HTTP server and
+    the Lambda adapter): route lookup, 404/405, building the :class:`Request`, and
+    normalizing a handler's return into a ``(status, payload)`` pair. Body reading
+    and response encoding stay with each transport. An ``ApiError`` — raised here
+    for an unmatched route, or by a handler — propagates to the caller to render.
+    """
+    handler, params, path_matched = router.match(method, path)
+    if handler is None:
+        if path_matched:
+            raise ApiError(405, "method_not_allowed", f"{method} not allowed on {path}.")
+        raise ApiError(404, "not_found", f"No route for {method} {path}. See GET /help.")
+    req = Request(method, path, params, query, body, headers)
+    result = handler(req)
+    return result if isinstance(result, tuple) else (200, result)
 
 
 def _obj_body(req):

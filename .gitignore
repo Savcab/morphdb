@@ -28,3 +28,9 @@ venv/
 *.egg-info/
 __pycache__/
 *.pyc
+
+# secrets / hosted-deploy config (never commit)
+.env
+*.env
+deploy/aws/.env
+.morphdb_neon.url

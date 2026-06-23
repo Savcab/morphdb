@@ -12,7 +12,8 @@ Commands (see :mod:`morphdb.cli.main`):
     morphdb stop          stop the background server
     morphdb logs          show the server log (-f to follow)
     morphdb run           run in the foreground (blocking; for dev)
-    morphdb dashboard     open a read-only web view of every app + its tables
+    morphdb dashboard     run a read-only web view of every app in the background
+    morphdb dashboard stop   stop the background dashboard (also: `dashboard status`)
     morphdb mcp           run the MCP server (stdio; spawned by Claude Code, not you)
     morphdb install-skill install/update the bundled Claude Code skill
 
