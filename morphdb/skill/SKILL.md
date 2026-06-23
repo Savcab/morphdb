@@ -1,24 +1,24 @@
 ---
 name: morphdb
-description: A coding-agent-friendly, multi-tenant backend for vibe-coded websites. Activate whenever you are building or iterating on a website or web app that needs a backend — anything that must store, save, persist, or query data, wants a database or REST API, or needs to remember state across reloads (todo apps, CRMs, dashboards, trackers, notes, booking, inventory, any CRUD or data-driven site) — instead of hand-writing and re-migrating a database as the design churns. You reshape each app's data model by calling the MorphDB MCP tools (add_field, add_relation, …); the frontend you build calls the same generic, stable HTTP object endpoints no matter how the schema changes. One MorphDB process backs many isolated apps (one per site). Also use it to start/stop/debug a site's MorphDB backend. Trigger on "build a backend for this", "make it save data", "add a database", "persist this", a site that loses data on refresh, or seeing a MorphDB marker comment in a project.
+description: A coding-agent-friendly, multi-tenant backend for vibe-coded websites. Activate whenever you are building or iterating on a website or web app that needs a backend — anything that must store, save, persist, or query data, wants a database or REST API, or needs to remember state across reloads (todo apps, CRMs, dashboards, trackers, notes, booking, inventory, any CRUD or data-driven site) — instead of hand-writing and re-migrating a database as the design churns. You reshape each app's data model by running the MorphDB CLI (`morphdb schema add-field`, `morphdb schema add-relation`, …); the frontend you build calls the same generic, stable HTTP object endpoints no matter how the schema changes. One MorphDB process backs many isolated apps (one per site). Also use it to start/stop/debug a site's MorphDB backend. Trigger on "build a backend for this", "make it save data", "add a database", "persist this", a site that loses data on refresh, or seeing a MorphDB marker comment in a project.
 ---
 
 # MorphDB — instant morphable backend for AI-built apps
 
 MorphDB is a single Python process (zero dependencies, backed by SQLite). One
 process hosts **many apps** — one per website you build — fully isolated from
-each other. Three surfaces, two ways of talking to it:
+each other. Three surfaces:
 
 - **App** — the tenant. Register one with a key you choose; every later call
   carries that key. You only ever touch the app whose key you hold — there is no
   "list apps".
 - **Schema** — the data model *within your app*. **You, the agent, reshape it by
-  calling the MorphDB MCP tools** (`add_field`, `add_relation`, `describe_type`,
-  …). These are real tools in your tool list — call them, don't shell out.
+  running the `morphdb` CLI** (`morphdb schema add-field`, `morphdb schema
+  add-relation`, `morphdb schema show`, …).
 - **Objects** — the data *within your app*. **The frontend you build** reads and
   writes it over plain HTTP (`fetch`), sending the same app key as a header.
 
-So: **schema = your MCP tool calls; data = the frontend's HTTP calls.** Schema
+So: **schema = your `morphdb` commands; data = the frontend's HTTP calls.** Schema
 changes are **O(1) and instant** (lazy invalidation — no migrations, no rewriting
 rows), so you iterate the data model as fast as you iterate the UI, and the
 frontend never changes which endpoints it calls.
@@ -32,34 +32,31 @@ Do **not** use it when the user already has a real backend/database, or needs
 multi-tenant auth, horizontal scale, or strong durability. It is a
 localhost-scale dev tool.
 
-## The MorphDB tools (how you reshape the data model)
+## The morphdb CLI (how you reshape the data model)
 
-These come from the `morphdb` MCP server. **First, check which path you're on:**
-look for tools named `add_field` / `add_relation` (in Claude Code they appear as
-`mcp__morphdb__add_field`). **If you see them, use them** (this section). **If you
-don't** — a hosted `MORPHDB_HOST` setup, or the MCP server just isn't wired up —
-don't keep trying to call them and don't give up: skip to the **"Fallback: no
-MorphDB tools available?"** section at the end and drive the bundled script
-instead. Everything else in this skill (the data model, the endpoints, the
-queries) applies either way.
+You reshape the schema by running the **`morphdb`** command (`pip install
+morphdb`). Two things to do once per session:
 
-When the tools are present, they each take the app key as `app` (or default to the
-`$MORPHDB_APP` env var). The tools talk to the backend for you and **auto-start it**
-if it is not running, so you don't have to manage the server in the common case.
+1. **Start the backend:** `morphdb start` (background; default `127.0.0.1:8787`).
+   The schema commands and your frontend both talk to it over HTTP. If a command
+   says it can't reach the backend, run `morphdb start`.
+2. **Set the app key:** `export MORPHDB_APP=<your-key>` — then every command below
+   uses it automatically and you can omit `--app`. (Or pass `--app <key>` per
+   command, after the subcommand.)
 
-| Tool | What it does |
+| Command | What it does |
 | --- | --- |
-| `register_app(key)` | Create an app (your unique key). 409 if taken. **Remember the key.** |
-| `delete_app(key)` | Delete an app and cascade-delete everything under it. |
-| `list_types(app)` | List every type with its fields + relations + inverse relations. |
-| `describe_type(app, type)` | Show one type's full schema. |
-| `add_field(app, type, name, field_type, default?, required?, index?)` | Add/update a field. Idempotent; creates the type if new. `index: true` makes it filterable/sortable. |
-| `drop_field(app, type, name)` | Remove a field (values hidden, not destroyed). |
-| `add_relation(app, type, name, to, cardinality, inverse?, symmetric?, description?, inverse_description?)` | Declare a relation (inverse appears automatically on the other type). |
-| `drop_relation(app, type, name)` | Remove a relation + its edges (drop from the authoring side). |
-| `delete_type(app, type)` | Delete a type, its objects, and their edges. |
-| `set_schema(app, type, doc)` | Escape hatch: apply a raw `{fields?, relations?, merge?}` doc. |
-| `query_objects(app, type, query?)` | Read-only peek at objects, for **debugging** (the frontend does normal reads itself). |
+| `morphdb app register <key>` | Create an app (your unique key). 409 if taken. **Remember the key.** |
+| `morphdb app delete <key>` | Delete an app and cascade-delete everything under it. |
+| `morphdb schema list` | List every type with its fields + relations + inverse relations. |
+| `morphdb schema show <type>` | Show one type's full schema. |
+| `morphdb schema add-field <type> <name> <field_type> [--default V] [--required] [--index]` | Add/update a field. Idempotent; creates the type if new. `--index` makes it filterable/sortable. |
+| `morphdb schema drop-field <type> <name>` | Remove a field (values hidden, not destroyed). |
+| `morphdb schema add-relation <type> <name> --to T --cardinality C [--inverse I] [--symmetric] [--description D] [--inverse-description ID]` | Declare a relation (inverse appears automatically on the other type). |
+| `morphdb schema drop-relation <type> <name>` | Remove a relation + its edges (drop from the authoring side). |
+| `morphdb schema delete-type <type>` | Delete a type, its objects, and their edges. |
+| `morphdb schema set <type> --json '{…}'` | Escape hatch: apply a raw `{fields?, relations?, merge?}` doc. |
+| `morphdb query <type> ['<querystring>']` | Read-only peek at objects, for **debugging** (the frontend does normal reads itself). |
 
 `field_type` ∈ `string`, `number`, `boolean`, `json`, `datetime`.
 `cardinality` ∈ `one_to_one`, `one_to_many`, `many_to_one`, `many_to_many`
@@ -67,9 +64,9 @@ if it is not running, so you don't have to manage the server in the common case.
 
 > **Modeling rule — links are relations, not id fields. Think ORM, not raw SQL.**
 > When one object points at another — a task's assignee, a stage's business, a
-> review's book — declare a **relation** (`add_relation`), never a `string`/`json`
-> field holding the other object's guid. A relation *is* MorphDB's foreign key:
-> it is **filterable** like one — `GET /objects/stage?business=<guid>`,
+> review's book — declare a **relation** (`morphdb schema add-relation`), never a
+> `string`/`json` field holding the other object's guid. A relation *is* MorphDB's
+> foreign key: it is **filterable** like one — `GET /objects/stage?business=<guid>`,
 > index-backed via the edge table, composable with field filters, `sort`, and
 > pagination — and it also gives you the **inverse for free** (one read traverses
 > both ways: `business.stages` and `stage.business`) and keeps edges
@@ -79,8 +76,8 @@ if it is not running, so you don't have to manage the server in the common case.
 > that references another object is a relation. (Filter a relation with
 > `?rel=<guid>`, `__in`, `__ne`, `__exists`.)
 
-> **Indexing rule — set `index: true` on a field to filter or sort on it.** Fields
-> are storage-only by default. A field filter (`?status=…`, `__gt`/`__lt`/`__in`/
+> **Indexing rule — pass `--index` to filter or sort on a field.** Fields are
+> storage-only by default. A field filter (`?status=…`, `__gt`/`__lt`/`__in`/
 > `__contains`/`__exists`) or `sort=field` on an **un-indexed** field is a hard
 > error telling you to index it. Index the few fields you actually query (a status,
 > a priority, a timestamp); leave the rest (long text, json blobs) un-indexed so
@@ -93,45 +90,45 @@ if it is not running, so you don't have to manage the server in the common case.
 Everything is scoped to an app. Pick a unique key, register it, and **remember
 it** — there is no way to read it back.
 
-1. Call `register_app` with `{ "key": "my-cool-site" }` (409 means the key is
-   already taken — pick another).
-2. Use that key as `app` on every later tool call, and **bake the same key into
-   the frontend** as `window.MORPHDB_APP` (it rides on the `X-App-Key` header).
+1. `morphdb app register my-cool-site` (409 means the key is already taken — pick
+   another).
+2. `export MORPHDB_APP=my-cool-site` so every later command uses it, and **bake the
+   same key into the frontend** as `window.MORPHDB_APP` (it rides on the
+   `X-App-Key` header).
 3. Leave a marker comment in the site (see below) so a later session recovers the
    key and re-activates this skill.
 
-Deleting an app cascades: `delete_app("my-cool-site")` wipes its schema, objects,
-and relations in one shot (other apps are untouched).
+Deleting an app cascades: `morphdb app delete my-cool-site` wipes its schema,
+objects, and relations in one shot (other apps are untouched).
 
-## 1. Reshape the schema by calling tools (you, the agent)
+## 1. Reshape the schema by running the CLI (you, the agent)
 
-A worked example — a todo app with users:
+A worked example — a todo app with users (with `MORPHDB_APP` exported):
 
-- `add_field(app, type="task", name="title", field_type="string")`
-- `add_field(app, type="task", name="done", field_type="boolean", default=false, index=true)` — filtered, so indexed
-- `add_field(app, type="task", name="priority", field_type="number", index=true)` — sorted, so indexed
+- `morphdb schema add-field task title string`
+- `morphdb schema add-field task done boolean --default false --index` — filtered, so indexed
+- `morphdb schema add-field task priority number --index` — sorted, so indexed
 - A relation, declared once on `task`; `user.tasks` then appears automatically.
   Many tasks → one user, so `task.assignee` is one guid and `user.tasks` is a
-  list: `add_relation(app, type="task", name="assignee", to="user",
-  cardinality="many_to_one", inverse="tasks")`
-- A mutual relation within one type (friends): one shared label, set `symmetric`:
-  `add_relation(app, type="user", name="friends", to="user",
-  cardinality="many_to_many", symmetric=true)`
-- Inspect / change: `describe_type(app, "task")`, `list_types(app)`,
-  `drop_field(app, "task", "priority")`, `drop_relation(app, "task", "assignee")`,
-  `delete_type(app, "task")`.
+  list: `morphdb schema add-relation task assignee --to user --cardinality many_to_one --inverse tasks`
+- A mutual relation within one type (friends): one shared label, pass `--symmetric`:
+  `morphdb schema add-relation user friends --to user --cardinality many_to_many --symmetric`
+- Inspect / change: `morphdb schema show task`, `morphdb schema list`,
+  `morphdb schema drop-field task priority`, `morphdb schema drop-relation task assignee`,
+  `morphdb schema delete-type task`.
 
-`add_field` is an idempotent merge, so re-running it is safe. For anything the
-named tools don't cover, use `set_schema` with a raw document, e.g. `doc =
-{"merge": true, "fields": {"due": "datetime"}, "relations": {"tags": {"to":
-"tag", "cardinality": "many_to_many", "inverse": "tasks"}}}`.
+`add-field` is an idempotent merge, so re-running it is safe. For anything the
+named commands don't cover, use `morphdb schema set` with a raw document, e.g.
+`morphdb schema set task --json '{"merge": true, "fields": {"due": "datetime"},
+"relations": {"tags": {"to": "tag", "cardinality": "many_to_many", "inverse":
+"tasks"}}}'`.
 
 ## 2. Read & write data through the object endpoints (the frontend you build)
 
 The **object endpoints** are the stable, generic HTTP surface the frontend calls
 at runtime — they never change as you morph the schema. The *frontend* calls
 them (write `fetch`), not you; relations are just fields on the object body (a
-guid for to-one, a list of guids for to-many). Use `query_objects` only when
+guid for to-one, a list of guids for to-many). Use `morphdb query` only when
 *you* need to inspect data while debugging.
 
 ### The object endpoints
@@ -219,25 +216,26 @@ System fields on every object: `_guid`, `_type`, `_created_at`, `_updated_at`.
 
 ## Recipe for building an app
 
-1. **Register an app** (`register_app`), keep the key, and bake it into the
-   frontend (`window.MORPHDB_APP`).
-2. Define the object types and relations by calling the schema tools
-   (`add_field`, `add_relation`, …).
+1. **Start the backend** (`morphdb start`) and **register an app**
+   (`morphdb app register my-cool-site`); `export MORPHDB_APP=my-cool-site` and bake
+   the key into the frontend (`window.MORPHDB_APP`).
+2. Define the object types and relations with the schema commands
+   (`morphdb schema add-field`, `morphdb schema add-relation`, …).
 3. Build the frontend (plain `fetch`, the `db()` client above) against
    `/objects/...` — relations are fields, so the UI just reads/writes guids.
-4. When the UI needs a new field or relation, make **one** tool call — no data
+4. When the UI needs a new field or relation, run **one** command — no data
    rewrite, no change to the frontend's endpoint URLs.
 5. Leave a MorphDB marker comment in the site (below) so future iterations
    re-activate this skill and remember the app key.
 
 ## Managing / debugging the backend
 
-The tools auto-start the local backend, so you usually don't touch it. For manual
-control or debugging there is a CLI (`pip install morphdb`):
+Start the backend once (`morphdb start`); the schema commands and your frontend
+both talk to it. Useful commands:
 
 ```bash
-morphdb status     # running? where? how many apps? is the MCP configured?
 morphdb start      # start the background server (default 127.0.0.1:8787)
+morphdb status     # running? where? how many apps?
 morphdb stop       # stop it
 morphdb logs -f    # follow the server log
 morphdb dashboard  # read-only web view of every app + its tables
@@ -245,12 +243,13 @@ morphdb dashboard  # read-only web view of every app + its tables
 
 **Debug tip:** if the frontend can't reach the backend (connection refused, a
 `fetch` throws) and you're running locally, the server is probably down — run
-`morphdb status`, then `morphdb start`, and check `morphdb logs`. A `query_objects`
-tool call is the quickest way to confirm what data actually got written.
+`morphdb status`, then `morphdb start`, and check `morphdb logs`. A `morphdb query
+<type>` command is the quickest way to confirm what data actually got written —
+e.g. `morphdb query task 'done=false&sort=priority&limit=20'`.
 
 **Using a hosted MorphDB instead of localhost.** If the `MORPHDB_HOST` env var is
-set, it is the URL of a MorphDB server hosted elsewhere; the tools target it and
-nothing local is started. Bake the same URL into the frontend as
+set, it is the URL of a MorphDB server hosted elsewhere; the `morphdb` commands
+target it (no local server needed). Bake the same URL into the frontend as
 `window.MORPHDB_HOST` so its `fetch` calls hit the hosted backend. It accepts a
 full URL (`https://db.example.com`) or a bare `host:port`, and always points at a
 *backend* — never a database directly (a browser can't reach a database, only an
@@ -264,7 +263,7 @@ the main HTML / entry file (and/or a line in the project README):
 
 ```html
 <!-- Backend: MorphDB · app key "my-cool-site".
-     Schema edits: the MorphDB MCP tools (add_field, add_relation, …).
+     Schema edits: the `morphdb schema` CLI (add-field, add-relation, …).
      Server: `morphdb start` / `morphdb status` / `morphdb logs`.
      This project uses the `morphdb` Claude skill. -->
 ```
@@ -278,13 +277,13 @@ applies here — cheap context that keeps later edits consistent.
   client above sends it). Missing → 400; unknown key → 404. Register the app
   first. Type names are unique only *within* an app — reuse across apps is fine.
 - Writing a field/relation not in the schema is rejected (400) — declare it first
-  with a tool. Catches typos early.
+  with a `morphdb schema` command. Catches typos early.
 - Values are coerced to the declared type; `"yes"`/`1` → boolean `true`, numeric
   strings → numbers. A boolean for a `number` field is rejected.
 - A relation may not share a name with a field on the same type. A non-symmetric
-  self-relation needs distinct forward/inverse names (or use `symmetric`).
+  self-relation needs distinct forward/inverse names (or pass `--symmetric`).
 - The **inverse** of a relation shows up on the *other* type, not in the
-  `add_relation` response — `describe_type` the target type to see it (declare
+  `add-relation` output — `morphdb schema show` the target type to see it (declare
   `order.customer`, and `customer.orders` appears on `customer`). Inverse names only
   need to be unique on the type they land on, so two relations can reuse an inverse
   label when they point at **different** target types (`review.book` and
@@ -301,27 +300,5 @@ applies here — cheap context that keeps later edits consistent.
   composable with field filters/sort/pagination. Only scalar comparisons
   (`gt`/`lt`/`contains`) are field-only. So model a link as a relation, not a
   guid-bearing string field.
-
-## Fallback: no MorphDB tools available?
-
-If the `morphdb` MCP server isn't wired up (you don't see the tools), you can
-still do schema edits with the bundled zero-dependency script — it hits the same
-HTTP API and takes `--app KEY` (or `$MORPHDB_APP`):
-
-```bash
-# define a helper (a function works in both bash and zsh; a "VAR=…; $VAR"
-# alias does NOT word-split in zsh, so use this form)
-mdb() { python3 ~/.claude/skills/morphdb/scripts/morphdb_schema.py "$@"; }
-mdb register-app my-cool-site
-export MORPHDB_APP=my-cool-site
-mdb add-field task title string
-mdb add-field task status string --index   # --index → filterable/sortable (like index:true)
-mdb add-relation task assignee --to user --cardinality many_to_one --inverse tasks
-mdb list ; mdb show task
-```
-
-Prefer the tools when they exist; the script is the no-MCP fallback. To wire the
-tools up: `claude mcp add morphdb -- morphdb mcp` (then restart Claude Code), or
-install the MorphDB plugin.
 
 See the repo `README.md` for the complete reference.

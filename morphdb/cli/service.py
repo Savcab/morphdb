@@ -215,7 +215,7 @@ _DASH = _Daemon(
     check_port=True, clear_on_death=True)
 
 
-# --- server lifecycle (module-level API used by the CLI / MCP / tests) --------
+# --- server lifecycle (module-level API used by the CLI / tests) --------------
 
 
 def log_file():

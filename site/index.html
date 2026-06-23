@@ -276,7 +276,7 @@
     <a href="#model">model</a>
     <a href="#split">the split</a>
     <a href="#relations">relations</a>
-    <a href="#mcp">how claude plugs in</a>
+    <a href="#cli">how claude plugs in</a>
   </nav>
 </div></div>
 
@@ -366,8 +366,8 @@
       <div class="who">you · the coding agent</div>
       <h3>Reshape the schema</h3>
       <p>Call tools to add a field, declare a relation, retype something. Instant, O(1), no rows rewritten.</p>
-      <div class="does">acts on the schema, via mcp tools</div>
-      <div class="chips"><span class="chip">add_field</span><span class="chip">add_relation</span><span class="chip">describe_type</span><span class="chip">set_schema</span></div>
+      <div class="does">acts on the schema, via the morphdb CLI</div>
+      <div class="chips"><span class="chip">schema add-field</span><span class="chip">schema add-relation</span><span class="chip">schema show</span><span class="chip">schema set</span></div>
     </div>
     <div class="sidecard fe">
       <div class="who">the site · your frontend</div>
@@ -422,21 +422,18 @@
   </div>
 </div></section>
 
-<!-- MCP -->
-<section id="mcp"><div class="wrap">
+<!-- CLI -->
+<section id="cli"><div class="wrap">
   <div class="eyebrow"><span class="n">06</span> how claude plugs in <span class="rule"></span></div>
-  <h2>The agent reshapes schema over MCP — through a pipe, not a port.</h2>
-  <p class="lede">Claude Code talks to MorphDB's tools through a tiny server, <span class="k">morphdb mcp</span>. It's a <b>stdio</b> server: Claude launches it as a child process and exchanges <b>newline-delimited JSON-RPC</b> over its stdin/stdout — no network, no port. You never run or stop it; Claude owns its whole lifecycle.</p>
-  <div class="tube">
-    <div class="tube-row">
-      <div class="node client"><div class="nlabel">mcp client</div><div class="nname">Claude Code</div></div>
-      <div class="pipes">
-        <div class="lane top"><span class="pkt req">{ "method": "tools/call", "name": "add_relation" }</span><span class="plabel">stdin ▸</span></div>
-        <div class="lane bot"><span class="pkt res">{ "result": { "ok": true } }</span><span class="plabel">◂ stdout</span></div>
-      </div>
-      <div class="node server"><div class="nlabel">mcp server</div><div class="nname">morphdb mcp</div></div>
-    </div>
-    <div class="tcap">a pneumatic tube between two programs — <b>11 tools</b>: register_app · add_field · add_relation · describe_type · set_schema · query_objects · …</div>
+  <h2>The agent reshapes schema by running the <span class="k">morphdb</span> CLI.</h2>
+  <p class="lede">Claude Code edits the data model with ordinary shell commands — <span class="k">morphdb schema add-field</span>, <span class="k">morphdb schema add-relation</span>, … — against the backend it already started with <span class="k">morphdb start</span>. No extra server, no MCP wiring, no restart: <span class="k">pip install morphdb</span> and the agent has them.</p>
+  <div class="qbox">
+    <div class="qt">the agent edits the model — ordinary shell commands</div>
+    <div class="q"><span class="verb">morphdb</span> app register <span class="rel">my-site</span></div>
+    <div class="q"><span class="verb">morphdb</span> schema add-field <span class="fld">task</span> done boolean --index</div>
+    <div class="q"><span class="verb">morphdb</span> schema add-relation <span class="fld">task</span> assignee --to user --cardinality many_to_one --inverse tasks</div>
+    <div class="q"><span class="verb">morphdb</span> query <span class="fld">task</span> 'done=false&amp;sort=priority'</div>
+    <div class="note"><b>11 commands</b> under <span class="k">morphdb app</span> · <span class="k">morphdb schema</span> · <span class="k">morphdb query</span>, all talking to the one backend <span class="k">morphdb start</span> runs (or a hosted one via <span class="k">$MORPHDB_HOST</span>) — so there's always a single writer.</div>
   </div>
 </div></section>
 
@@ -448,8 +445,8 @@
   <span class="zero">⊘ <b>0 dependencies</b> — just Python's <span style="color:var(--aqua)">http.server</span> + <span style="color:var(--aqua)">sqlite3</span></span>
   <div class="stack">
     <div class="scard"><div class="st">Daemon</div><div class="sd"><span class="k">morphdb start</span> — the HTTP backend, backgrounded.</div></div>
-    <div class="scard"><div class="st">CLI</div><div class="sd">start · stop · status · logs · dashboard · mcp</div></div>
-    <div class="scard"><div class="st">MCP server</div><div class="sd">stdio tools Claude spawns to edit schema.</div></div>
+    <div class="scard"><div class="st">CLI</div><div class="sd">start · stop · status · logs · dashboard</div></div>
+    <div class="scard"><div class="st">Schema CLI</div><div class="sd"><span class="k">morphdb app · schema · query</span> — the agent edits the model, no curl.</div></div>
     <div class="scard"><div class="st">Claude skill</div><div class="sd">teaches the agent the whole workflow.</div></div>
     <div class="scard"><div class="st">Dashboard</div><div class="sd">read-only ER view of every app + type.</div></div>
   </div>

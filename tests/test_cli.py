@@ -4,6 +4,9 @@ These avoid spawning real server processes (kept fast + CI-stable); the
 start/stop lifecycle is exercised by a manual smoke instead.
 """
 
+import contextlib
+import io
+import json
 import os
 import sys
 import tempfile
@@ -11,6 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import harness                                          # noqa: E402
 from morphdb import apps, db, objects, schema          # noqa: E402
 from morphdb.cli import dashboard, service              # noqa: E402
 from morphdb.cli import main as cli_main                # noqa: E402
@@ -103,8 +107,6 @@ class TestInstallSkill(unittest.TestCase):
         dest, existed = skill_mod.install_skill(claude_dir=d)
         self.assertFalse(existed)
         self.assertTrue(os.path.isfile(os.path.join(dest, "SKILL.md")))
-        self.assertTrue(os.path.isfile(
-            os.path.join(dest, "scripts", "morphdb_schema.py")))
         self.assertEqual(dest, os.path.join(d, "skills", "morphdb"))
 
     def test_reinstall_is_idempotent(self):
@@ -147,6 +149,73 @@ class TestLogs(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("line3", out)
         self.assertNotIn("line1", out)
+
+
+class TestSchemaCli(unittest.TestCase):
+    """The `morphdb app|schema|query` subcommands, driven against the in-process
+    harness server (pointed at via $MORPHDB_HOST, so no real daemon is spawned)."""
+
+    APP = "clitest"
+
+    def setUp(self):
+        harness.ensure_server()
+        db.init_db(":memory:")
+        self._env = {k: os.environ.get(k) for k in ("MORPHDB_HOST", "MORPHDB_APP")}
+        os.environ["MORPHDB_HOST"] = harness.BASE
+        os.environ.pop("MORPHDB_APP", None)
+
+    def tearDown(self):
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _run(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli_main.main(list(argv))
+        return rc, out.getvalue()
+
+    def _json(self, *argv):
+        rc, out = self._run(*argv)
+        self.assertEqual(rc, 0, out)
+        return json.loads(out)
+
+    def test_register_add_field_list_and_query(self):
+        self._json("app", "register", self.APP)
+        self._json("schema", "add-field", "task", "title", "string", "--app", self.APP)
+        self._json("schema", "add-field", "task", "done", "boolean",
+                   "--default", "false", "--index", "--app", self.APP)
+        self.assertIn("task", json.dumps(self._json("schema", "list", "--app", self.APP)))
+
+        # the frontend writes object data over HTTP; query reads it back for debug
+        harness.req("POST", "/objects/task",
+                    {"title": "buy milk", "done": False}, app=self.APP)
+        res = self._json("query", "task", "done=false", "--app", self.APP)
+        self.assertEqual(res["total"], 1)
+        self.assertEqual(res["objects"][0]["title"], "buy milk")
+
+    def test_morphdb_app_env_supplies_the_key(self):
+        self._json("app", "register", self.APP)
+        os.environ["MORPHDB_APP"] = self.APP            # no --app on the calls below
+        self._json("schema", "add-field", "note", "body", "string")
+        self.assertIn("note", json.dumps(self._json("schema", "list")))
+
+    def test_add_and_drop_relation(self):
+        self._json("app", "register", self.APP)
+        self._json("schema", "add-field", "user", "name", "string", "--app", self.APP)
+        self._json("schema", "add-relation", "task", "assignee", "--to", "user",
+                   "--cardinality", "many_to_one", "--inverse", "tasks", "--app", self.APP)
+        self.assertIn("assignee",
+                      json.dumps(self._json("schema", "show", "task", "--app", self.APP)))
+        self._json("schema", "drop-relation", "task", "assignee", "--app", self.APP)
+        task = self._json("schema", "show", "task", "--app", self.APP)
+        self.assertNotIn("assignee", json.dumps(task.get("relations", {})))
+
+    def test_missing_app_key_exits(self):
+        with self.assertRaises(SystemExit):
+            self._run("schema", "list")                 # no --app, no $MORPHDB_APP
 
 
 if __name__ == "__main__":

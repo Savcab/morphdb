@@ -56,8 +56,8 @@ export MORPHDB_HOST='https://<your-id>.lambda-url.us-west-1.on.aws'
 ```
 
 Everything that already honors `MORPHDB_HOST` now hits the hosted backend with
-no other change: the MorphDB skill, the `morphdb` MCP, and generated frontends
-(which read `window.MORPHDB_HOST`). Do **not** also run a local `morphdb start`;
+no other change: the MorphDB skill, the `morphdb` schema CLI, and generated
+frontends (which read `window.MORPHDB_HOST`). Do **not** also run a local `morphdb start`;
 when `MORPHDB_HOST` is set the clients talk to the hosted server directly.
 
 ## Inspect the data

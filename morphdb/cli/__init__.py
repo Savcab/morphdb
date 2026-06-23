@@ -14,14 +14,15 @@ Commands (see :mod:`morphdb.cli.main`):
     morphdb run           run in the foreground (blocking; for dev)
     morphdb dashboard     run a read-only web view of every app in the background
     morphdb dashboard stop   stop the background dashboard (also: `dashboard status`)
-    morphdb mcp           run the MCP server (stdio; spawned by Claude Code, not you)
+    morphdb app …         register / delete apps (tenants)
+    morphdb schema …      inspect / edit an app's data model (the coding agent drives these)
+    morphdb query …       read objects of a type (read-only, for debugging)
     morphdb install-skill install/update the bundled Claude Code skill
 
-The ``mcp`` command is a thin HTTP *client* of the running backend daemon (it
-auto-starts the daemon if needed). It exposes schema + app operations to a coding
-agent as MCP tools, so the agent calls real tools instead of shelling out to the
-bundled schema script. It is pure stdlib — no MCP SDK — so the package stays
-dependency-free.
+The ``app`` / ``schema`` / ``query`` commands (see :mod:`morphdb.cli.schema`) are a
+thin HTTP *client* of the running backend daemon: the coding agent reshapes the
+data model with them instead of hand-writing curl, and the bundled Claude skill
+points at them. Pure stdlib, so the package stays dependency-free.
 
 Storage: the local server keeps data in a per-user SQLite file at
 ``~/.morphdb/data.sqlite3`` (override the file with ``--db``, or move the state

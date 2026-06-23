@@ -8,7 +8,9 @@
     morphdb run           run the server in the foreground (blocking)
     morphdb dashboard     run the read-only admin dashboard in the background
     morphdb dashboard stop   stop the background dashboard
-    morphdb mcp           run the MCP server (stdio; spawned by Claude Code)
+    morphdb app …         register / delete apps (tenants)
+    morphdb schema …      inspect / edit an app's data model (the agent drives these)
+    morphdb query …       read objects of a type (read-only, for debugging)
     morphdb install-skill install the bundled Claude Code skill
     morphdb reindex       rebuild the field-value index from object data
 
@@ -20,7 +22,7 @@ import argparse
 import os
 import sys
 
-from . import dashboard, service
+from . import dashboard, schema, service
 from . import skill as skill_mod
 
 
@@ -58,19 +60,12 @@ def cmd_run(args):
 
 def cmd_status(args):
     print(_fmt_status(service.status()))
-    from . import mcp
-    print(f"  mcp:  {mcp.registration_summary()}")
     dst = service.dashboard_status()
     if dst.get("running"):
         print(f"  dash: http://{dst['host']}:{dst['port']} (pid {dst['pid']})")
     else:
         print("  dash: not running  (start with `morphdb dashboard`)")
     return 0
-
-
-def cmd_mcp(args):
-    from . import mcp
-    return mcp.serve()
 
 
 def cmd_stop(args):
@@ -239,9 +234,6 @@ def build_parser():
     sp.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
     sp.set_defaults(func=cmd_dashboard)
 
-    sub.add_parser("mcp", help="run the MCP server over stdio (Claude Code spawns "
-                   "this; you don't run it directly)").set_defaults(func=cmd_mcp)
-
     sp = sub.add_parser("install-skill",
                         help="install/update the bundled Claude Code skill")
     sp.add_argument("--project", nargs="?", const=".", default=None,
@@ -258,6 +250,9 @@ def build_parser():
     sp.add_argument("--app", default=None,
                     help="limit to one app key (default: all apps)")
     sp.set_defaults(func=cmd_reindex)
+
+    # app / schema / query — the data-model CLI the coding agent drives.
+    schema.add_commands(sub)
 
     return p
 

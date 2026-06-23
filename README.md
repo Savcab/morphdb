@@ -8,7 +8,7 @@ process hosts many isolated apps (one per site). Zero dependencies on the
 default SQLite engine; point it at PostgreSQL when you want a networked, managed
 database — same API, same code.
 
-📖 **[Visual explainer → morphdb.pages.dev](https://morphdb.pages.dev)** — the whole idea (schema-fluid, API-stable), the agent/frontend split, relations, and how Claude plugs in over MCP, on one page.
+📖 **[Visual explainer → morphdb.pages.dev](https://morphdb.pages.dev)** — the whole idea (schema-fluid, API-stable), the agent/frontend split, relations, and how Claude plugs in through the `morphdb` CLI, on one page.
 
 ## Install
 
@@ -129,6 +129,28 @@ morphdb stop
 morphdb run                            # foreground instead (Ctrl-C to quit)
 ```
 
+### Editing the schema from the CLI (what the agent drives)
+
+Beyond process control, the `morphdb` CLI edits an app's data model directly —
+this is what the bundled Claude skill uses instead of hand-writing curl. Each
+command takes the app key from `--app` or `$MORPHDB_APP` and talks to the running
+server (or a hosted one via `$MORPHDB_HOST`):
+
+```bash
+morphdb app register my-site            # create a tenant (remember the key)
+export MORPHDB_APP=my-site
+morphdb schema add-field task title string
+morphdb schema add-field task done boolean --default false --index   # --index → filterable/sortable
+morphdb schema add-relation task assignee --to user --cardinality many_to_one --inverse tasks
+morphdb schema list                     # all types; `schema show <type>` for one
+morphdb query task 'done=false&sort=priority&limit=20'   # read-only peek, for debugging
+```
+
+Also: `schema drop-field`, `schema drop-relation`, `schema delete-type`, `schema
+set <type> --json '{…}'` (raw-document escape hatch), and `app delete <key>`
+(cascades). Reading/writing object *data* at runtime is the frontend's job — it
+calls `/objects/...` over HTTP directly.
+
 ### Install the Claude Code skill
 
 `install-skill` writes the bundled MorphDB skill into a Claude skills directory,
@@ -235,7 +257,7 @@ curl -X PATCH $BASE/objects/user/<u> -d '{"tasks":["<t1>","<t2>"]}'
 - **Multi-tenant by app** — one process backs many isolated sites; every call is scoped by an `X-App-Key`, and deleting an app cascades away all its data.
 - **Wide-open CORS** so any frontend origin can call it in dev.
 - **A management CLI** — `morphdb start/status/stop`, a read-only admin dashboard, and one-command skill install.
-- **A Claude Code skill** (`morphdb/skill/SKILL.md`, install with `morphdb install-skill`) with a schema CLI so the agent edits the model without hand-writing curl.
+- **A Claude Code skill** (`morphdb/skill/SKILL.md`, install with `morphdb install-skill`) that drives the `morphdb schema`/`app`/`query` CLI so the agent edits the model without hand-writing curl.
 
 > Scope: a small-scale developer tool. With the PostgreSQL backend it can run as
 > one or more stateless instances behind a managed database, but it ships no
