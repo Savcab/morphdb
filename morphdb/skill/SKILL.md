@@ -255,6 +255,26 @@ full URL (`https://db.example.com`) or a bare `host:port`, and always points at 
 *backend* — never a database directly (a browser can't reach a database, only an
 API).
 
+## Sharing a schema across instances (rare — only when asked)
+
+**Skip this unless the user explicitly asks to export, snapshot, share, or
+rebuild a schema** — e.g. "export the schema so others can run this repo", or
+setting up a cloned MorphDB-backed project on a fresh instance. Almost every
+session ignores it: the schema already lives in the running backend, so don't
+reach for these proactively.
+
+A schema otherwise lives only inside the one MorphDB that holds it. To move an
+app's data model elsewhere (a teammate who cloned the repo, a fresh deploy):
+
+- **Export** — writes self-contained JSON to stdout; redirect it into a file you
+  commit. Human-readable: the app key, every type, its fields and relations.
+  `morphdb export-schema <app> > morphdb.schema.json`
+- **Reconstruct** on the other instance — the app key comes from the file:
+  `morphdb reconstruct-schema morphdb.schema.json`
+  If that app key already exists it prompts before overwriting; `--force`
+  overwrites non-interactively (which **deletes that app's current schema and its
+  objects**). It rebuilds the schema only — object data is not moved.
+
 ## Leave a breadcrumb in the site
 
 So this skill re-activates whenever you (or a later session) iterate on the app,

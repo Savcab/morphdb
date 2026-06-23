@@ -11,6 +11,8 @@
     morphdb app …         register / delete apps (tenants)
     morphdb schema …      inspect / edit an app's data model (the agent drives these)
     morphdb query …       read objects of a type (read-only, for debugging)
+    morphdb export-schema <app>     dump an app's schema as JSON (stdout)
+    morphdb reconstruct-schema <f>  rebuild an app + schema from that JSON
     morphdb install-skill install the bundled Claude Code skill
     morphdb reindex       rebuild the field-value index from object data
 

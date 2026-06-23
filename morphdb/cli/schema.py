@@ -1,4 +1,5 @@
-"""``morphdb app`` / ``morphdb schema`` / ``morphdb query`` — the data-model CLI.
+"""``morphdb app`` / ``schema`` / ``query`` / ``export-schema`` / ``reconstruct-schema``
+— the data-model CLI.
 
 The coding agent reshapes an app's data model through these subcommands instead
 of hand-writing curl against the schema endpoints. They are a thin, zero-dependency
@@ -69,6 +70,22 @@ def _request(url, method, path, body=None, app=None):
                  "running? Try `morphdb start`, or set MORPHDB_HOST to a hosted one.")
 
 
+def _app_exists(url, app):
+    """True if ``app`` is registered. Probes GET /schema, which 404s with an
+    'Unknown app' error when the key isn't registered (there is no 'get app' route)."""
+    req = urllib.request.Request(url.rstrip("/") + "/schema", method="GET")
+    req.add_header("X-App-Key", app)
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        sys.exit(f"error {e.code}: could not check whether app '{app}' exists.")
+    except urllib.error.URLError as e:
+        sys.exit(f"cannot reach MorphDB at {url} ({e.reason}). Is the server running?")
+
+
 def _resolve_app(args):
     """The app key for a scoped command: ``--app``, else ``$MORPHDB_APP``."""
     app = (getattr(args, "app", None) or os.environ.get("MORPHDB_APP") or "").strip()
@@ -103,6 +120,29 @@ def _authoring_def(view):
     if view.get("inverse_description"):
         out["inverse_description"] = view["inverse_description"]
     return out
+
+
+def _slim_field(fdef):
+    """Compact a normalized field def for the export file. Drop default flags
+    (``required``/``index`` when false) and collapse to a bare type string when
+    only the type remains, so the JSON reads like a human wrote it. ``default`` is
+    kept whenever it is not null — false/0/"" are real defaults, not noise."""
+    out = {"type": fdef["type"]}
+    if fdef.get("required"):
+        out["required"] = True
+    if fdef.get("default") is not None:
+        out["default"] = fdef["default"]
+    if fdef.get("index"):
+        out["index"] = True
+    return out if len(out) > 1 else fdef["type"]
+
+
+def _confirm(prompt):
+    """Interactive y/N prompt; False on EOF (no input stream)."""
+    try:
+        return input(prompt).strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
 
 
 def _parse_default(raw):
@@ -233,16 +273,79 @@ def cmd_query(args):
     return 0
 
 
+def cmd_export_schema(args):
+    """Dump an app's whole data model as portable JSON (on stdout). Lets someone
+    cloning a MorphDB-backed repo rebuild the schema on their own instance."""
+    app = args.app_name
+    types = _request(args.url, "GET", "/schema", app=app)["types"]
+    payload = {
+        # ponytail: a format tag so a future reconstruct can recognize old files.
+        # Only one format exists, so it is written but not yet validated.
+        "morphdb_schema_version": 1,
+        "app": app,
+        "types": [
+            {
+                "name": t["name"],
+                "fields": {k: _slim_field(v) for k, v in t.get("fields", {}).items()},
+                "relations": {k: _authoring_def(v)
+                              for k, v in t.get("relations", {}).items()},
+            }
+            for t in types
+        ],
+    }
+    _pretty(payload)
+    return 0
+
+
+def cmd_reconstruct_schema(args):
+    """Recreate an app and its schema from an export file (the app name lives in
+    the file). If the app already exists, overwrite only on --force / a yes."""
+    try:
+        with open(args.file) as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as e:
+        sys.exit(f"error: cannot read schema file '{args.file}': {e}")
+    if not isinstance(doc, dict) or "app" not in doc or "types" not in doc:
+        sys.exit("error: not a MorphDB schema export (expected 'app' and 'types' keys).")
+    app, types = doc["app"], doc["types"]
+
+    if _app_exists(args.url, app):
+        if not args.force:
+            if not sys.stdin.isatty():        # non-interactive (e.g. an agent): never hang
+                sys.exit(f"App '{app}' already exists. Re-run with --force to overwrite "
+                         "it (this deletes its current schema and objects).")
+            if not _confirm(f"App '{app}' already exists. Overwrite it? This deletes its "
+                            "current schema and objects. [y/N] "):
+                sys.exit("Aborted; nothing changed.")
+        _request(args.url, "DELETE", f"/app/{app}")
+    _request(args.url, "POST", "/app", {"key": app})
+
+    # Two passes: create every type (fields only) before wiring relations, so a
+    # relation's target type always exists by the time it is declared.
+    for t in types:
+        _put_type(args.url, app, t["name"], {"merge": False, "fields": t.get("fields") or {}})
+    for t in types:
+        rels = t.get("relations") or {}
+        if rels:
+            _put_type(args.url, app, t["name"], {"merge": True, "relations": rels})
+
+    _pretty({"app": app, "types_reconstructed": [t["name"] for t in types]})
+    return 0
+
+
 # --- parser wiring ------------------------------------------------------------
 
 
 def add_commands(sub):
     """Graft the ``app`` / ``schema`` / ``query`` command groups onto the
     ``morphdb`` CLI's subparsers object (``sub``)."""
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--url", default=_default_base(),
-                        help="MorphDB base URL (default $MORPHDB_HOST or "
-                             "http://127.0.0.1:8787)")
+    url_only = argparse.ArgumentParser(add_help=False)
+    url_only.add_argument("--url", default=_default_base(),
+                          help="MorphDB base URL (default $MORPHDB_HOST or "
+                               "http://127.0.0.1:8787)")
+    # Most commands also take --app; export/reconstruct get the app name elsewhere
+    # (a positional / from the file), so they reuse url_only without an --app flag.
+    common = argparse.ArgumentParser(add_help=False, parents=[url_only])
     common.add_argument("--app", default=None,
                         help="app key (default $MORPHDB_APP); sent as X-App-Key")
 
@@ -328,3 +431,20 @@ def add_commands(sub):
                          "sort, limit/offset, include — e.g. "
                          "'done=false&sort=priority&order=desc&limit=20'")
     sp.set_defaults(func=cmd_query)
+
+    # morphdb export-schema <app>  /  reconstruct-schema <file> — move an app's
+    # whole data model between instances. Rare: only when the user explicitly
+    # wants to snapshot/share a schema or rebuild it on a fresh MorphDB.
+    sp = sub.add_parser("export-schema", parents=[url_only],
+                        help="export an app's schema as JSON on stdout (redirect to "
+                             "a file to commit/share it)")
+    sp.add_argument("app_name", metavar="app", help="the app key to export")
+    sp.set_defaults(func=cmd_export_schema)
+
+    sp = sub.add_parser("reconstruct-schema", parents=[url_only],
+                        help="recreate an app + its schema from an exported JSON file")
+    sp.add_argument("file", help="a JSON file produced by `morphdb export-schema`")
+    sp.add_argument("--force", action="store_true",
+                    help="if the app already exists, overwrite it without prompting "
+                         "(deletes its current schema and objects)")
+    sp.set_defaults(func=cmd_reconstruct_schema)

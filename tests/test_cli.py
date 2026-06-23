@@ -217,6 +217,55 @@ class TestSchemaCli(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._run("schema", "list")                 # no --app, no $MORPHDB_APP
 
+    def _build_sample_schema(self):
+        self._json("app", "register", self.APP)
+        self._json("schema", "add-field", "user", "name", "string", "--app", self.APP)
+        self._json("schema", "add-field", "task", "title", "string", "--app", self.APP)
+        self._json("schema", "add-field", "task", "done", "boolean",
+                   "--default", "false", "--index", "--app", self.APP)
+        self._json("schema", "add-relation", "task", "assignee", "--to", "user",
+                   "--cardinality", "many_to_one", "--inverse", "tasks", "--app", self.APP)
+
+    def test_export_then_reconstruct_roundtrip(self):
+        self._build_sample_schema()
+
+        exported = self._json("export-schema", self.APP)
+        self.assertEqual(exported["app"], self.APP)
+        self.assertEqual({t["name"] for t in exported["types"]}, {"user", "task"})
+        path = os.path.join(tempfile.mkdtemp(), "schema.json")
+        with open(path, "w") as f:
+            json.dump(exported, f)
+
+        # wipe the app, then rebuild it purely from the file
+        self._json("app", "delete", self.APP)
+        res = self._json("reconstruct-schema", path)
+        self.assertEqual(res["app"], self.APP)
+
+        task = self._json("schema", "show", "task", "--app", self.APP)
+        self.assertIn("title", task["fields"])
+        self.assertEqual(task["fields"]["done"]["default"], False)   # slim kept false
+        self.assertTrue(task["fields"]["done"]["index"])
+        self.assertEqual(task["relations"]["assignee"]["to"], "user")
+
+    def test_reconstruct_clash_needs_force(self):
+        self._build_sample_schema()
+        exported = self._json("export-schema", self.APP)
+        path = os.path.join(tempfile.mkdtemp(), "schema.json")
+        with open(path, "w") as f:
+            json.dump(exported, f)
+
+        # app still exists → a non-interactive reconstruct must refuse, not hang
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO("")                     # isatty() False, reads EOF
+        try:
+            with self.assertRaises(SystemExit):
+                self._run("reconstruct-schema", path)
+        finally:
+            sys.stdin = old_stdin
+        # --force overwrites in place
+        res = self._json("reconstruct-schema", path, "--force")
+        self.assertEqual(res["app"], self.APP)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
