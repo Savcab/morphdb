@@ -1,13 +1,17 @@
 name: ci
 
 # Tests run on every push/PR. Releases are driven by the version in
-# pyproject.toml — there is no manual tagging:
-#   bump `version` in pyproject.toml, push to main, and CI runs the test matrix,
-#   then (only if it passes) builds, publishes vX.Y.Z to PyPI, and tags the
-#   commit. A push whose version is already tagged is a no-op, so ordinary
-#   commits publish nothing — only a version bump cuts a release.
-# One-time setup: a PYPI_API_TOKEN repo secret (already set). Without it the
-# release step warns and skips instead of failing.
+# morphdb/__init__.py (__version__) — there is no manual tagging:
+#   bump __version__, push to main, and CI runs the test matrix, then (only if it
+#   passes, and only if vX.Y.Z isn't already tagged) builds, publishes to PyPI,
+#   and tags the commit. A push that doesn't change the version is a no-op, so
+#   only a bump cuts a release.
+#
+# Publishing is tokenless via PyPI Trusted Publishing (OIDC): the `publish` job
+# mints a short-lived OIDC identity (id-token: write) that PyPI trades for an
+# upload token — no PYPI_API_TOKEN secret. One-time PyPI setup (project ->
+# Publishing -> Add a trusted publisher): owner `Savcab`, repo `morphdb`,
+# workflow `ci.yml`, environment `release`.
 on:
   push:
     branches: [main]
@@ -28,14 +32,16 @@ jobs:
       - name: Run the test suite (zero deps)
         run: python -m unittest discover -s tests -v
 
-  release:
-    # Cut a release when pyproject's version is new. Push-to-main only (a PR must
-    # never publish), and only after the whole test matrix is green.
+  release-check:
+    # Decide whether this push is a release: push-to-main only (a PR never
+    # publishes), after the whole test matrix is green. No environment here, so
+    # ordinary commits don't touch the protected `release` environment.
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write          # to push the version tag
+    outputs:
+      new: ${{ steps.ver.outputs.new }}
+      tag: ${{ steps.ver.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -43,10 +49,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Resolve version + tag from pyproject.toml
+      - name: Resolve version + tag from morphdb.__version__
         id: ver
         run: |
-          V=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          V=$(python -c "import morphdb; print(morphdb.__version__)")
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
           if git rev-parse "refs/tags/v$V" >/dev/null 2>&1; then
             echo "new=false" >> "$GITHUB_OUTPUT"
@@ -55,19 +61,33 @@ jobs:
             echo "new=true" >> "$GITHUB_OUTPUT"
             echo "::notice::v$V is new — building + publishing."
           fi
-      - name: Build, publish to PyPI, and tag the release
-        if: steps.ver.outputs.new == 'true'
-        env:
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish:
+    # Runs only for a new version. Enters the `release` environment and mints the
+    # OIDC token PyPI trusts; no API token anywhere.
+    needs: release-check
+    if: needs.release-check.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write          # OIDC trusted publishing (tokenless)
+      contents: write          # push the version tag
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
         run: |
-          if [ -z "$TWINE_PASSWORD" ]; then
-            echo "::warning::PYPI_API_TOKEN not set — skipping publish of ${{ steps.ver.outputs.tag }}. Add it in Settings → Secrets → Actions."
-            exit 0
-          fi
-          python -m pip install --upgrade build twine
+          python -m pip install --upgrade build
           python -m build
-          twine check dist/*
-          # --skip-existing keeps a re-run idempotent if the version is already up.
-          TWINE_USERNAME=__token__ twine upload --skip-existing dist/*
-          git tag "${{ steps.ver.outputs.tag }}"
-          git push origin "${{ steps.ver.outputs.tag }}"
+      - name: Publish to PyPI (OIDC, tokenless)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true   # idempotent if the version is already up
+      - name: Tag the release
+        run: |
+          git tag "${{ needs.release-check.outputs.tag }}"
+          git push origin "${{ needs.release-check.outputs.tag }}"

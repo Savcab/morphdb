@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "morphdb"
-version = "0.3.0"
+# Single source of truth: the version lives only in morphdb/__init__.py
+# (__version__); setuptools reads it from there at build time. Keeps one literal
+# to bump, and the release CI reads the same value via `import morphdb`.
+dynamic = ["version"]
 description = "A coding-agent-friendly, multi-tenant backend for vibe-coded websites. One process hosts many isolated apps; reshape each app's schema as fast as your agent iterates while the frontend keeps calling the same generic endpoints."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,3 +50,8 @@ packages = ["morphdb", "morphdb.cli"]
 # can materialize it from a pip/brew install.
 [tool.setuptools.package-data]
 morphdb = ["skill/SKILL.md"]
+
+# Resolve the dynamic version from morphdb/__init__.py's __version__ (a plain
+# string literal — setuptools reads it via ast.literal_eval, no import needed).
+[tool.setuptools.dynamic]
+version = { attr = "morphdb.__version__" }
