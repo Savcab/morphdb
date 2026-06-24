@@ -1,11 +1,16 @@
 name: ci
 
-# Run the test suite on every push/PR. On a version tag (vX.Y.Z), run the
-# tests first and publish to PyPI only if they pass.
+# Tests run on every push/PR. Releases are driven by the version in
+# pyproject.toml — there is no manual tagging:
+#   bump `version` in pyproject.toml, push to main, and CI runs the test matrix,
+#   then (only if it passes) builds, publishes vX.Y.Z to PyPI, and tags the
+#   commit. A push whose version is already tagged is a no-op, so ordinary
+#   commits publish nothing — only a version bump cuts a release.
+# One-time setup: a PYPI_API_TOKEN repo secret (already set). Without it the
+# release step warns and skips instead of failing.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -23,23 +28,46 @@ jobs:
       - name: Run the test suite (zero deps)
         run: python -m unittest discover -s tests -v
 
-  publish:
-    # Only on a version tag, and only after every test-matrix job has passed.
+  release:
+    # Cut a release when pyproject's version is new. Push-to-main only (a PR must
+    # never publish), and only after the whole test matrix is green.
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write          # to push the version tag
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # need existing tags to tell whether the version is new
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Build sdist + wheel
+      - name: Resolve version + tag from pyproject.toml
+        id: ver
         run: |
+          V=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          if git rev-parse "refs/tags/v$V" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$V is already tagged — no release."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$V is new — building + publishing."
+          fi
+      - name: Build, publish to PyPI, and tag the release
+        if: steps.ver.outputs.new == 'true'
+        env:
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "::warning::PYPI_API_TOKEN not set — skipping publish of ${{ steps.ver.outputs.tag }}. Add it in Settings → Secrets → Actions."
+            exit 0
+          fi
           python -m pip install --upgrade build twine
           python -m build
           twine check dist/*
-      - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+          # --skip-existing keeps a re-run idempotent if the version is already up.
+          TWINE_USERNAME=__token__ twine upload --skip-existing dist/*
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
