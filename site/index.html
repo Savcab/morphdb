@@ -289,8 +289,8 @@
   <div class="returnbanner" id="returnBanner" hidden></div>
 
   <div class="live-badges">
-    <span class="appkey"><span class="pulse"></span>your app · <b id="appkeyVal">created on first write</b></span>
-    <span class="hint">a private, isolated tenant on the live database — only this key can read it</span>
+    <span class="appkey"><span class="pulse"></span>demo app · <b id="appkeyVal">demo</b></span>
+    <span class="hint">one shared demo tenant on the live database — isolated from every other app's data</span>
   </div>
 
   <div class="demo">
@@ -347,8 +347,8 @@
   </div>
 
   <div class="tenancy-live">
-    <div class="tcol you"><div class="tch"><span class="dot v"></span> your app<span class="tkey" id="youKey">created on first write</span></div>
-      <div class="tbody" id="youBody"><div class="tempty">Persist an object in the demo above — it lands in <em>your</em> app and shows up right here.</div></div></div>
+    <div class="tcol you"><div class="tch"><span class="dot v"></span> demo app<span class="tkey" id="youKey">demo</span></div>
+      <div class="tbody" id="youBody"><div class="tempty">Persist an object in the demo above — it lands in the shared <em>demo</em> app and shows up right here.</div></div></div>
     <div class="tcol them"><div class="tch"><span class="dot q"></span> someone else's app<span class="tkey">acme_store</span></div>
       <div class="tbody" id="themBody"><div class="tempty">loading a different tenant…</div></div></div>
   </div>
@@ -460,7 +460,8 @@
 (function(){
   var LAMBDA="https://hjvvxxmlcrp6jzkfaohctk7cda0qshum.lambda-url.us-west-1.on.aws";
   var TYPE="task", NEIGHBOR="acme_store";
-  var LSK_APP="morphdb_demo_appkey", LSK_GUID="morphdb_demo_guid";
+  // One shared demo app for every visitor — no per-visitor app is ever created.
+  var DEMO_APP="demo", LSK_GUID="morphdb_demo_guid";
   var $=function(id){return document.getElementById(id);};
   var flist=$("flist"), taskList=$("taskList"), statusLine=$("statusLine"),
       morphCta=$("morphCta"), morphRunBtn=$("morphRun"), titleInput=$("titleInput"),
@@ -470,12 +471,11 @@
 
   function pause(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
 
-  var appKey=localStorage.getItem(LSK_APP)||null;
+  var appKey=DEMO_APP;                             // the shared demo app
   var guid=localStorage.getItem(LSK_GUID)||null;   // focal task
   var fields={}, tasks=[], busy=false;
 
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
-  function rand(n){var s="",h="0123456789abcdef";for(var i=0;i<n;i++)s+=h[Math.floor(Math.random()*16)];return s;}
 
   function api(method,path,body,opts){
     opts=opts||{};
@@ -546,17 +546,18 @@
       .catch(function(){ themBody.innerHTML='<div class="tempty">neighbor app unavailable</div>'; });
   }
   function loadYou(){
-    if(!appKey){ youBody.innerHTML='<div class="tempty">Persist a task above — it lands in <em>your</em> app and shows up here.</div>'; return; }
     api("GET","/objects/"+TYPE+"?limit=5").then(function(d){ youBody.innerHTML=tRows(d.objects); youKey.textContent=appKey; }).catch(function(){});
   }
 
   // ---------- ensure app + schema ----------
   function ensureApp(){
-    if(appKey) return Promise.resolve(appKey);
-    var key="demo_"+rand(8);
-    return api("POST","/app",{key:key},{noKey:true}).then(function(){ appKey=key; localStorage.setItem(LSK_APP,key); paintKey(); return key; });
+    // Idempotently ensure the one shared demo app exists; a 409 just means an
+    // earlier visitor already created it.
+    return api("POST","/app",{key:DEMO_APP},{noKey:true})
+      .then(function(){ return DEMO_APP; })
+      .catch(function(e){ if(e&&e.status===409) return DEMO_APP; throw e; });
   }
-  function paintKey(){ appkeyVal.textContent=appKey||"created on first write"; if(appKey&&youKey) youKey.textContent=appKey; }
+  function paintKey(){ appkeyVal.textContent=appKey; if(youKey) youKey.textContent=appKey; }
   function ensureSchema(){ return api("PUT","/schema/"+TYPE,{fields:{title:"string",done:"boolean"},merge:true}).then(syncSchema); }
   function syncSchema(doc){ fields={}; if(doc&&doc.fields) Object.keys(doc.fields).forEach(function(n){ fields[n]=doc.fields[n].type; }); return doc; }
   function fieldsPlus(name,type){ var f={}; Object.keys(fields).forEach(function(n){f[n]=fields[n];}); f[name]=type; return f; }
@@ -574,7 +575,7 @@
     if(busy) return;
     var title=(titleInput.value||"").trim();
     if(!title){ titleInput.focus(); setStatus("type a title first — anything works.","err"); return; }
-    lock(true); setStatus("registering your app, declaring the schema, saving the task…","busy");
+    lock(true); setStatus("saving to the shared demo app, declaring the schema, persisting the task…","busy");
     ensureApp().then(ensureSchema).then(function(){ return api("POST","/objects/"+TYPE,{title:title,done:false}); })
       .then(function(o){
         guid=o._guid; localStorage.setItem(LSK_GUID,guid);
