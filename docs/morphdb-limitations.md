@@ -44,6 +44,10 @@ List responses expose a flat `total` for the filter, but no grouped counts (e.g.
 *Surfaced by: LinkedIn (idempotent per-user likes, "your" posts).*
 `X-App-Key` isolates apps but is not authentication and carries no per-user identity. There's no notion of "the current user," so per-user semantics (one like per user, ownership of a post, permissions) must be faked client-side (here: localStorage), which is trivially bypassed. Real multi-user apps need an identity/auth primitive.
 
+## 9. No client-supplied object IDs, and no soft-delete + restore
+*Surfaced by: Figma (undo of a delete).*
+The server assigns every `_guid` on create; a client can't create an object with a known id, and there's no soft-delete/restore. So "undo a delete" can't bring the *same* object back — re-creating yields a **new** `_guid`, and any references to the old guid must be remapped client-side (the Figma undo stack does exactly this across its history snapshots + selection). A client-supplied id (idempotent create) or a soft-delete/restore (trash + undelete) primitive would make undo/redo and offline replay correct instead of approximate.
+
 ---
 
 # Architectural gaps for a production rebuild (LinkedIn / Notion / Figma)

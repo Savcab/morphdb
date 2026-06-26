@@ -73,38 +73,58 @@
     cursor: default;
   }
   #canvas.draw { cursor: crosshair; }
+  /* #scene holds all shapes + selection frames and is what zoom/pan transforms */
+  #scene { position: absolute; inset: 0; transform-origin: 0 0; }
   .shape {
     position: absolute; user-select: none;
     color: #fff; /* default text color overwritten per-shape */
   }
+  .shape:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .shape.rect    { border-radius: 4px; box-shadow: 0 1px 2px #0000001f; cursor: move; }
   .shape.ellipse { border-radius: 50%; box-shadow: 0 1px 2px #0000001f; cursor: move; }
   .shape.line    { background: transparent !important; cursor: move; }
   .shape.line svg { width: 100%; height: 100%; display: block; overflow: visible; pointer-events: none; }
   .shape.text {
     background: transparent; cursor: move; font-weight: 600; font-size: 22px;
-    line-height: 1.2; padding: 2px 4px; white-space: pre-wrap; overflow: hidden;
-    display: flex; align-items: center;
+    line-height: 1.2; padding: 2px 4px; white-space: pre-wrap; word-break: break-word;
+    overflow: visible; display: block;
   }
   .shape.text[contenteditable="true"] {
     cursor: text; outline: 2px solid var(--accent); border-radius: 3px; background: #ffffff66;
   }
-  #frame { position: absolute; pointer-events: none; border: 1.5px solid var(--accent); border-radius: 2px; }
-  #frame .h {
+  .shape.preview { opacity: .65; pointer-events: none; outline: 1.5px dashed var(--accent); }
+  /* selection frame(s) — one per selected shape; handles only when exactly one */
+  .selframe { position: absolute; pointer-events: none; border: 1.5px solid var(--accent); border-radius: 2px; }
+  .selframe .h {
     position: absolute; width: 8px; height: 8px; background: #fff;
     border: 1.5px solid var(--accent); border-radius: 2px;
     pointer-events: auto;   /* handles are interactive even though the frame isn't */
   }
-  #frame .nw { left: -5px; top: -5px; }   #frame .ne { right: -5px; top: -5px; }
-  #frame .sw { left: -5px; bottom: -5px; } #frame .se { right: -5px; bottom: -5px; }
-  #frame .nw, #frame .se { cursor: nwse-resize; }
-  #frame .ne, #frame .sw { cursor: nesw-resize; }
+  .selframe .nw { left: -5px; top: -5px; }   .selframe .ne { right: -5px; top: -5px; }
+  .selframe .sw { left: -5px; bottom: -5px; } .selframe .se { right: -5px; bottom: -5px; }
+  .selframe .nw, .selframe .se { cursor: nwse-resize; }
+  .selframe .ne, .selframe .sw { cursor: nesw-resize; }
+  .marquee { position: absolute; border: 1px solid var(--accent); background: #0d99ff22; pointer-events: none; }
 
   .empty {
     position: absolute; inset: 0; display: grid; place-content: center;
     text-align: center; color: #8a8a92; pointer-events: none; gap: 6px;
   }
   .empty b { color: #5a5a62; font-size: 15px; }
+
+  /* zoom control (bottom-left) */
+  #zoom {
+    position: absolute; left: 14px; bottom: 18px; z-index: 10;
+    display: flex; align-items: center; gap: 2px;
+    background: var(--chrome); border: 1px solid var(--line);
+    padding: 4px; border-radius: 10px; box-shadow: 0 8px 24px #00000040;
+  }
+  #zoom button {
+    width: 26px; height: 26px; border: none; background: transparent; color: var(--ink);
+    border-radius: 6px; cursor: pointer; font: inherit;
+  }
+  #zoom button:hover { background: #ffffff14; }
+  #zoom #zoomVal { min-width: 48px; text-align: center; color: var(--muted); font-size: 12px; cursor: pointer; }
 
   /* floating toolbar (Figma-style bottom pill) */
   #toolbar {
@@ -120,6 +140,7 @@
     border-radius: 8px; cursor: pointer;
   }
   .tool:hover { background: #ffffff14; }
+  .tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .tool.active { background: var(--accent); color: #fff; }
   .tbsep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
   .swatch-btn {
@@ -171,6 +192,7 @@
     color: var(--ink); font: inherit; padding: 6px 8px; text-transform: uppercase;
   }
   .fillrow .hex:focus { outline: none; border-color: var(--accent); }
+  .fillrow .hex.invalid { border-color: #ff5c5c; }
   textarea#tx {
     width: 100%; resize: vertical; min-height: 56px; background: var(--field);
     border: 1px solid transparent; border-radius: 6px; color: var(--ink);
@@ -182,6 +204,7 @@
     color: var(--ink); border-radius: 7px; cursor: pointer; font: inherit;
   }
   .btn:hover { background: #ffffff1c; }
+  .btn:disabled { opacity: .4; cursor: default; }
   .btn.danger { color: #ff8a8a; border-color: #ff8a8a3a; }
   .btn.danger:hover { background: #ff5c5c1f; }
 
@@ -197,10 +220,23 @@
     cursor: pointer; color: var(--ink);
   }
   .layer:hover { background: #ffffff10; }
+  .layer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .layer.active { background: var(--accent); color: #fff; }
   .layer .ic { width: 14px; height: 14px; display: grid; place-content: center; opacity: .8; }
-  .layer .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .layer .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; }
+  .layer .nm[contenteditable="true"] { background: #ffffff22; border-radius: 3px; padding: 0 3px; cursor: text; }
   .layer .sw-mini { width: 12px; height: 12px; border-radius: 3px; border: 1px solid #ffffff30; }
+  .layer .step {
+    width: 18px; height: 18px; display: grid; place-content: center; border: none;
+    background: transparent; color: inherit; opacity: .65; border-radius: 4px; cursor: pointer;
+    font-size: 9px; line-height: 1;
+  }
+  .layer .step:hover { background: #ffffff22; opacity: 1; }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
 
   /* banner for an un-provisioned backend */
   #banner {
@@ -226,34 +262,42 @@
     </span>
     <span class="brand">MorphDB&nbsp;Shaper</span>
     <span class="sep"></span>
-    <input id="docName" value="Untitled" spellcheck="false" />
+    <label for="docName" class="sr-only">Document name</label>
+    <input id="docName" value="Untitled" spellcheck="false" aria-label="Document name" />
     <span class="spacer"></span>
-    <span id="err"></span>
+    <span id="err" role="status" aria-live="polite"></span>
     <span class="status" id="status"><span class="dot"></span><span id="statusText">synced to MorphDB</span></span>
   </header>
 
   <div id="stage">
-    <div id="canvas"></div>
+    <div id="canvas"><div id="scene"></div></div>
     <div id="banner"></div>
 
+    <div id="zoom" role="group" aria-label="Zoom controls">
+      <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+      <span id="zoomVal" title="Reset to 100%">100%</span>
+      <button id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+      <button id="zoomFit" title="Zoom to fit (Shift+1)" aria-label="Zoom to fit">Fit</button>
+    </div>
+
     <div id="toolbar">
-      <button class="tool active" data-tool="select" title="Move (V)">
+      <button class="tool active" data-tool="select" title="Move (V)" aria-label="Move tool" aria-pressed="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 8.5-6.2 1.4L9.9 19 5 3z"/></svg>
       </button>
-      <button class="tool" data-tool="rect" title="Rectangle (R)">
+      <button class="tool" data-tool="rect" title="Rectangle (R)" aria-label="Rectangle tool" aria-pressed="false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="5.5" width="16" height="13" rx="1.5"/></svg>
       </button>
-      <button class="tool" data-tool="ellipse" title="Ellipse (O)">
+      <button class="tool" data-tool="ellipse" title="Ellipse (O)" aria-label="Ellipse tool" aria-pressed="false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
       </button>
-      <button class="tool" data-tool="text" title="Text (T)">
+      <button class="tool" data-tool="text" title="Text (T)" aria-label="Text tool" aria-pressed="false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6h12M12 6v12M9.5 18h5"/></svg>
       </button>
-      <button class="tool" data-tool="line" title="Line (L)">
+      <button class="tool" data-tool="line" title="Line (L)" aria-label="Line tool" aria-pressed="false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 19 19 5"/></svg>
       </button>
       <span class="tbsep"></span>
-      <button class="swatch-btn" id="drawFillBtn" title="Fill for new shapes">
+      <button class="swatch-btn" id="drawFillBtn" title="Fill for new shapes" aria-label="Fill color for new shapes">
         <span class="chip" id="drawFillChip"></span>
       </button>
     </div>
@@ -275,9 +319,11 @@ const PALETTE = ["#4c6ef5","#f783ac","#38d9a9","#ffd43b","#ff922b","#845ef7","#2
 
 let docGuid = null;
 let shapes  = [];                    // kept sorted by z ascending (paint order)
-let selId   = null;
+let sel     = new Set();             // selected shape guids (multi-select)
 let tool    = "select";              // select | rect | ellipse | text | line
 let drawFill = "#4c6ef5";            // fill applied to newly drawn shapes
+let view    = { scale: 1, tx: 0, ty: 0 };   // zoom + pan of the scene
+let busy    = false;                 // guards undo/redo reconcile from overlap
 
 /* ------- generic MorphDB client — these endpoints never change ---------- */
 async function api(method, path, body) {
@@ -371,60 +417,90 @@ function lineSvg(color) {
        + `stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
+const sceneEl = () => $("scene");
+
+/* full rebuild of the canvas DOM — used after structural changes (load, add,
+   delete, reorder). Selection changes use selectVisual() instead so the shape
+   DOM nodes survive between the two clicks of a dblclick (text edit). */
 function render() {
-  const c = $("canvas");
-  c.querySelectorAll(".shape, #frame, .empty").forEach(n => n.remove());
+  buildShapes();
+  selectVisual();
+}
+
+function buildShapes() {
+  const scene = sceneEl();
+  scene.querySelectorAll(".shape, .selframe, .marquee").forEach(n => n.remove());
+  $("canvas").querySelectorAll(".empty").forEach(n => n.remove());
 
   if (!shapes.length) {
     const e = document.createElement("div");
     e.className = "empty";
-    e.innerHTML = "<b>Empty canvas</b><div>Pick a tool below and click to drop a shape.</div>";
-    c.appendChild(e);
+    e.innerHTML = "<b>Empty canvas</b><div>Pick a tool below and drag (or click) on the canvas to draw.</div>";
+    $("canvas").appendChild(e);
   }
-
-  for (const sh of shapes) c.appendChild(makeShapeEl(sh));
-  renderFrame();
-  renderInspector();
+  for (const sh of shapes) scene.appendChild(makeShapeEl(sh));
 }
 
 function applyBox(el, sh) {
   el.style.left = sh.x + "px";  el.style.top = sh.y + "px";
-  el.style.width = sh.w + "px"; el.style.height = sh.h + "px";
+  el.style.width = sh.w + "px";
+  if (sh.kind === "text") { el.style.height = "auto"; el.style.minHeight = sh.h + "px"; }
+  else                    { el.style.height = sh.h + "px"; }
 }
 
 function makeShapeEl(sh) {
   const el = document.createElement("div");
   el.className = "shape " + sh.kind;
   el.dataset.id = sh._guid;
+  el.tabIndex = 0;                                   // keyboard focusable
+  el.setAttribute("role", "button");
+  el.setAttribute("aria-label",
+    `${sh.kind}${sh.kind === "text" && sh.text ? ": " + sh.text : ""}`);
   applyBox(el, sh);
   if (sh.kind === "text")      { el.textContent = sh.text || "Text"; el.style.color = sh.fill; }
   else if (sh.kind === "line") { el.innerHTML = lineSvg(sh.fill); }   // fill drives the stroke
   else                         { el.style.background = sh.fill; }
 
   el.addEventListener("mousedown", (e) => onShapeDown(e, sh));
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectOnly(sh._guid); }
+  });
   if (sh.kind === "text") el.addEventListener("dblclick", (e) => startTextEdit(e, sh, el));
   return el;
 }
 
-function renderFrame() {
-  const sh = shapes.find(s => s._guid === selId);
-  if (!sh) return;
-  const f = document.createElement("div");
-  f.id = "frame";
-  f.style.left = sh.x + "px";  f.style.top = sh.y + "px";
-  f.style.width = sh.w + "px"; f.style.height = sh.h + "px";
-  f.innerHTML = '<span class="h nw"></span><span class="h ne"></span>'
-              + '<span class="h sw"></span><span class="h se"></span>';
-  $("canvas").appendChild(f);
-  // make each corner handle drag-to-resize (live, optimistic)
-  f.querySelectorAll(".h").forEach(h => {
-    const corner = ["nw","ne","sw","se"].find(c => h.classList.contains(c));
-    h.addEventListener("mousedown", (e) => onHandleDown(e, sh, corner));
-  });
+/* draw one selection frame per selected shape; resize handles only when a single
+   shape is selected. The frame is inside #scene so zoom/pan transform it too. */
+function updateFrames() {
+  const scene = sceneEl();
+  scene.querySelectorAll(".selframe").forEach(n => n.remove());
+  const single = sel.size === 1;
+  for (const id of sel) {
+    const sh = shapes.find(s => s._guid === id);
+    if (!sh) continue;
+    const el = scene.querySelector(`.shape[data-id="${id}"]`);
+    const w = el ? el.offsetWidth : sh.w;
+    const h = el ? el.offsetHeight : sh.h;            // text grows to fit content
+    const f = document.createElement("div");
+    f.className = "selframe";
+    f.style.left = sh.x + "px";  f.style.top = sh.y + "px";
+    f.style.width = w + "px";    f.style.height = h + "px";
+    if (single) {
+      f.innerHTML = '<span class="h nw"></span><span class="h ne"></span>'
+                  + '<span class="h sw"></span><span class="h se"></span>';
+    }
+    scene.appendChild(f);
+    if (single) {
+      f.querySelectorAll(".h").forEach(h2 => {
+        const corner = ["nw","ne","sw","se"].find(c => h2.classList.contains(c));
+        h2.addEventListener("mousedown", (e) => onHandleDown(e, sh, corner));
+      });
+    }
+  }
 }
 
 /* ------- resize: drag a corner; the OPPOSITE corner stays anchored ------- */
-const MIN_SIZE = 8;
+const MIN_SIZE = 1;
 function onHandleDown(e, sh, corner) {
   e.stopPropagation();
   e.preventDefault();
@@ -435,11 +511,11 @@ function onHandleDown(e, sh, corner) {
   const movesRight  = corner === "ne" || corner === "se";
   const movesTop    = corner === "nw" || corner === "ne";
   const movesBottom = corner === "sw" || corner === "se";
-  const el = $("canvas").querySelector(`.shape[data-id="${sh._guid}"]`);
-  const f  = $("frame");
+  const el = sceneEl().querySelector(`.shape[data-id="${sh._guid}"]`);
+  const f  = sceneEl().querySelector(".selframe");
 
   function move(ev) {
-    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    const dx = (ev.clientX - sx) / view.scale, dy = (ev.clientY - sy) / view.scale;
     let nx = x0, ny = y0, nw = w0, nh = h0;
     if (movesLeft)   { const l = Math.min(x0 + dx, right - MIN_SIZE); nx = Math.round(l); nw = Math.round(right - l); }
     if (movesRight)  { const r = Math.max(right + dx, x0 + MIN_SIZE); nw = Math.round(r - x0); }
@@ -447,114 +523,266 @@ function onHandleDown(e, sh, corner) {
     if (movesBottom) { const b = Math.max(bottom + dy, y0 + MIN_SIZE); nh = Math.round(b - y0); }
     sh.x = nx; sh.y = ny; sh.w = nw; sh.h = nh;
     if (el) applyBox(el, sh);                         // line redraws corner-to-corner automatically
-    if (f) { f.style.left = nx + "px"; f.style.top = ny + "px"; f.style.width = nw + "px"; f.style.height = nh + "px"; }
+    if (f) {
+      const fh = el ? el.offsetHeight : nh;           // text height is content-driven
+      f.style.left = nx + "px"; f.style.top = ny + "px"; f.style.width = nw + "px"; f.style.height = fh + "px";
+    }
     syncBoxInputs(sh);                                // live W/H/X/Y in the inspector
   }
   function up() {
     document.removeEventListener("mousemove", move);
     document.removeEventListener("mouseup", up);
+    if (sh.kind === "text" && el) sh.h = el.offsetHeight;   // persist the wrapped height
     patchShape(sh._guid, { x: sh.x, y: sh.y, w: sh.w, h: sh.h }, false);  // one PATCH, no re-render
   }
   document.addEventListener("mousemove", move);
   document.addEventListener("mouseup", up);
 }
 
-/* ------- interaction: draw, select, drag -------------------------------- */
+/* ------- interaction: draw, select, drag, marquee, pan ------------------ */
 function canvasPoint(e) {
   const r = $("canvas").getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
+  return {
+    x: (e.clientX - r.left - view.tx) / view.scale,
+    y: (e.clientY - r.top  - view.ty) / view.scale,
+  };
+}
+function rectsIntersect(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
+let spaceDown = false;
 $("canvas").addEventListener("mousedown", (e) => {
-  if (e.target.id !== "canvas") return;       // background only
-  if (tool === "select") { select(null); return; }
-  draw(e);
+  if (spaceDown || e.button === 1) { startPan(e); return; }   // space-drag / middle-drag pan
+  if (e.target.id !== "canvas" && e.target.id !== "scene") return;  // background only
+  if (tool === "select") { startMarquee(e); return; }
+  startDrawDrag(e);
 });
 
-function draw(e) {
-  const p = canvasPoint(e);
-  const def = { rect:{w:180,h:120}, ellipse:{w:160,h:160}, text:{w:200,h:48}, line:{w:200,h:140} }[tool];
-  createShape(tool, p.x - def.w / 2, p.y - def.h / 2, def.w, def.h);
+/* click-drag to draw a shape at a chosen size; a bare click drops a sensible
+   default size centered on the cursor (Figma behaviour). */
+function startDrawDrag(e) {
+  const drawTool = tool;
+  const start = canvasPoint(e);
+  let cur = start;
+  const preview = document.createElement("div");
+  preview.className = "shape " + drawTool + " preview";
+  if (drawTool === "line") preview.innerHTML = lineSvg(drawFill);
+  else if (drawTool !== "text") preview.style.background = drawFill;
+  sceneEl().appendChild(preview);
+
+  function place(el) {
+    el.style.left = Math.min(start.x, cur.x) + "px";
+    el.style.top  = Math.min(start.y, cur.y) + "px";
+    el.style.width  = Math.abs(cur.x - start.x) + "px";
+    el.style.height = Math.abs(cur.y - start.y) + "px";
+  }
+  function move(ev) { cur = canvasPoint(ev); place(preview); }
+  function up() {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    preview.remove();
+    const w = Math.abs(cur.x - start.x), h = Math.abs(cur.y - start.y);
+    if (w < 4 && h < 4) {
+      const def = { rect:{w:180,h:120}, ellipse:{w:160,h:160}, text:{w:200,h:48}, line:{w:200,h:140} }[drawTool];
+      createShape(drawTool, start.x - def.w / 2, start.y - def.h / 2, def.w, def.h);
+    } else {
+      createShape(drawTool, Math.min(start.x, cur.x), Math.min(start.y, cur.y),
+                  Math.max(Math.round(w), MIN_SIZE), Math.max(Math.round(h), MIN_SIZE));
+    }
+  }
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
+/* drag an empty area (select tool) to marquee-select intersecting shapes */
+function startMarquee(e) {
+  const start = canvasPoint(e);
+  const additive = e.shiftKey;
+  const base = new Set(additive ? sel : []);
+  const m = document.createElement("div");
+  m.className = "marquee";
+  sceneEl().appendChild(m);
+  let dragged = false;
+
+  function move(ev) {
+    const c = canvasPoint(ev);
+    const x = Math.min(start.x, c.x), y = Math.min(start.y, c.y);
+    const w = Math.abs(c.x - start.x), h = Math.abs(c.y - start.y);
+    if (w > 3 || h > 3) dragged = true;
+    m.style.left = x + "px"; m.style.top = y + "px"; m.style.width = w + "px"; m.style.height = h + "px";
+    const ns = new Set(base);
+    for (const s of shapes) if (rectsIntersect(x, y, w, h, s.x, s.y, s.w, s.h)) ns.add(s._guid);
+    sel = ns;
+    updateFrames();
+  }
+  function up() {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    m.remove();
+    if (dragged) renderInspector();
+    else { sel = additive ? base : new Set(); selectVisual(); }   // bare click clears
+  }
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
+function startPan(e) {
+  e.preventDefault();
+  $("canvas").style.cursor = "grabbing";
+  const sx = e.clientX, sy = e.clientY, tx0 = view.tx, ty0 = view.ty;
+  function move(ev) { view.tx = tx0 + (ev.clientX - sx); view.ty = ty0 + (ev.clientY - sy); applyView(); }
+  function up() {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    $("canvas").style.cursor = spaceDown ? "grab" : "";
+  }
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
 }
 
 async function createShape(kind, x, y, w, h) {
   const z = shapes.length ? Math.max(...shapes.map(s => s.z)) + 1 : 1;
   const body = {
-    kind, x: Math.round(x), y: Math.round(y), w, h,
+    kind, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
     fill: drawFill, text: kind === "text" ? "Text" : "", z, doc: docGuid,
   };
   try {
     const created = await api("POST", "/objects/shape", body);
     shapes.push(created);
     setTool("select");
-    select(created._guid);
+    buildShapes();
+    selectOnly(created._guid);
+    pushHistory();
     setErr("");
   } catch (e) { setErr(e.message); }
 }
 
 function onShapeDown(e, sh) {
   e.stopPropagation();
-  if (tool !== "select") { draw(e); return; }   // drawing tools draw, even over a shape
-  if (e.target.isContentEditable) { select(sh._guid); return; }
-  select(sh._guid);
+  if (tool !== "select") { startDrawDrag(e); return; }   // drawing tools draw, even over a shape
+  if (e.target.isContentEditable) return;                // mid text-edit: let the caret work
 
-  // select() just re-rendered the canvas, so e.currentTarget is now a detached
-  // node. Drag the FRESHLY-rendered element instead — otherwise move() updates an
-  // orphan and the shape only jumps to its new spot on the next click (optimistic
-  // drag, wrong target). This is how it stays live under the cursor, Figma-style.
-  const el = $("canvas").querySelector(`.shape[data-id="${sh._guid}"]`) || e.currentTarget;
-  const sx = e.clientX, sy = e.clientY, ox = sh.x, oy = sh.y;
+  if (e.shiftKey) {
+    if (sel.has(sh._guid)) { sel.delete(sh._guid); selectVisual(); return; }  // toggle off
+    sel.add(sh._guid); selectVisual();
+  } else if (!sel.has(sh._guid)) {
+    sel = new Set([sh._guid]); selectVisual();
+  }
+
+  // selectVisual() does NOT rebuild shape DOM, so e.currentTarget stays live —
+  // optimistic drag works AND a follow-up click lands on the same node (dblclick).
+  const moving = shapes.filter(s => sel.has(s._guid));
+  const starts = moving.map(s => ({
+    s, ox: s.x, oy: s.y,
+    el: sceneEl().querySelector(`.shape[data-id="${s._guid}"]`),
+  }));
+  const sx = e.clientX, sy = e.clientY;
   let moved = false;
-  const frame = () => $("frame");
 
   function move(ev) {
-    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    const dx = (ev.clientX - sx) / view.scale, dy = (ev.clientY - sy) / view.scale;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
-    sh.x = Math.round(ox + dx); sh.y = Math.round(oy + dy);
-    el.style.left = sh.x + "px"; el.style.top = sh.y + "px";
-    const f = frame(); if (f) { f.style.left = sh.x + "px"; f.style.top = sh.y + "px"; }
-    syncPosInputs(sh);
+    for (const it of starts) {
+      it.s.x = Math.round(it.ox + dx); it.s.y = Math.round(it.oy + dy);
+      if (it.el) { it.el.style.left = it.s.x + "px"; it.el.style.top = it.s.y + "px"; }
+    }
+    updateFrames();
+    if (sel.size === 1) syncPosInputs(moving[0]);
   }
   function up() {
     document.removeEventListener("mousemove", move);
     document.removeEventListener("mouseup", up);
-    // drag-end: persist the new x/y with a single spatial PATCH
-    if (moved) patchShape(sh._guid, { x: sh.x, y: sh.y }, false);
+    if (moved) commitGeo(moving);   // persist new x/y for every dragged shape
   }
   document.addEventListener("mousemove", move);
   document.addEventListener("mouseup", up);
 }
 
-function select(id) { selId = id; render(); }
+/* selection helpers ----------------------------------------------------- */
+function pruneSel() { for (const id of [...sel]) if (!shapes.find(s => s._guid === id)) sel.delete(id); }
+function selectVisual() { pruneSel(); updateFrames(); renderInspector(); }
+function selectOnly(id) { sel = new Set(id ? [id] : []); selectVisual(); }
+function toggleSel(id)  { if (sel.has(id)) sel.delete(id); else sel.add(id); selectVisual(); }
 
 /* ------- mutations (every edit is a PATCH to MorphDB) ------------------- */
+// low-level: write a single field-set, update local cache, NO render/history
+async function writeShape(guid, body) {
+  const updated = await api("PATCH", `/objects/shape/${guid}`, body);
+  const i = shapes.findIndex(s => s._guid === guid);
+  if (i >= 0) Object.assign(shapes[i], updated);
+  return updated;
+}
+
 async function patchShape(guid, body, rerender = true) {
   try {
-    const updated = await api("PATCH", `/objects/shape/${guid}`, body);
-    const i = shapes.findIndex(s => s._guid === guid);
-    if (i >= 0) Object.assign(shapes[i], updated);
+    await writeShape(guid, body);
     if (rerender) { shapes.sort((a, b) => a.z - b.z); render(); }
+    pushHistory();
     setErr("");
   } catch (e) { setErr(e.message); }
 }
 
-async function deleteShape(guid) {
+// commit moved x/y for many shapes as serialized writes, then ONE history entry
+async function commitGeo(list) {
   try {
-    await api("DELETE", `/objects/shape/${guid}`);
-    shapes = shapes.filter(s => s._guid !== guid);
-    if (selId === guid) selId = null;
+    for (const s of list) await writeShape(s._guid, { x: s.x, y: s.y });
     render();
+    pushHistory();
     setErr("");
   } catch (e) { setErr(e.message); }
 }
 
-function bringToFront(sh) {
-  const top = Math.max(...shapes.map(s => s.z));
-  if (sh.z !== top) patchShape(sh._guid, { z: top + 1 });
+async function deleteSelected() {
+  const ids = [...sel];
+  if (!ids.length) return;
+  try {
+    for (const id of ids) {
+      await api("DELETE", `/objects/shape/${id}`);
+      shapes = shapes.filter(s => s._guid !== id);
+    }
+    sel.clear();
+    render();
+    pushHistory();
+    setErr("");
+  } catch (e) { setErr(e.message); }
 }
-function sendToBack(sh) {
-  const bot = Math.min(...shapes.map(s => s.z));
-  if (sh.z !== bot) patchShape(sh._guid, { z: bot - 1 });
+
+// raise/lower every selected shape together
+async function arrangeSelected(front) {
+  const ordered = [...sel].map(id => shapes.find(s => s._guid === id))
+                          .filter(Boolean).sort((a, b) => a.z - b.z);
+  if (!ordered.length) return;
+  try {
+    if (front) {
+      let top = Math.max(...shapes.map(s => s.z));
+      for (const s of ordered) { top++; await writeShape(s._guid, { z: top }); }
+    } else {
+      let bot = Math.min(...shapes.map(s => s.z));
+      for (const s of [...ordered].reverse()) { bot--; await writeShape(s._guid, { z: bot }); }
+    }
+    shapes.sort((a, b) => a.z - b.z);
+    render();
+    pushHistory();
+    setErr("");
+  } catch (e) { setErr(e.message); }
+}
+
+// step a single layer one place forward/back by swapping z with its neighbour
+async function layerStep(sh, dir) {
+  const ordered = [...shapes].sort((a, b) => a.z - b.z);
+  const i = ordered.findIndex(s => s._guid === sh._guid);
+  const j = i + dir;
+  if (j < 0 || j >= ordered.length) return;
+  const other = ordered[j], za = sh.z, zb = other.z;
+  try {
+    await writeShape(sh._guid, { z: zb });
+    await writeShape(other._guid, { z: za });
+    shapes.sort((a, b) => a.z - b.z);
+    render();
+    pushHistory();
+    setErr("");
+  } catch (e) { setErr(e.message); }
 }
 
 function startTextEdit(e, sh, el) {
@@ -562,15 +790,84 @@ function startTextEdit(e, sh, el) {
   el.contentEditable = "true";
   el.focus();
   const r = document.createRange(); r.selectNodeContents(el);
-  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  let done = false;
   const commit = () => {
+    if (done) return; done = true;
     el.contentEditable = "false";
     const t = el.textContent.trim();
     el.removeEventListener("blur", commit);
-    patchShape(sh._guid, { text: t || "Text" });
+    const h = Math.max(MIN_SIZE, el.offsetHeight);   // auto-height to fit content
+    patchShape(sh._guid, { text: t || "Text", h });
   };
   el.addEventListener("blur", commit);
-  el.addEventListener("keydown", (ev) => { if (ev.key === "Escape") el.blur(); });
+  el.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { ev.preventDefault(); el.blur(); }
+    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); el.blur(); }
+  });
+}
+
+/* ------- undo / redo (snapshot history reconciled to the backend) ------- */
+let history = [];
+let histIndex = -1;
+const FIELDS = ["kind","x","y","w","h","fill","text","z"];
+
+function snapshot() {
+  return shapes.map(s => {
+    const o = { _guid: s._guid };
+    for (const k of FIELDS) o[k] = s[k];
+    return o;
+  });
+}
+function pushHistory() {
+  if (busy) return;
+  history = history.slice(0, histIndex + 1);
+  history.push(snapshot());
+  histIndex = history.length - 1;
+  updateHistButtons();
+}
+// a recreated shape gets a fresh guid; rewrite stored snapshots + selection
+function remapGuid(oldG, newG) {
+  for (const snap of history) for (const s of snap) if (s._guid === oldG) s._guid = newG;
+  if (sel.has(oldG)) { sel.delete(oldG); sel.add(newG); }
+}
+// make the backend (and local state) match a target snapshot with minimal writes
+async function reconcile(target) {
+  const tgt = new Map(target.map(s => [s._guid, s]));
+  for (const s of [...shapes]) if (!tgt.has(s._guid)) await api("DELETE", `/objects/shape/${s._guid}`);
+  for (const t of target) {
+    const cur = shapes.find(s => s._guid === t._guid);
+    if (!cur) {
+      const body = { doc: docGuid };
+      for (const k of FIELDS) body[k] = t[k];
+      const created = await api("POST", "/objects/shape", body);
+      remapGuid(t._guid, created._guid);
+    } else {
+      const body = {};
+      for (const k of FIELDS) if (cur[k] !== t[k]) body[k] = t[k];
+      if (Object.keys(body).length) await api("PATCH", `/objects/shape/${t._guid}`, body);
+    }
+  }
+  await loadShapes();
+}
+async function undo() {
+  if (busy || histIndex <= 0) return;
+  busy = true; histIndex--;
+  try { await reconcile(history[histIndex]); setErr(""); }
+  catch (e) { setErr(e.message); }
+  busy = false; updateHistButtons();
+}
+async function redo() {
+  if (busy || histIndex >= history.length - 1) return;
+  busy = true; histIndex++;
+  try { await reconcile(history[histIndex]); setErr(""); }
+  catch (e) { setErr(e.message); }
+  busy = false; updateHistButtons();
+}
+function updateHistButtons() {
+  const u = $("undoBtn"), r = $("redoBtn");
+  if (u) u.disabled = histIndex <= 0;
+  if (r) r.disabled = histIndex >= history.length - 1;
 }
 
 /* ------- inspector ------------------------------------------------------ */
@@ -584,25 +881,63 @@ function syncBoxInputs(sh) {
   set("in-x", sh.x); set("in-y", sh.y); set("in-w", sh.w); set("in-h", sh.h);
 }
 
+// live (un-persisted) fill update so the native color picker can scrub without
+// the inspector re-rendering out from under it (which closed the popup before)
+function liveFill(sh, c) {
+  sh.fill = c;
+  const el = sceneEl().querySelector(`.shape[data-id="${sh._guid}"]`);
+  if (el) {
+    if (sh.kind === "text") el.style.color = c;
+    else if (sh.kind === "line") el.innerHTML = lineSvg(c);
+    else el.style.background = c;
+  }
+  const hx = $("in-hex"); if (hx) { hx.value = c; hx.classList.remove("invalid"); }
+}
+
 function renderInspector() {
   const body = $("inspectBody");
-  const sh = shapes.find(s => s._guid === selId);
+  const selShapes = shapes.filter(s => sel.has(s._guid));
 
-  if (!sh) {
+  // nothing selected
+  if (selShapes.length === 0) {
     body.innerHTML =
       `<div class="hint">
          <b>Nothing selected.</b><br>
          Pick <span class="kbd">R</span> rectangle, <span class="kbd">O</span> ellipse,
-         <span class="kbd">T</span> text, or <span class="kbd">L</span> line, then click the canvas.
-         Drag to move, drag a corner handle to resize, double-click text to edit,
-         <span class="kbd">Del</span> to delete.
+         <span class="kbd">T</span> text, or <span class="kbd">L</span> line, then drag on the canvas.
+         Drag to move, drag a corner to resize, double-click text to edit, arrow keys nudge,
+         <span class="kbd">Del</span> deletes. <span class="kbd">⌘Z</span> undo ·
+         scroll to pan · <span class="kbd">⌘</span>+scroll or pinch to zoom.
        </div>` + layersHtml();
     wireLayers();
     return;
   }
 
+  // multi-selection: shared actions only
+  if (selShapes.length > 1) {
+    body.innerHTML = `
+      <div class="sect">
+        <h3>${selShapes.length} selected</h3>
+        <div class="row">
+          <button class="btn" id="front">Bring to front</button>
+          <button class="btn" id="back">Send to back</button>
+        </div>
+        <div class="row mt8">
+          <button class="btn danger" id="del">Delete ${selShapes.length} shapes</button>
+        </div>
+      </div>
+      ${layersHtml()}`;
+    $("front").addEventListener("click", () => arrangeSelected(true));
+    $("back").addEventListener("click",  () => arrangeSelected(false));
+    $("del").addEventListener("click",   () => deleteSelected());
+    wireLayers();
+    return;
+  }
+
+  // single selection: full inspector
+  const sh = selShapes[0];
   const num = (lbl, id, v) =>
-    `<div class="field"><label>${lbl}</label><input id="${id}" type="number" value="${Math.round(v)}"></div>`;
+    `<div class="field"><label for="${id}">${lbl}</label><input id="${id}" type="number" value="${Math.round(v)}"></div>`;
 
   body.innerHTML = `
     <div class="sect">
@@ -615,16 +950,20 @@ function renderInspector() {
       <h3>Fill</h3>
       <div class="swatches">${PALETTE.map(c =>
         `<div class="sw ${c.toLowerCase()===String(sh.fill).toLowerCase()?'active':''}"
-              style="background:${c}" data-c="${c}"></div>`).join("")}</div>
+              style="background:${c}" data-c="${c}" role="button" tabindex="0"
+              aria-label="Set fill ${c}"></div>`).join("")}</div>
       <div class="fillrow">
+        <label for="in-color" class="sr-only">Fill color picker</label>
         <input type="color" id="in-color" value="${toHex(sh.fill)}">
-        <input class="hex" id="in-hex" value="${sh.fill}">
+        <label for="in-hex" class="sr-only">Fill hex value</label>
+        <input class="hex" id="in-hex" value="${escapeAttr(sh.fill)}" spellcheck="false">
       </div>
     </div>
 
     ${sh.kind === "text" ? `
     <div class="sect">
       <h3>Text</h3>
+      <label for="tx" class="sr-only">Text content</label>
       <textarea id="tx" spellcheck="false">${escapeHtml(sh.text || "")}</textarea>
     </div>` : ""}
 
@@ -640,25 +979,43 @@ function renderInspector() {
     </div>
     ${layersHtml()}`;
 
-  // wire position / size
+  // wire position / size — clamp W/H to >= 1 so a shape can't collapse to 0px
   for (const [id, key] of [["in-x","x"],["in-y","y"],["in-w","w"],["in-h","h"]]) {
     $(id).addEventListener("change", (e) => {
-      const v = Math.round(Number(e.target.value) || 0);
+      let v = Math.round(Number(e.target.value));
+      if (!Number.isFinite(v)) { e.target.value = Math.round(sh[key]); return; }
+      if ((key === "w" || key === "h") && v < 1) { v = 1; e.target.value = 1; }
       patchShape(sh._guid, { [key]: v });
     });
   }
-  // wire fill
-  body.querySelectorAll(".sw").forEach(s =>
-    s.addEventListener("click", () => patchShape(sh._guid, { fill: s.dataset.c })));
-  $("in-color").addEventListener("input", (e) => patchShape(sh._guid, { fill: e.target.value }));
-  $("in-hex").addEventListener("change", (e) => patchShape(sh._guid, { fill: e.target.value.trim() }));
+  // wire fill swatches (clickable + keyboard)
+  body.querySelectorAll(".sw").forEach(s => {
+    const apply = () => patchShape(sh._guid, { fill: s.dataset.c });
+    s.addEventListener("click", apply);
+    s.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); apply(); } });
+  });
+  // wire native color picker: scrub live (input), persist once (change)
+  $("in-color").addEventListener("input",  (e) => liveFill(sh, e.target.value));
+  $("in-color").addEventListener("change", (e) => patchShape(sh._guid, { fill: e.target.value }));
+  // wire hex with validation — an invalid color is rejected, never persisted
+  $("in-hex").addEventListener("change", (e) => {
+    const v = e.target.value.trim();
+    if (!isValidColor(v)) {
+      e.target.classList.add("invalid");
+      setErr(`"${v}" is not a valid color`);
+      e.target.value = sh.fill;
+      setTimeout(() => e.target.classList.remove("invalid"), 1200);
+      return;
+    }
+    patchShape(sh._guid, { fill: v });
+  });
   // wire text
   if (sh.kind === "text")
     $("tx").addEventListener("change", (e) => patchShape(sh._guid, { text: e.target.value }));
   // wire arrange
-  $("front").addEventListener("click", () => bringToFront(sh));
-  $("back").addEventListener("click",  () => sendToBack(sh));
-  $("del").addEventListener("click",   () => deleteShape(sh._guid));
+  $("front").addEventListener("click", () => arrangeSelected(true));
+  $("back").addEventListener("click",  () => arrangeSelected(false));
+  $("del").addEventListener("click",   () => deleteSelected());
 
   wireLayers();
 }
@@ -667,24 +1024,66 @@ function layersHtml() {
   const ordered = [...shapes].sort((a, b) => b.z - a.z); // top-most first
   const rows = ordered.map(s => {
     const label = s.kind === "text" ? (s.text || "Text") : (s.kind[0].toUpperCase() + s.kind.slice(1));
-    return `<div class="layer ${s._guid===selId?'active':''}" data-id="${s._guid}">
+    return `<div class="layer ${sel.has(s._guid)?'active':''}" data-id="${s._guid}"
+                 tabindex="0" role="button" aria-label="${escapeAttr(label)} layer">
         <span class="ic">${KIND_ICON[s.kind]}</span>
-        <span class="nm">${escapeHtml(label)}</span>
-        <span class="sw-mini" style="background:${s.fill}"></span>
+        <span class="nm" ${s.kind==='text'?'data-rename="1"':''} title="${s.kind==='text'?'Double-click to rename':''}">${escapeHtml(label)}</span>
+        <span class="sw-mini" style="background:${escapeAttr(s.fill)}"></span>
+        <button class="step" data-step="1"  title="Bring forward"  aria-label="Bring forward">▲</button>
+        <button class="step" data-step="-1" title="Send backward" aria-label="Send backward">▼</button>
       </div>`;
   }).join("");
   return `<div class="sect"><h3>Layers · ${shapes.length}</h3>${rows || '<div style="color:var(--muted)">No layers yet</div>'}</div>`;
 }
+
 function wireLayers() {
-  $("inspectBody").querySelectorAll(".layer").forEach(l =>
-    l.addEventListener("click", () => select(l.dataset.id)));
+  $("inspectBody").querySelectorAll(".layer").forEach(l => {
+    const id = l.dataset.id;
+    const sh = shapes.find(s => s._guid === id);
+    l.addEventListener("click", (e) => {
+      if (e.target.closest(".step") || e.target.isContentEditable) return;
+      if (e.shiftKey) toggleSel(id); else selectOnly(id);
+    });
+    l.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        if (e.target.closest(".step") || e.target.isContentEditable) return;
+        e.preventDefault();
+        if (e.shiftKey) toggleSel(id); else selectOnly(id);
+      }
+    });
+    l.querySelectorAll(".step").forEach(b => {
+      b.addEventListener("click", (e) => { e.stopPropagation(); layerStep(sh, Number(b.dataset.step)); });
+    });
+    // rename a text layer in place (double-click its name)
+    const nm = l.querySelector(".nm[data-rename]");
+    if (nm) nm.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      nm.contentEditable = "true"; nm.focus();
+      const r = document.createRange(); r.selectNodeContents(nm);
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      let done = false;
+      const commit = () => {
+        if (done) return; done = true;
+        nm.contentEditable = "false";
+        patchShape(id, { text: nm.textContent.trim() || "Text" });
+      };
+      nm.addEventListener("blur", commit);
+      nm.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") { ev.preventDefault(); nm.blur(); }
+        if (ev.key === "Escape") { ev.preventDefault(); done = true; nm.contentEditable = "false"; renderInspector(); }
+      });
+    });
+  });
 }
 
 /* ------- toolbar -------------------------------------------------------- */
 function setTool(t) {
   tool = t;
-  document.querySelectorAll(".tool").forEach(b =>
-    b.classList.toggle("active", b.dataset.tool === t));
+  document.querySelectorAll(".tool").forEach(b => {
+    const on = b.dataset.tool === t;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
   $("canvas").classList.toggle("draw", t !== "select");
 }
 document.querySelectorAll(".tool").forEach(b =>
@@ -701,38 +1100,151 @@ $("drawFillBtn").addEventListener("click", () => {
   inp.click();
 });
 
+/* ------- zoom / pan ----------------------------------------------------- */
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+function applyView() {
+  const sc = sceneEl();
+  if (sc) sc.style.transform = `translate(${view.tx}px,${view.ty}px) scale(${view.scale})`;
+  $("canvas").style.backgroundPosition = `${view.tx}px ${view.ty}px`;
+  const zv = $("zoomVal"); if (zv) zv.textContent = Math.round(view.scale * 100) + "%";
+}
+function zoomTo(ns, cx, cy) {
+  ns = clamp(ns, 0.1, 8);
+  const k = ns / view.scale;
+  view.tx = cx - (cx - view.tx) * k;
+  view.ty = cy - (cy - view.ty) * k;
+  view.scale = ns;
+  applyView();
+}
+function zoomByCenter(factor) {
+  const r = $("canvas").getBoundingClientRect();
+  zoomTo(view.scale * factor, r.width / 2, r.height / 2);
+}
+function zoomReset() { view = { scale: 1, tx: 0, ty: 0 }; applyView(); }
+function zoomFit() {
+  if (!shapes.length) return zoomReset();
+  const minX = Math.min(...shapes.map(s => s.x)), minY = Math.min(...shapes.map(s => s.y));
+  const maxX = Math.max(...shapes.map(s => s.x + s.w)), maxY = Math.max(...shapes.map(s => s.y + s.h));
+  const r = $("canvas").getBoundingClientRect();
+  const pad = 60;
+  const s = clamp(Math.min((r.width - 2*pad) / (maxX - minX || 1), (r.height - 2*pad) / (maxY - minY || 1)), 0.1, 2);
+  view.scale = s; view.tx = pad - minX * s; view.ty = pad - minY * s;
+  applyView();
+}
+$("stage").addEventListener("wheel", (e) => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const r = $("canvas").getBoundingClientRect();
+    zoomTo(view.scale * Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
+  } else {
+    view.tx -= e.deltaX; view.ty -= e.deltaY; applyView();
+  }
+}, { passive: false });
+$("zoomIn").addEventListener("click",  () => zoomByCenter(1.2));
+$("zoomOut").addEventListener("click", () => zoomByCenter(1 / 1.2));
+$("zoomFit").addEventListener("click", zoomFit);
+$("zoomVal").addEventListener("click", zoomReset);
+
 /* ------- doc name + keyboard ------------------------------------------- */
 $("docName").addEventListener("change", async (e) => {
-  try { await api("PATCH", `/objects/doc/${docGuid}`, { name: e.target.value.trim() || "Untitled" }); setErr(""); }
+  const name = e.target.value.trim() || "Untitled";
+  e.target.value = name;          // reflect what was actually saved (no blank field)
+  try { await api("PATCH", `/objects/doc/${docGuid}`, { name }); setErr(""); }
   catch (err) { setErr(err.message); }
 });
 
 function typing(t) { return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable); }
+
+/* arrow-key nudge with debounced persistence (one history entry per burst) */
+let nudgeTimer = null;
+function nudge(dx, dy) {
+  if (!sel.size) return;
+  const moving = shapes.filter(s => sel.has(s._guid));
+  const scene = sceneEl();
+  for (const s of moving) {
+    s.x += dx; s.y += dy;
+    const el = scene.querySelector(`.shape[data-id="${s._guid}"]`);
+    if (el) { el.style.left = s.x + "px"; el.style.top = s.y + "px"; }
+  }
+  updateFrames();
+  if (sel.size === 1) syncPosInputs(moving[0]);
+  clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => commitGeo(moving), 300);
+}
+
 document.addEventListener("keydown", (e) => {
+  // undo / redo work even when not focused on the canvas (but not while typing)
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+    if (typing(e.target)) return;
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+    if (typing(e.target)) return;
+    e.preventDefault(); redo(); return;
+  }
   if (typing(e.target)) return;
-  if ((e.key === "Delete" || e.key === "Backspace") && selId) { e.preventDefault(); deleteShape(selId); return; }
-  if (e.key === "Escape") { select(null); setTool("select"); return; }
+
+  if (e.code === "Space" && !spaceDown) { spaceDown = true; $("canvas").style.cursor = "grab"; e.preventDefault(); return; }
+
+  if ((e.key === "Delete" || e.key === "Backspace") && sel.size) { e.preventDefault(); deleteSelected(); return; }
+  if (e.key === "Escape") { selectOnly(null); setTool("select"); return; }
+
+  if (e.key.startsWith("Arrow") && sel.size) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    if (e.key === "ArrowLeft")  nudge(-step, 0);
+    if (e.key === "ArrowRight") nudge(step, 0);
+    if (e.key === "ArrowUp")    nudge(0, -step);
+    if (e.key === "ArrowDown")  nudge(0, step);
+    return;
+  }
+
+  if (e.metaKey || e.ctrlKey) return;
+  if (e.key === "1" && e.shiftKey) { zoomFit(); return; }
+  if (e.key === "0" && e.shiftKey) { zoomReset(); return; }
   const map = { v:"select", r:"rect", o:"ellipse", t:"text", l:"line" };
   const k = e.key.toLowerCase();
   if (map[k]) setTool(map[k]);
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space") { spaceDown = false; $("canvas").style.cursor = ""; }
 });
 
 /* ------- helpers -------------------------------------------------------- */
 function toHex(c) {
   if (typeof c === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c))
     return c.length === 4 ? "#" + [...c.slice(1)].map(x => x + x).join("") : c;
+  // best-effort: let the browser resolve named/rgb colors to a hex for the picker
+  if (isValidColor(c)) {
+    const probe = document.createElement("canvas").getContext("2d");
+    probe.fillStyle = "#000"; probe.fillStyle = c;
+    if (/^#[0-9a-f]{6}$/i.test(probe.fillStyle)) return probe.fillStyle;
+  }
   return "#000000";
+}
+// validate ANY css color (hex / named / rgb()/rgba()/hsl()) via the CSSOM
+function isValidColor(c) {
+  if (typeof c !== "string" || !c.trim()) return false;
+  const s = new Option().style;
+  s.color = "";
+  s.color = c.trim();
+  return s.color !== "";
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[m]));
 }
+function escapeAttr(s) { return escapeHtml(s); }
 
 /* ------- boot ----------------------------------------------------------- */
 (async () => {
   setDrawFill(drawFill);
+  applyView();
   await bootstrap();
   try {
     await loadOrSeed();
+    pushHistory();           // baseline state for undo
     setErr("");
   } catch (e) {
     if (/unknown app/i.test(e.message)) {

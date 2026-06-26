@@ -86,6 +86,8 @@
   @media (max-width: 980px) {
     main { grid-template-columns: 1fr; }
     .sticky { position: static; }
+    /* feed (center, default order 0) first, then network sidebar, then jobs */
+    .col-left { order: 2; }
     .col-right { order: 3; }
   }
 
@@ -275,7 +277,7 @@
   .m-jactions { display: flex; gap: 8px; padding: 0 20px 8px; }
   .m-jdesc { padding: 6px 20px 24px; line-height: 1.6; white-space: pre-wrap; color: var(--text); font-size: 13.5px; }
   .m-jdesc h3 { font-size: 14px; margin: 2px 0 8px; }
-  .job .saved-tag { margin-left: auto; align-self: center; color: var(--brand); display: flex; }
+  .job .saved-tag { color: var(--brand); display: flex; }
   .job .saved-tag svg { width: 16px; height: 16px; fill: currentColor; }
   .btn.solid.done { background: var(--ok); border-color: var(--ok); }
   .btn.saved-on { background: var(--brand-soft); }
@@ -294,11 +296,77 @@
   #banner code { background: rgba(0,0,0,.08); padding: 1px 6px; border-radius: 4px; }
   #err {
     position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
-    background: #b00020; color: #fff; padding: 9px 16px; border-radius: 999px;
+    background: #2b2f33; color: #fff; padding: 9px 16px; border-radius: 8px;
     font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,.25); z-index: 50;
     max-width: 92vw; opacity: 0; pointer-events: none; transition: opacity .2s;
   }
+  /* Informational toasts are neutral; only genuine failures go red. */
+  #err.error { background: #b00020; border-radius: 999px; }
   #err.show { opacity: 1; }
+
+  /* ---- keyboard focus visibility (was: all-divs, unfocusable) ---- */
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .prow.clickable:focus-visible, .job.clickable:focus-visible { outline-offset: -2px; }
+
+  /* ---- header search + primary nav ---- */
+  .search {
+    position: relative; display: flex; align-items: center; gap: 7px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 0 10px; height: 34px; width: 260px; max-width: 32vw;
+  }
+  .search:focus-within { border-color: var(--brand); }
+  .search svg { width: 16px; height: 16px; fill: var(--faint); flex: none; }
+  .search input { border: none; background: transparent; outline: none; color: var(--text); font: inherit; width: 100%; }
+  .search-results {
+    position: absolute; top: 40px; left: 0; right: 0; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 32px rgba(0,0,0,.18);
+    max-height: 70vh; overflow: auto; z-index: 60; padding: 4px 0;
+  }
+  .sr-group { padding: 8px 14px 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--faint); font-weight: 700; }
+  .sr-item { display: flex; gap: 10px; align-items: center; padding: 8px 14px; cursor: pointer; border: none; background: transparent; width: 100%; text-align: left; }
+  .sr-item:hover, .sr-item.active { background: var(--hover); }
+  .sr-item .avatar, .sr-item .clogo { width: 32px; height: 32px; font-size: 12px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; flex: none; }
+  .sr-item .clogo { border-radius: 7px; }
+  .sr-item .srm { min-width: 0; flex: 1; }
+  .sr-item b { font-size: 13px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sr-item small { color: var(--muted); font-size: 11.5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sr-empty { padding: 14px; color: var(--muted); font-size: 13px; text-align: center; }
+  nav.nav { display: flex; gap: 2px; }
+  .navitem {
+    background: transparent; border: none; color: var(--muted); font-size: 11px;
+    padding: 4px 12px; border-radius: 6px; display: flex; flex-direction: column;
+    align-items: center; gap: 2px; min-width: 56px;
+  }
+  .navitem svg { width: 19px; height: 19px; fill: currentColor; }
+  .navitem:hover { color: var(--text); }
+  @media (max-width: 760px) { nav.nav, .hdr h1 { display: none; } .search { width: auto; flex: 1; max-width: none; } }
+
+  /* ---- post overflow (edit / delete own posts) ---- */
+  .post .head .postmenu { position: relative; flex: none; }
+  .kebab { background: transparent; border: none; color: var(--faint); font-size: 20px; line-height: 1; padding: 2px 8px; border-radius: 50%; }
+  .kebab:hover { background: var(--hover); }
+  .pmenu {
+    position: absolute; right: 0; top: 32px; min-width: 156px; z-index: 30;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 10px 32px rgba(0,0,0,.2); overflow: hidden; padding: 4px 0;
+  }
+  .pmenu button { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 10px 14px; color: var(--text); font-size: 13px; }
+  .pmenu button:hover { background: var(--hover); }
+  .pmenu button.danger { color: #d11a2a; }
+  .edit-area { width: 100%; min-height: 84px; max-height: 260px; border: 1px solid var(--brand); border-radius: 10px; padding: 10px 12px; font: inherit; background: var(--bg); color: var(--text); resize: vertical; }
+  .edit-bar { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 8px; }
+  .edit-bar .count { margin-right: auto; color: var(--faint); font-size: 12px; }
+  .edit-bar .count.over { color: #d11a2a; }
+  .post .body.editing { padding-bottom: 14px; }
+
+  /* ---- composer char counter ---- */
+  .composer .ccount { color: var(--faint); font-size: 12px; align-self: center; margin-right: auto; }
+  .composer .ccount.over { color: #d11a2a; }
+
+  /* ---- job applied / saved tags ---- */
+  .job-tags { margin-left: auto; align-self: center; display: flex; gap: 8px; align-items: center; }
+  .applied-pill { background: var(--brand-soft); color: var(--brand); border-radius: 999px; padding: 2px 10px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+
 </style>
 </head>
 <body>
@@ -313,6 +381,19 @@
         </svg>
       </div>
       <h1>MorphDB <span>· Linkup</span></h1>
+      <div class="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+        <input id="searchInput" type="search" placeholder="Search people, jobs, posts" aria-label="Search" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="searchResults" />
+        <div class="search-results" id="searchResults" role="listbox" hidden></div>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <button class="navitem" id="navHome" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 12h3v8h5v-6h4v6h5v-8h3z"/></svg>Home</button>
+        <button class="navitem" id="navNetwork" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.7 0-8 1.3-8 4v3h9v-3c0-1 .4-1.9 1-2.6A12 12 0 0 0 8 13zm8 0c-.3 0-.7 0-1.1.1A4.3 4.3 0 0 1 17 17v3h7v-3c0-2.7-5.3-4-8-4z"/></svg>Network</button>
+        <button class="navitem" id="navJobs" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6a2 2 0 0 1 2 2v1h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3V6a2 2 0 0 1 2-2zm0 3h6V6H9z"/></svg>Jobs</button>
+      </nav>
       <div class="spacer"></div>
       <div class="me-chip" id="meChip" hidden>
         <span class="avatar" id="meChipAv"></span>
@@ -331,7 +412,7 @@
         <div class="pad"><div class="empty">Loading profile…</div></div>
       </section>
 
-      <section class="card">
+      <section class="card" id="networkCard">
         <h2>My network <span class="count" id="connCount">0</span></h2>
         <div id="connList"></div>
       </section>
@@ -348,9 +429,10 @@
         <div class="pad composer">
           <span class="avatar" id="composerAv"></span>
           <div class="grow">
-            <textarea id="postBody" placeholder="Share an update with your network…"></textarea>
+            <textarea id="postBody" maxlength="3000" placeholder="Share an update with your network…"></textarea>
             <div class="actions">
-              <button class="btn solid" id="postBtn">Post</button>
+              <span class="ccount" id="ccount"></span>
+              <button class="btn solid" id="postBtn" disabled>Post</button>
             </div>
           </div>
         </div>
@@ -360,7 +442,7 @@
 
     <!-- RIGHT -->
     <div class="col col-right">
-      <section class="card sticky">
+      <section class="card sticky" id="jobsCard">
         <h2>Jobs<span class="count" id="jobCount">0</span></h2>
         <div class="jobs-filter">
           <label for="jobLoc">Location</label>
@@ -373,7 +455,7 @@
   </main>
 
   <div id="overlay" class="overlay" hidden>
-    <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Details"></div>
+    <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Details" tabindex="-1"></div>
   </div>
 
   <div id="err"></div>
@@ -387,13 +469,28 @@ const ME_NAME = "Alex Rivera";        // the one designated person who is "you"
 
 const $ = (id) => document.getElementById(id);
 let errTimer;
-function err(m) {
+function showToast(m, isError) {
   const e = $("err");
   if (!m) { e.classList.remove("show"); return; }
   e.textContent = m;
+  e.classList.toggle("error", !!isError);   // red only for genuine failures
   e.classList.add("show");
   clearTimeout(errTimer);
   errTimer = setTimeout(() => e.classList.remove("show"), 5200);
+}
+function err(m) { showToast(m, true); }    // real error → red
+function info(m) { showToast(m, false); }  // informational → neutral
+
+/* Make a non-button element behave like a button for mouse AND keyboard
+   (focusable, Enter/Space activate, announced as a button to screen readers). */
+function activate(node, handler, label) {
+  node.setAttribute("role", "button");
+  node.tabIndex = 0;
+  if (label) node.setAttribute("aria-label", label);
+  node.onclick = handler;                    // assignment (not addEventListener)
+  node.onkeydown = (e) => {                   // so reused nodes never double-bind
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handler(e); }
+  };
 }
 
 async function api(method, path, body) {
@@ -421,12 +518,19 @@ function showAppBanner() {
 
 /* ---------- self-bootstrap (in-browser `morphdb init`) ---------- */
 async function ensureApp() {
+  // Probe first: GET /schema is 200 when the app exists, 404 when it doesn't.
+  // This avoids POSTing /app on every load (which 409'd and logged a console
+  // error each time). We only register when the app is genuinely missing.
+  try {
+    const res = await fetch(BASE + "/schema", { headers: { "X-App-Key": APP } });
+    if (res.ok) return;                       // already registered — nothing to do
+  } catch (_) { /* network problem surfaced on the first real call */ }
   try {
     await fetch(BASE + "/app", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: APP }),
-    });                       // 409 (already registered) is expected & ignored
+    });                       // 201 on create; a 409 here only on a rare race
   } catch (_) { /* surfaced on the first real call */ }
 }
 
@@ -485,6 +589,8 @@ const BOOKMARK = '<svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-
 /* ---------- state ---------- */
 let ME = null;          // hydrated person (include=connections,posts)
 let PEOPLE = [];        // all people (flat)
+let ALLJOBS = [];       // all jobs (for client-side global search)
+let ALLPOSTS = [];      // current feed posts (for client-side global search)
 const LIKED_KEY = "linkedin-demo:liked";
 let liked = new Set(JSON.parse(localStorage.getItem(LIKED_KEY) || "[]"));
 function persistLiked() { localStorage.setItem(LIKED_KEY, JSON.stringify([...liked])); }
@@ -530,14 +636,14 @@ function renderProfile() {
   // clicking your own profile card opens your full profile
   card.classList.add("clickable");
   card.title = "View your profile";
-  card.onclick = () => openProfile(ME._guid);
+  activate(card, () => openProfile(ME._guid), "View your profile");
 
   // header chip
   const chip = $("meChip");
   chip.hidden = false;
   chip.classList.add("clickable");
   chip.title = "View your profile";
-  chip.onclick = () => openProfile(ME._guid);
+  activate(chip, () => openProfile(ME._guid), "View your profile");
   $("meChipName").textContent = ME.name;
   const ca = $("meChipAv"); ca.style.background = hue(ME.name); ca.textContent = initials(ME.name);
   const co = $("composerAv"); co.style.background = hue(ME.name); co.textContent = initials(ME.name);
@@ -546,7 +652,7 @@ function renderProfile() {
 function personRow(p, action) {
   const row = el("div", "prow clickable");
   row.title = "View profile";
-  row.onclick = () => openProfile(p._guid);
+  activate(row, () => openProfile(p._guid), `View ${p.name}'s profile`);
   row.appendChild(avatar(p.name, "link"));
   const meta = el("div", "meta", `<b class="link"></b><small></small>`);
   meta.querySelector("b").textContent = p.name;
@@ -586,13 +692,25 @@ function renderPYMK() {
   }
 }
 
-async function applyConnection(guid) {
-  const cur = (ME.connections || []).map((c) => c._guid);
+// Connection writes are read-modify-write on the whole `connections` array, so
+// two overlapping toggles can clobber each other (lost update). MorphDB has no
+// atomic relation add/remove, so we mitigate client-side: (1) serialize all
+// connection writes through one queue so they never overlap, and (2) re-read the
+// freshest connections from the server immediately before computing each write.
+let connQueue = Promise.resolve();
+function applyConnection(guid) {
+  const run = () => applyConnectionNow(guid);
+  connQueue = connQueue.then(run, run);   // chain even if a prior write failed
+  return connQueue;
+}
+async function applyConnectionNow(guid) {
+  const fresh = await api("GET", `/objects/person/${ME._guid}?include=connections`);
+  const cur = (fresh.connections || []).map((c) => c._guid);
   const on = cur.includes(guid);
   const next = on ? cur.filter((g) => g !== guid) : [...cur, guid];
   await api("PATCH", `/objects/person/${ME._guid}`, { connections: next });
   await loadMe();          // symmetric link reflects on both sides — re-read hydrated
-  loadFeed();              // (author headlines unaffected, but keeps things fresh)
+  await loadFeed();        // (author headlines unaffected, but keeps things fresh)
 }
 
 async function toggleConnect(guid, btn) {
@@ -604,6 +722,7 @@ async function toggleConnect(guid, btn) {
 
 async function loadFeed() {
   const { objects } = await api("GET", "/objects/post?sort=created&order=desc&include=author&limit=50");
+  ALLPOSTS = objects;
   renderFeed(objects);
 }
 
@@ -635,10 +754,35 @@ function renderFeed(posts) {
     head.appendChild(av);
     head.appendChild(meta);
     head.appendChild(el("div", "time", ago(post.created)));
-    card.appendChild(head);
 
     const body = el("div", "body");
     body.textContent = post.body;
+
+    // Overflow menu — edit / delete your OWN posts (author === me)
+    if (a._guid && ME && a._guid === ME._guid) {
+      const wrap = el("div", "postmenu");
+      const kebab = el("button", "kebab", "&#8943;");
+      kebab.type = "button";
+      kebab.setAttribute("aria-label", "Post options");
+      kebab.setAttribute("aria-haspopup", "true");
+      kebab.setAttribute("aria-expanded", "false");
+      const menu = el("div", "pmenu"); menu.hidden = true; menu.setAttribute("role", "menu");
+      const editB = el("button", null, "Edit post"); editB.type = "button"; editB.setAttribute("role", "menuitem");
+      const delB = el("button", "danger", "Delete post"); delB.type = "button"; delB.setAttribute("role", "menuitem");
+      editB.onclick = (e) => { e.stopPropagation(); setMenu(kebab, menu, false); startEditPost(post, body); };
+      delB.onclick = (e) => { e.stopPropagation(); setMenu(kebab, menu, false); deletePost(post); };
+      kebab.onclick = (e) => {
+        e.stopPropagation();
+        const open = menu.hidden;
+        closeAllMenus();
+        setMenu(kebab, menu, open);
+      };
+      menu.append(editB, delB);
+      wrap.append(kebab, menu);
+      head.appendChild(wrap);
+    }
+
+    card.appendChild(head);
     card.appendChild(body);
 
     if ((post.likes || 0) > 0) {
@@ -650,9 +794,9 @@ function renderFeed(posts) {
     const like = el("button", "actbtn" + (isOn ? " on" : ""), `${THUMB}<span>Like</span>`);
     like.onclick = () => toggleLike(post);
     const cmt = el("button", "actbtn", `${COMMENT}<span>Comment</span>`);
-    cmt.onclick = () => err("Comments aren't part of this demo's schema — yet.");
+    cmt.onclick = () => info("Comments aren't part of this demo's schema — yet.");
     const snd = el("button", "actbtn", `${SEND}<span>Send</span>`);
-    snd.onclick = () => err("Sharing isn't wired up in this demo.");
+    snd.onclick = () => info("Sharing isn't wired up in this demo.");
     acts.append(like, cmt, snd);
     card.appendChild(acts);
 
@@ -660,35 +804,120 @@ function renderFeed(posts) {
   }
 }
 
-async function toggleLike(post) {
+// `likes` is a scalar the client reads, +/-1's, and writes back. MorphDB has no
+// atomic increment, so concurrent likes could race. Mitigate client-side:
+// serialize like writes and re-read the post's current count right before each
+// write. Per-user "did I like this" membership is per-browser (localStorage),
+// since the backend has no end-user identity (see morphdb_limitations).
+let likeQueue = Promise.resolve();
+function toggleLike(post) {
+  const run = () => toggleLikeNow(post);
+  likeQueue = likeQueue.then(run, run);
+  return likeQueue;
+}
+async function toggleLikeNow(post) {
   const on = liked.has(post._guid);
-  const next = Math.max(0, (post.likes || 0) + (on ? -1 : 1));
   try {
+    const fresh = await api("GET", `/objects/post/${post._guid}`);
+    const next = Math.max(0, (fresh.likes || 0) + (on ? -1 : 1));
     await api("PATCH", `/objects/post/${post._guid}`, { likes: next });
     if (on) liked.delete(post._guid); else liked.add(post._guid);
     persistLiked();
-    loadFeed();
+    await loadFeed();
+  } catch (e) { err(e.message); }
+}
+
+/* ---------- post overflow menu: edit / delete your own posts ---------- */
+const MAX_POST = 3000;
+
+function setMenu(kebab, menu, open) {
+  menu.hidden = !open;
+  kebab.setAttribute("aria-expanded", String(open));
+}
+function closeAllMenus() {
+  document.querySelectorAll(".pmenu").forEach((m) => {
+    m.hidden = true;
+    const k = m.parentElement && m.parentElement.querySelector(".kebab");
+    if (k) k.setAttribute("aria-expanded", "false");
+  });
+}
+document.addEventListener("click", () => closeAllMenus());   // click-away closes menus
+
+function startEditPost(post, bodyEl) {
+  bodyEl.classList.add("editing");
+  bodyEl.textContent = "";
+  const ta = el("textarea", "edit-area");
+  ta.value = post.body;
+  ta.maxLength = MAX_POST;
+  const bar = el("div", "edit-bar");
+  const count = el("span", "count");
+  const save = el("button", "btn solid", "Save"); save.type = "button";
+  const cancel = el("button", "btn ghost", "Cancel"); cancel.type = "button";
+  const paint = () => {
+    const n = ta.value.trim().length;
+    count.textContent = `${n} / ${MAX_POST}`;
+    const bad = n === 0 || n > MAX_POST;
+    count.classList.toggle("over", n > MAX_POST);
+    save.disabled = bad;
+  };
+  ta.addEventListener("input", paint);
+  cancel.onclick = () => loadFeed();
+  save.onclick = async () => {
+    const v = ta.value.trim();
+    if (!v || v.length > MAX_POST) return;
+    save.disabled = true;
+    try {
+      await api("PATCH", `/objects/post/${post._guid}`, { body: v });
+      info("Post updated");
+      await loadFeed();
+    } catch (e) { err(e.message); save.disabled = false; }
+  };
+  bar.append(count, save, cancel);
+  bodyEl.append(ta, bar);
+  paint();
+  ta.focus();
+}
+
+async function deletePost(post) {
+  if (!confirm("Delete this post? This can't be undone.")) return;
+  try {
+    await api("DELETE", `/objects/post/${post._guid}`);
+    info("Post deleted");
+    await loadFeed();
+    await loadMe();   // update my post count
   } catch (e) { err(e.message); }
 }
 
 async function publishPost() {
   const ta = $("postBody");
   const body = ta.value.trim();
-  if (!body || !ME) return;
+  if (!ME) return;
+  if (!body) { ta.focus(); return; }
+  if (body.length > MAX_POST) { err(`Posts are limited to ${MAX_POST} characters.`); return; }
   $("postBtn").disabled = true;
   try {
     await api("POST", "/objects/post", {
       body, likes: 0, created: new Date().toISOString(), author: ME._guid,
     });
     ta.value = "";
+    paintComposer();
     await loadFeed();
     await loadMe();   // bump my post count
   } catch (e) { err(e.message); }
   $("postBtn").disabled = false;
 }
 
+function paintComposer() {
+  const ta = $("postBody");
+  const n = ta.value.trim().length;
+  const c = $("ccount");
+  if (c) { c.textContent = n ? `${n} / ${MAX_POST}` : ""; c.classList.toggle("over", n > MAX_POST); }
+  $("postBtn").disabled = n === 0 || n > MAX_POST;
+}
+
 async function loadJobLocations() {
   const { objects } = await api("GET", "/objects/job?limit=100");
+  ALLJOBS = objects;
   const locs = [...new Set(objects.map((j) => j.location).filter(Boolean))].sort();
   const sel = $("jobLoc");
   sel.innerHTML = '<option value="">All locations</option>';
@@ -710,7 +939,7 @@ async function loadJobs(loc) {
   for (const j of objects) {
     const job = el("div", "job clickable");
     job.title = "View job details";
-    job.onclick = () => openJob(j);
+    activate(job, () => openJob(j), `${j.title} at ${j.company}`);
     const logo = el("div", "clogo", initials(j.company));
     logo.style.background = hue(j.company);
     job.appendChild(logo);
@@ -720,11 +949,18 @@ async function loadJobs(loc) {
     const lo = el("div", "jloc"); lo.textContent = j.location; m.appendChild(lo);
     if (j.description) { const d = el("div", "jdesc"); d.textContent = j.description; m.appendChild(d); }
     job.appendChild(m);
-    if (savedJobs.has(j._guid)) {        // little bookmark badge on saved jobs
-      const tag = el("div", "saved-tag", BOOKMARK);
-      tag.title = "Saved";
-      job.appendChild(tag);
+    const tags = el("div", "job-tags");      // list-level Applied / Saved state
+    if (appliedJobs.has(j._guid)) {
+      const pill = el("span", "applied-pill", "Applied");
+      pill.title = "You applied to this job";
+      tags.appendChild(pill);
     }
+    if (savedJobs.has(j._guid)) {            // little bookmark badge on saved jobs
+      const tag = el("span", "saved-tag", BOOKMARK);
+      tag.title = "Saved";
+      tags.appendChild(tag);
+    }
+    if (tags.children.length) job.appendChild(tags);
     list.appendChild(job);
   }
 }
@@ -733,18 +969,38 @@ async function loadJobs(loc) {
 const overlayEl = $("overlay");
 const modalEl = $("modal");
 
+let lastFocused = null;
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+function focusableInModal() {
+  return [...modalEl.querySelectorAll(FOCUSABLE)].filter((n) => n.offsetParent !== null);
+}
 function openOverlay(node) {
+  // remember where focus was so we can restore it when the dialog closes
+  if (overlayEl.hidden) lastFocused = document.activeElement;
   modalEl.innerHTML = "";
   modalEl.appendChild(node);
   overlayEl.hidden = false;
   overlayEl.scrollTop = 0;
+  const f = focusableInModal();
+  (f[0] || modalEl).focus();              // move focus INTO the dialog
 }
 function closeOverlay() {
   overlayEl.hidden = true;
   modalEl.innerHTML = "";
+  if (lastFocused && lastFocused.focus) lastFocused.focus();   // restore focus
+  lastFocused = null;
 }
 overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl) closeOverlay(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlayEl.hidden) closeOverlay(); });
+// Focus trap: keep Tab/Shift+Tab cycling within the open dialog.
+overlayEl.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || overlayEl.hidden) return;
+  const f = focusableInModal();
+  if (!f.length) { e.preventDefault(); modalEl.focus(); return; }
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 
 function closeBtn() {
   const b = el("button", "mclose", "&#10005;");
@@ -820,7 +1076,7 @@ function renderProfileModal(person, posts) {
       catch (e) { err(e.message); btn.disabled = false; }
     };
     const msg = el("button", "btn ghost", "Message");
-    msg.onclick = () => err("Messaging isn't wired up in this demo.");
+    msg.onclick = () => info("Messaging isn't wired up in this demo.");
     cta.append(btn, msg);
     top.appendChild(cta);
   }
@@ -872,8 +1128,11 @@ function openJob(job) {
     saveBtn.textContent = on ? "Saved" : "Save";
   };
   applyBtn.onclick = () => {
-    appliedJobs.has(job._guid) ? appliedJobs.delete(job._guid) : appliedJobs.add(job._guid);
+    const nowApplied = !appliedJobs.has(job._guid);
+    nowApplied ? appliedJobs.add(job._guid) : appliedJobs.delete(job._guid);
     persist(APPLIED_KEY, appliedJobs); paintApply();
+    info(nowApplied ? "Application submitted ✓" : "Application withdrawn");
+    loadJobs($("jobLoc").value).catch(() => {});   // reflect Applied state in the list
   };
   saveBtn.onclick = () => {
     savedJobs.has(job._guid) ? savedJobs.delete(job._guid) : savedJobs.add(job._guid);
@@ -943,12 +1202,106 @@ async function seedIfEmpty() {
   for (const j of jobs) await api("POST", "/objects/job", j);
 }
 
+/* ---------- global search (client-side over loaded people/jobs/posts) ----------
+   MorphDB has no full-text search primitive (only indexed-field equality/range),
+   so this searches the already-loaded objects by substring — enough to restore
+   the LinkedIn search affordance. See morphdb_limitations. */
+let srItems = [];
+let srActive = -1;
+
+function searchPick(action) {
+  const box = $("searchResults"), input = $("searchInput");
+  box.hidden = true; input.setAttribute("aria-expanded", "false");
+  input.value = ""; srItems = []; srActive = -1;
+  action();
+}
+
+function renderSearch(qRaw) {
+  const q = qRaw.trim().toLowerCase();
+  const box = $("searchResults"), input = $("searchInput");
+  srItems = []; srActive = -1; box.innerHTML = "";
+  if (!q) { box.hidden = true; input.setAttribute("aria-expanded", "false"); return; }
+  const m = (s) => (s || "").toLowerCase().includes(q);
+  const people = PEOPLE.filter((p) => m(p.name) || m(p.headline) || m(p.location)).slice(0, 6);
+  const jobs = ALLJOBS.filter((j) => m(j.title) || m(j.company) || m(j.location)).slice(0, 6);
+  const posts = ALLPOSTS.filter((p) => m(p.body)).slice(0, 4);
+
+  const addItem = (avNode, title, sub, action) => {
+    const it = el("button", "sr-item"); it.type = "button"; it.setAttribute("role", "option");
+    it.appendChild(avNode);
+    const meta = el("div", "srm");
+    const b = el("b"); b.textContent = title; meta.appendChild(b);
+    if (sub) { const s = el("small"); s.textContent = sub; meta.appendChild(s); }
+    it.appendChild(meta);
+    it.addEventListener("mousedown", (e) => e.preventDefault());  // keep input focus
+    it.onclick = () => searchPick(action);
+    box.appendChild(it); srItems.push(it);
+  };
+
+  if (people.length) {
+    box.appendChild(el("div", "sr-group", "People"));
+    for (const p of people) addItem(avatar(p.name), p.name, p.headline || p.location || "", () => openProfile(p._guid));
+  }
+  if (jobs.length) {
+    box.appendChild(el("div", "sr-group", "Jobs"));
+    for (const j of jobs) {
+      const logo = el("span", "clogo"); logo.textContent = initials(j.company); logo.style.background = hue(j.company);
+      addItem(logo, j.title, [j.company, j.location].filter(Boolean).join(" · "), () => openJob(j));
+    }
+  }
+  if (posts.length) {
+    box.appendChild(el("div", "sr-group", "Posts"));
+    for (const p of posts) {
+      const a = p.author || { name: "Unknown" };
+      const snip = p.body.length > 64 ? p.body.slice(0, 64) + "…" : p.body;
+      addItem(avatar(a.name), a.name, snip, () => { if (a._guid) openProfile(a._guid); });
+    }
+  }
+  if (!srItems.length) box.appendChild(el("div", "sr-empty", "No matches in the loaded data."));
+  box.hidden = false; input.setAttribute("aria-expanded", "true");
+}
+
+function searchMove(delta) {
+  if (!srItems.length) return;
+  if (srActive >= 0) srItems[srActive].classList.remove("active");
+  srActive = (srActive + delta + srItems.length) % srItems.length;
+  srItems[srActive].classList.add("active");
+  srItems[srActive].scrollIntoView({ block: "nearest" });
+}
+
 /* ---------- wire up ---------- */
 $("postBtn").onclick = publishPost;
+$("postBody").addEventListener("input", paintComposer);
 $("postBody").addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") publishPost();
 });
 $("jobLoc").onchange = (e) => loadJobs(e.target.value).catch((x) => err(x.message));
+
+const searchInput = $("searchInput"), searchBox = $("searchResults");
+searchInput.addEventListener("input", () => renderSearch(searchInput.value));
+searchInput.addEventListener("focus", () => { if (searchInput.value.trim()) renderSearch(searchInput.value); });
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); searchMove(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); searchMove(-1); }
+  else if (e.key === "Enter") {
+    if (searchBox.hidden) return;
+    e.preventDefault();
+    const it = srItems[srActive >= 0 ? srActive : 0];
+    if (it) it.click();
+  } else if (e.key === "Escape") {
+    searchBox.hidden = true; searchInput.setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("click", (e) => {
+  if (!searchInput.parentElement.contains(e.target)) {
+    searchBox.hidden = true; searchInput.setAttribute("aria-expanded", "false");
+  }
+});
+
+const scrollTo = (node) => node && node.scrollIntoView({ behavior: "smooth", block: "start" });
+$("navHome").onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+$("navNetwork").onclick = () => scrollTo($("networkCard"));
+$("navJobs").onclick = () => scrollTo($("jobsCard"));
 
 (async () => {
   try {
