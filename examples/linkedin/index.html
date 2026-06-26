@@ -220,6 +220,10 @@
     display: flex; align-items: flex-start; justify-content: center;
     padding: 44px 16px; overflow: auto;
   }
+  /* .overlay sets display:flex, which would beat the UA [hidden]{display:none};
+     this restores it so the dialog is actually hidden until opened (otherwise it
+     covers the page and eats every click on load). */
+  .overlay[hidden] { display: none; }
   @media (prefers-color-scheme: dark) { .overlay { background: rgba(0,0,0,.62); } }
   .modal {
     position: relative; width: 100%; max-width: 560px;
