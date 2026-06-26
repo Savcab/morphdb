@@ -205,6 +205,77 @@
   .hint { color: var(--muted); font-size: 11.5px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--bg); }
   .hint code { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 11px; }
 
+  /* ---- clickable affordances ---- */
+  .prow.clickable, .job.clickable, .profile.clickable, .me-chip.clickable { cursor: pointer; }
+  .prow.clickable:hover, .job.clickable:hover { background: var(--hover); }
+  .profile.clickable:hover { box-shadow: var(--shadow), 0 0 0 1px var(--brand); }
+  .avatar.link { cursor: pointer; }
+  .link { cursor: pointer; }
+  .post .head .meta b.link:hover, .prow .meta b.link:hover { text-decoration: underline; }
+
+  /* ---- overlay / modal ---- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(0,0,0,.45);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 44px 16px; overflow: auto;
+  }
+  @media (prefers-color-scheme: dark) { .overlay { background: rgba(0,0,0,.62); } }
+  .modal {
+    position: relative; width: 100%; max-width: 560px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; box-shadow: 0 16px 56px rgba(0,0,0,.32);
+    overflow: hidden; animation: pop .16s ease;
+  }
+  @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .mclose {
+    position: absolute; top: 12px; right: 12px; z-index: 2;
+    width: 32px; height: 32px; border-radius: 50%;
+    border: none; background: rgba(0,0,0,.42); color: #fff;
+    font-size: 15px; line-height: 1; display: grid; place-items: center;
+  }
+  .mclose:hover { background: rgba(0,0,0,.6); }
+
+  /* profile modal */
+  .m-banner { height: 84px; background: linear-gradient(120deg, var(--brand), var(--brand-dk)); }
+  .m-top { padding: 0 20px 16px; }
+  .m-top .avatar { width: 96px; height: 96px; font-size: 32px; margin: -48px 0 10px; border: 4px solid var(--card); }
+  .m-name { font-size: 22px; font-weight: 700; }
+  .m-headline { margin-top: 3px; font-size: 14px; }
+  .m-loc { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .m-stats { display: flex; gap: 16px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+  .m-stats b { color: var(--text); }
+  .m-cta { margin-top: 14px; display: flex; gap: 8px; }
+  .m-about { color: var(--text); font-size: 13.5px; margin-top: 14px; line-height: 1.55; white-space: pre-wrap; }
+
+  .m-section { border-top: 8px solid var(--bg); }
+  .m-section h3 { margin: 0; padding: 14px 20px 6px; font-size: 16px; font-weight: 700; }
+  .mpost { padding: 12px 20px; }
+  .mpost + .mpost { border-top: 1px solid var(--line); }
+  .mpost .mp-head { display: flex; gap: 10px; align-items: center; }
+  .mpost .mp-head .avatar { width: 36px; height: 36px; font-size: 13px; }
+  .mpost .mp-head b { font-size: 13.5px; display: block; }
+  .mpost .mp-head small { color: var(--muted); font-size: 12px; display: block; }
+  .mpost .mp-head .time { margin-left: auto; color: var(--faint); font-size: 12px; }
+  .mpost .mp-body { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; font-size: 13.5px; }
+  .mpost .mp-likes { margin-top: 8px; color: var(--faint); font-size: 12.5px; display: flex; align-items: center; gap: 5px; }
+  .mpost .mp-likes .heart { width: 15px; height: 15px; border-radius: 50%; background: var(--brand); display: grid; place-items: center; }
+  .mpost .mp-likes .heart svg { width: 9px; height: 9px; fill: #fff; }
+
+  /* job modal */
+  .m-jobtop { padding: 24px 20px 14px; display: flex; gap: 14px; align-items: flex-start; }
+  .m-jobtop .clogo { width: 56px; height: 56px; border-radius: 10px; font-size: 20px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 800; }
+  .m-jtitle { font-size: 20px; font-weight: 700; line-height: 1.25; }
+  .m-jcompany { font-size: 14px; margin-top: 4px; }
+  .m-jloc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .m-jactions { display: flex; gap: 8px; padding: 0 20px 8px; }
+  .m-jdesc { padding: 6px 20px 24px; line-height: 1.6; white-space: pre-wrap; color: var(--text); font-size: 13.5px; }
+  .m-jdesc h3 { font-size: 14px; margin: 2px 0 8px; }
+  .job .saved-tag { margin-left: auto; align-self: center; color: var(--brand); display: flex; }
+  .job .saved-tag svg { width: 16px; height: 16px; fill: currentColor; }
+  .btn.solid.done { background: var(--ok); border-color: var(--ok); }
+  .btn.saved-on { background: var(--brand-soft); }
+
   /* ---- banner + error ---- */
   #banner {
     max-width: 1128px; margin: 14px auto 0; padding: 0 16px;
@@ -296,6 +367,10 @@
       </section>
     </div>
   </main>
+
+  <div id="overlay" class="overlay" hidden>
+    <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Details"></div>
+  </div>
 
   <div id="err"></div>
 
@@ -401,6 +476,7 @@ const HEART = '<svg viewBox="0 0 16 16"><path d="M8 14s6-3.7 6-8a3.2 3.2 0 0 0-6
 const THUMB = '<svg viewBox="0 0 24 24"><path d="M2 9h4v12H2zM22 11a2 2 0 0 0-2-2h-5.6l.9-4.3a1.6 1.6 0 0 0-3-1L8 9v12h10.3a2 2 0 0 0 2-1.6l1.6-7A2 2 0 0 0 22 11z"/></svg>';
 const COMMENT = '<svg viewBox="0 0 24 24"><path d="M21 6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3v4l5-4h6a2 2 0 0 0 2-2z"/></svg>';
 const SEND = '<svg viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-7-8-3z"/></svg>';
+const BOOKMARK = '<svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>';
 
 /* ---------- state ---------- */
 let ME = null;          // hydrated person (include=connections,posts)
@@ -408,6 +484,13 @@ let PEOPLE = [];        // all people (flat)
 const LIKED_KEY = "linkedin-demo:liked";
 let liked = new Set(JSON.parse(localStorage.getItem(LIKED_KEY) || "[]"));
 function persistLiked() { localStorage.setItem(LIKED_KEY, JSON.stringify([...liked])); }
+
+// Job apply/save are purely local & visual (no schema change) — persisted so they stick.
+const SAVED_KEY = "linkedin-demo:saved-jobs";
+const APPLIED_KEY = "linkedin-demo:applied-jobs";
+let savedJobs = new Set(JSON.parse(localStorage.getItem(SAVED_KEY) || "[]"));
+let appliedJobs = new Set(JSON.parse(localStorage.getItem(APPLIED_KEY) || "[]"));
+function persist(key, set) { localStorage.setItem(key, JSON.stringify([...set])); }
 
 /* ---------- loaders / renderers ---------- */
 async function loadPeople() {
@@ -440,21 +523,35 @@ function renderProfile() {
     `<div><b>${conns.length}</b><span>connections</span></div>
      <div><b>${posts.length}</b><span>posts</span></div>`));
 
+  // clicking your own profile card opens your full profile
+  card.classList.add("clickable");
+  card.title = "View your profile";
+  card.onclick = () => openProfile(ME._guid);
+
   // header chip
-  $("meChip").hidden = false;
+  const chip = $("meChip");
+  chip.hidden = false;
+  chip.classList.add("clickable");
+  chip.title = "View your profile";
+  chip.onclick = () => openProfile(ME._guid);
   $("meChipName").textContent = ME.name;
   const ca = $("meChipAv"); ca.style.background = hue(ME.name); ca.textContent = initials(ME.name);
   const co = $("composerAv"); co.style.background = hue(ME.name); co.textContent = initials(ME.name);
 }
 
 function personRow(p, action) {
-  const row = el("div", "prow");
-  row.appendChild(avatar(p.name));
-  const meta = el("div", "meta", `<b></b><small></small>`);
+  const row = el("div", "prow clickable");
+  row.title = "View profile";
+  row.onclick = () => openProfile(p._guid);
+  row.appendChild(avatar(p.name, "link"));
+  const meta = el("div", "meta", `<b class="link"></b><small></small>`);
   meta.querySelector("b").textContent = p.name;
   meta.querySelector("small").textContent = p.headline || p.location || "";
   row.appendChild(meta);
-  if (action) row.appendChild(action);
+  if (action) {
+    action.addEventListener("click", (e) => e.stopPropagation());  // button acts, row doesn't navigate
+    row.appendChild(action);
+  }
   return row;
 }
 
@@ -485,17 +582,20 @@ function renderPYMK() {
   }
 }
 
-async function toggleConnect(guid, btn) {
-  if (!ME) return;
-  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+async function applyConnection(guid) {
   const cur = (ME.connections || []).map((c) => c._guid);
   const on = cur.includes(guid);
   const next = on ? cur.filter((g) => g !== guid) : [...cur, guid];
-  try {
-    await api("PATCH", `/objects/person/${ME._guid}`, { connections: next });
-    await loadMe();        // symmetric link reflects on both sides — re-read hydrated
-    loadFeed();            // (author headlines unaffected, but keeps things fresh)
-  } catch (e) { err(e.message); if (btn) btn.disabled = false; }
+  await api("PATCH", `/objects/person/${ME._guid}`, { connections: next });
+  await loadMe();          // symmetric link reflects on both sides — re-read hydrated
+  loadFeed();              // (author headlines unaffected, but keeps things fresh)
+}
+
+async function toggleConnect(guid, btn) {
+  if (!ME) return;
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try { await applyConnection(guid); }
+  catch (e) { err(e.message); if (btn) btn.disabled = false; }
 }
 
 async function loadFeed() {
@@ -516,10 +616,19 @@ function renderFeed(posts) {
     const card = el("div", "card post");
 
     const head = el("div", "head");
-    head.appendChild(avatar(a.name));
+    const av = avatar(a.name);
     const meta = el("div", "meta", "<b></b><small></small>");
     meta.querySelector("b").textContent = a.name;
     meta.querySelector("small").textContent = a.headline || "";
+    if (a._guid) {                       // author hydrated → make it a link to their profile
+      av.classList.add("link");
+      meta.querySelector("b").classList.add("link");
+      const go = () => openProfile(a._guid);
+      av.onclick = go;
+      meta.querySelector("b").onclick = go;
+      av.title = meta.title = "View profile";
+    }
+    head.appendChild(av);
     head.appendChild(meta);
     head.appendChild(el("div", "time", ago(post.created)));
     card.appendChild(head);
@@ -595,7 +704,9 @@ async function loadJobs(loc) {
   list.innerHTML = "";
   if (!objects.length) { list.appendChild(el("div", "empty", "No jobs in this location.")); return; }
   for (const j of objects) {
-    const job = el("div", "job");
+    const job = el("div", "job clickable");
+    job.title = "View job details";
+    job.onclick = () => openJob(j);
     const logo = el("div", "clogo", initials(j.company));
     logo.style.background = hue(j.company);
     job.appendChild(logo);
@@ -605,8 +716,176 @@ async function loadJobs(loc) {
     const lo = el("div", "jloc"); lo.textContent = j.location; m.appendChild(lo);
     if (j.description) { const d = el("div", "jdesc"); d.textContent = j.description; m.appendChild(d); }
     job.appendChild(m);
+    if (savedJobs.has(j._guid)) {        // little bookmark badge on saved jobs
+      const tag = el("div", "saved-tag", BOOKMARK);
+      tag.title = "Saved";
+      job.appendChild(tag);
+    }
     list.appendChild(job);
   }
+}
+
+/* ---------- overlay / modal navigation ---------- */
+const overlayEl = $("overlay");
+const modalEl = $("modal");
+
+function openOverlay(node) {
+  modalEl.innerHTML = "";
+  modalEl.appendChild(node);
+  overlayEl.hidden = false;
+  overlayEl.scrollTop = 0;
+}
+function closeOverlay() {
+  overlayEl.hidden = true;
+  modalEl.innerHTML = "";
+}
+overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl) closeOverlay(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlayEl.hidden) closeOverlay(); });
+
+function closeBtn() {
+  const b = el("button", "mclose", "&#10005;");
+  b.setAttribute("aria-label", "Close");
+  b.onclick = closeOverlay;
+  return b;
+}
+
+/* ---------- PROFILE view ---------- */
+async function openProfile(guid) {
+  if (!guid) return;
+  const shell = el("div");
+  shell.appendChild(closeBtn());
+  shell.appendChild(el("div", "m-banner"));
+  shell.appendChild(el("div", "m-top", '<div class="empty">Loading profile…</div>'));
+  openOverlay(shell);
+
+  let person, posts;
+  try {
+    // person fields + connection count (connections relation hydrated)
+    person = await api("GET", `/objects/person/${guid}?include=connections`);
+    // THEIR posts, newest first, author hydrated — author relation is filterable, created is indexed
+    const r = await api("GET", `/objects/post?author=${guid}&include=author&sort=created&order=desc&limit=50`);
+    posts = r.objects || [];
+  } catch (e) { err(e.message); closeOverlay(); return; }
+
+  renderProfileModal(person, posts);
+}
+
+function profilePost(post, person) {
+  const a = post.author || person;
+  const node = el("div", "mpost");
+  const head = el("div", "mp-head");
+  head.appendChild(avatar(a.name));
+  const meta = el("div");
+  const b = el("b"); b.textContent = a.name; meta.appendChild(b);
+  if (a.headline) { const s = el("small"); s.textContent = a.headline; meta.appendChild(s); }
+  head.appendChild(meta);
+  head.appendChild(el("div", "time", ago(post.created)));
+  node.appendChild(head);
+  const body = el("div", "mp-body"); body.textContent = post.body; node.appendChild(body);
+  if ((post.likes || 0) > 0)
+    node.appendChild(el("div", "mp-likes", `<span class="heart">${HEART}</span> ${post.likes}`));
+  return node;
+}
+
+function renderProfileModal(person, posts) {
+  const isMe = ME && person._guid === ME._guid;
+  const connected = ME && (ME.connections || []).some((c) => c._guid === person._guid);
+  const connCount = (person.connections || []).length;
+
+  const wrap = el("div");
+  wrap.appendChild(closeBtn());
+  wrap.appendChild(el("div", "m-banner"));
+
+  const top = el("div", "m-top");
+  top.appendChild(avatar(person.name));
+  const nm = el("div", "m-name"); nm.textContent = person.name; top.appendChild(nm);
+  if (person.headline) { const h = el("div", "m-headline"); h.textContent = person.headline; top.appendChild(h); }
+  if (person.location) { const l = el("div", "m-loc"); l.textContent = person.location; top.appendChild(l); }
+
+  const stats = el("div", "m-stats");
+  stats.innerHTML = `<span><b>${connCount}</b> connection${connCount === 1 ? "" : "s"}</span>
+                     <span><b>${posts.length}</b> post${posts.length === 1 ? "" : "s"}</span>`;
+  top.appendChild(stats);
+
+  if (!isMe && ME) {
+    const cta = el("div", "m-cta");
+    const btn = el("button", "btn " + (connected ? "ghost" : "solid"), connected ? "Disconnect" : "+ Connect");
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "…";
+      try { await applyConnection(person._guid); openProfile(person._guid); }  // refresh modal + sidebars
+      catch (e) { err(e.message); btn.disabled = false; }
+    };
+    const msg = el("button", "btn ghost", "Message");
+    msg.onclick = () => err("Messaging isn't wired up in this demo.");
+    cta.append(btn, msg);
+    top.appendChild(cta);
+  }
+
+  if (person.about) { const ab = el("div", "m-about"); ab.textContent = person.about; top.appendChild(ab); }
+  wrap.appendChild(top);
+
+  const sec = el("div", "m-section");
+  sec.appendChild(el("h3", null, "Activity"));
+  const list = el("div", "m-posts");
+  if (!posts.length) {
+    const who = isMe ? "You haven't posted yet." : `${(person.name || "").split(" ")[0]} hasn't posted yet.`;
+    list.appendChild(el("div", "empty", who));
+  } else {
+    for (const p of posts) list.appendChild(profilePost(p, person));
+  }
+  sec.appendChild(list);
+  wrap.appendChild(sec);
+
+  openOverlay(wrap);
+}
+
+/* ---------- JOB detail ---------- */
+function openJob(job) {
+  const wrap = el("div");
+  wrap.appendChild(closeBtn());
+
+  const top = el("div", "m-jobtop");
+  const logo = el("div", "clogo"); logo.textContent = initials(job.company); logo.style.background = hue(job.company);
+  top.appendChild(logo);
+  const info = el("div");
+  const t = el("div", "m-jtitle"); t.textContent = job.title; info.appendChild(t);
+  const c = el("div", "m-jcompany"); c.textContent = job.company; info.appendChild(c);
+  if (job.location) { const lo = el("div", "m-jloc"); lo.textContent = job.location; info.appendChild(lo); }
+  top.appendChild(info);
+  wrap.appendChild(top);
+
+  const actions = el("div", "m-jactions");
+  const applyBtn = el("button", "btn solid");
+  const saveBtn = el("button", "btn");
+  const paintApply = () => {
+    const on = appliedJobs.has(job._guid);
+    applyBtn.className = "btn solid" + (on ? " done" : "");
+    applyBtn.textContent = on ? "Applied ✓" : "Apply";
+  };
+  const paintSave = () => {
+    const on = savedJobs.has(job._guid);
+    saveBtn.className = "btn" + (on ? " saved-on" : "");
+    saveBtn.textContent = on ? "Saved" : "Save";
+  };
+  applyBtn.onclick = () => {
+    appliedJobs.has(job._guid) ? appliedJobs.delete(job._guid) : appliedJobs.add(job._guid);
+    persist(APPLIED_KEY, appliedJobs); paintApply();
+  };
+  saveBtn.onclick = () => {
+    savedJobs.has(job._guid) ? savedJobs.delete(job._guid) : savedJobs.add(job._guid);
+    persist(SAVED_KEY, savedJobs); paintSave();
+    loadJobs($("jobLoc").value).catch(() => {});   // refresh the list's saved badge
+  };
+  paintApply(); paintSave();
+  actions.append(applyBtn, saveBtn);
+  wrap.appendChild(actions);
+
+  const desc = el("div", "m-jdesc");
+  desc.appendChild(el("h3", null, "About the job"));
+  const p = el("div"); p.textContent = job.description || "No description provided."; desc.appendChild(p);
+  wrap.appendChild(desc);
+
+  openOverlay(wrap);
 }
 
 /* ---------- seed (only when empty, idempotent) ---------- */

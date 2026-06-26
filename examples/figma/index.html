@@ -79,6 +79,8 @@
   }
   .shape.rect    { border-radius: 4px; box-shadow: 0 1px 2px #0000001f; cursor: move; }
   .shape.ellipse { border-radius: 50%; box-shadow: 0 1px 2px #0000001f; cursor: move; }
+  .shape.line    { background: transparent !important; cursor: move; }
+  .shape.line svg { width: 100%; height: 100%; display: block; overflow: visible; pointer-events: none; }
   .shape.text {
     background: transparent; cursor: move; font-weight: 600; font-size: 22px;
     line-height: 1.2; padding: 2px 4px; white-space: pre-wrap; overflow: hidden;
@@ -91,9 +93,12 @@
   #frame .h {
     position: absolute; width: 8px; height: 8px; background: #fff;
     border: 1.5px solid var(--accent); border-radius: 2px;
+    pointer-events: auto;   /* handles are interactive even though the frame isn't */
   }
   #frame .nw { left: -5px; top: -5px; }   #frame .ne { right: -5px; top: -5px; }
   #frame .sw { left: -5px; bottom: -5px; } #frame .se { right: -5px; bottom: -5px; }
+  #frame .nw, #frame .se { cursor: nwse-resize; }
+  #frame .ne, #frame .sw { cursor: nesw-resize; }
 
   .empty {
     position: absolute; inset: 0; display: grid; place-content: center;
@@ -244,6 +249,9 @@
       <button class="tool" data-tool="text" title="Text (T)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6h12M12 6v12M9.5 18h5"/></svg>
       </button>
+      <button class="tool" data-tool="line" title="Line (L)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 19 19 5"/></svg>
+      </button>
       <span class="tbsep"></span>
       <button class="swatch-btn" id="drawFillBtn" title="Fill for new shapes">
         <span class="chip" id="drawFillChip"></span>
@@ -268,7 +276,7 @@ const PALETTE = ["#4c6ef5","#f783ac","#38d9a9","#ffd43b","#ff922b","#845ef7","#2
 let docGuid = null;
 let shapes  = [];                    // kept sorted by z ascending (paint order)
 let selId   = null;
-let tool    = "select";              // select | rect | ellipse | text
+let tool    = "select";              // select | rect | ellipse | text | line
 let drawFill = "#4c6ef5";            // fill applied to newly drawn shapes
 
 /* ------- generic MorphDB client — these endpoints never change ---------- */
@@ -351,7 +359,17 @@ const KIND_ICON = {
   rect:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="5.5" width="16" height="13" rx="1.5"/></svg>',
   ellipse: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="8"/></svg>',
   text:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6h12M12 6v12"/></svg>',
+  line:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 19 19 5"/></svg>',
 };
+
+/* a line shape is drawn corner-to-corner across its bounding box; the box scales
+   the SVG (preserveAspectRatio=none) so the diagonal always touches nw & se, and
+   a non-scaling stroke keeps the line a constant 3px no matter the box size. */
+function lineSvg(color) {
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none">`
+       + `<line x1="0" y1="0" x2="100" y2="100" stroke="${escapeHtml(color)}" `
+       + `stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
 
 function render() {
   const c = $("canvas");
@@ -379,8 +397,9 @@ function makeShapeEl(sh) {
   el.className = "shape " + sh.kind;
   el.dataset.id = sh._guid;
   applyBox(el, sh);
-  if (sh.kind === "text") { el.textContent = sh.text || "Text"; el.style.color = sh.fill; }
-  else { el.style.background = sh.fill; }
+  if (sh.kind === "text")      { el.textContent = sh.text || "Text"; el.style.color = sh.fill; }
+  else if (sh.kind === "line") { el.innerHTML = lineSvg(sh.fill); }   // fill drives the stroke
+  else                         { el.style.background = sh.fill; }
 
   el.addEventListener("mousedown", (e) => onShapeDown(e, sh));
   if (sh.kind === "text") el.addEventListener("dblclick", (e) => startTextEdit(e, sh, el));
@@ -397,6 +416,47 @@ function renderFrame() {
   f.innerHTML = '<span class="h nw"></span><span class="h ne"></span>'
               + '<span class="h sw"></span><span class="h se"></span>';
   $("canvas").appendChild(f);
+  // make each corner handle drag-to-resize (live, optimistic)
+  f.querySelectorAll(".h").forEach(h => {
+    const corner = ["nw","ne","sw","se"].find(c => h.classList.contains(c));
+    h.addEventListener("mousedown", (e) => onHandleDown(e, sh, corner));
+  });
+}
+
+/* ------- resize: drag a corner; the OPPOSITE corner stays anchored ------- */
+const MIN_SIZE = 8;
+function onHandleDown(e, sh, corner) {
+  e.stopPropagation();
+  e.preventDefault();
+  const sx = e.clientX, sy = e.clientY;
+  const x0 = sh.x, y0 = sh.y, w0 = sh.w, h0 = sh.h;
+  const right = x0 + w0, bottom = y0 + h0;          // anchored edges live here
+  const movesLeft   = corner === "nw" || corner === "sw";
+  const movesRight  = corner === "ne" || corner === "se";
+  const movesTop    = corner === "nw" || corner === "ne";
+  const movesBottom = corner === "sw" || corner === "se";
+  const el = $("canvas").querySelector(`.shape[data-id="${sh._guid}"]`);
+  const f  = $("frame");
+
+  function move(ev) {
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    let nx = x0, ny = y0, nw = w0, nh = h0;
+    if (movesLeft)   { const l = Math.min(x0 + dx, right - MIN_SIZE); nx = Math.round(l); nw = Math.round(right - l); }
+    if (movesRight)  { const r = Math.max(right + dx, x0 + MIN_SIZE); nw = Math.round(r - x0); }
+    if (movesTop)    { const t = Math.min(y0 + dy, bottom - MIN_SIZE); ny = Math.round(t); nh = Math.round(bottom - t); }
+    if (movesBottom) { const b = Math.max(bottom + dy, y0 + MIN_SIZE); nh = Math.round(b - y0); }
+    sh.x = nx; sh.y = ny; sh.w = nw; sh.h = nh;
+    if (el) applyBox(el, sh);                         // line redraws corner-to-corner automatically
+    if (f) { f.style.left = nx + "px"; f.style.top = ny + "px"; f.style.width = nw + "px"; f.style.height = nh + "px"; }
+    syncBoxInputs(sh);                                // live W/H/X/Y in the inspector
+  }
+  function up() {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    patchShape(sh._guid, { x: sh.x, y: sh.y, w: sh.w, h: sh.h }, false);  // one PATCH, no re-render
+  }
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
 }
 
 /* ------- interaction: draw, select, drag -------------------------------- */
@@ -413,7 +473,7 @@ $("canvas").addEventListener("mousedown", (e) => {
 
 function draw(e) {
   const p = canvasPoint(e);
-  const def = { rect:{w:180,h:120}, ellipse:{w:160,h:160}, text:{w:200,h:48} }[tool];
+  const def = { rect:{w:180,h:120}, ellipse:{w:160,h:160}, text:{w:200,h:48}, line:{w:200,h:140} }[tool];
   createShape(tool, p.x - def.w / 2, p.y - def.h / 2, def.w, def.h);
 }
 
@@ -438,7 +498,11 @@ function onShapeDown(e, sh) {
   if (e.target.isContentEditable) { select(sh._guid); return; }
   select(sh._guid);
 
-  const el = e.currentTarget;
+  // select() just re-rendered the canvas, so e.currentTarget is now a detached
+  // node. Drag the FRESHLY-rendered element instead — otherwise move() updates an
+  // orphan and the shape only jumps to its new spot on the next click (optimistic
+  // drag, wrong target). This is how it stays live under the cursor, Figma-style.
+  const el = $("canvas").querySelector(`.shape[data-id="${sh._guid}"]`) || e.currentTarget;
   const sx = e.clientX, sy = e.clientY, ox = sh.x, oy = sh.y;
   let moved = false;
   const frame = () => $("frame");
@@ -515,6 +579,10 @@ function syncPosInputs(sh) {
   if (x) x.value = Math.round(sh.x);
   if (y) y.value = Math.round(sh.y);
 }
+function syncBoxInputs(sh) {
+  const set = (id, v) => { const el = $(id); if (el) el.value = Math.round(v); };
+  set("in-x", sh.x); set("in-y", sh.y); set("in-w", sh.w); set("in-h", sh.h);
+}
 
 function renderInspector() {
   const body = $("inspectBody");
@@ -525,8 +593,9 @@ function renderInspector() {
       `<div class="hint">
          <b>Nothing selected.</b><br>
          Pick <span class="kbd">R</span> rectangle, <span class="kbd">O</span> ellipse,
-         or <span class="kbd">T</span> text, then click the canvas. Drag to move,
-         double-click text to edit, <span class="kbd">Del</span> to delete.
+         <span class="kbd">T</span> text, or <span class="kbd">L</span> line, then click the canvas.
+         Drag to move, drag a corner handle to resize, double-click text to edit,
+         <span class="kbd">Del</span> to delete.
        </div>` + layersHtml();
     wireLayers();
     return;
@@ -643,7 +712,7 @@ document.addEventListener("keydown", (e) => {
   if (typing(e.target)) return;
   if ((e.key === "Delete" || e.key === "Backspace") && selId) { e.preventDefault(); deleteShape(selId); return; }
   if (e.key === "Escape") { select(null); setTool("select"); return; }
-  const map = { v:"select", r:"rect", o:"ellipse", t:"text" };
+  const map = { v:"select", r:"rect", o:"ellipse", t:"text", l:"line" };
   const k = e.key.toLowerCase();
   if (map[k]) setTool(map[k]);
 });
