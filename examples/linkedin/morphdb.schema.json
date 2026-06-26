@@ -14,7 +14,8 @@
         "connections": {
           "to": "person",
           "cardinality": "many_to_many",
-          "symmetric": true
+          "symmetric": true,
+          "description": "Mutual professional connections. Symmetric: linking A to B also links B to A — one shared edge, traversed from either side, so there is no separate inverse name."
         }
       }
     },
@@ -29,7 +30,9 @@
         "author": {
           "to": "person",
           "cardinality": "many_to_one",
-          "inverse": "posts"
+          "inverse": "posts",
+          "description": "The person who wrote this post (one author per post).",
+          "inverse_description": "Posts this person has authored; the feed reads these back, newest first."
         }
       }
     },

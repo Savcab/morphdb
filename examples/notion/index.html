@@ -152,7 +152,9 @@
   .gbtn:hover { background: var(--hover); color: var(--text); }
   .content { min-width: 0; }
   .ce { outline: none; padding: 3px 2px; word-break: break-word; white-space: pre-wrap; }
-  .ce:empty:before { content: attr(data-ph); color: var(--faint); pointer-events: none; }
+  /* placeholder only on the block you're in — like Notion. Otherwise every empty
+     block would permanently show "Type something…", which reads as clutter. */
+  .ce:empty:focus:before { content: attr(data-ph); color: var(--faint); pointer-events: none; }
   .ce.text { }
   .ce.h1 { font-size: 1.85em; font-weight: 700; padding-top: 14px; letter-spacing: -.01em; }
   .ce.h2 { font-size: 1.4em; font-weight: 650; padding-top: 9px; }
