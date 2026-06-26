@@ -18,7 +18,6 @@ are the same backend with different `morphdb.schema.json` files.
 | [`linkedin`](linkedin/) | **Linkup** | LinkedIn-style network | **symmetric many-to-many** connections, `include=author` hydration, indexed filter/sort | `person`, `post`, `job` |
 | [`notion`](notion/) | **Noted** | Notion-style nested docs | **self-referential hierarchy** (`page.parent → page`), ordered children, `include=` | `page`, `block` |
 | [`figma`](figma/) | **Shaper** | Figma-style design canvas | **high-frequency spatial `PATCH`** (drag = persist x/y/z), relation filter | `doc`, `shape` |
-| [`asana`](asana/) | **Boardly** | Asana-style project board | **multiple relations per type**, group-by-relation, `include=assignee` | `user`, `project`, `section`, `task` |
 | [`linear`](linear/) | **Stride** | Linear-style issue tracker | **indexed enum status** driving a kanban, priority sort, `include=assignee` | `user`, `team`, `issue`, `comment` |
 
 > These are original, educational clones — "*X*-style" examples with their own names

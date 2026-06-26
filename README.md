@@ -95,7 +95,7 @@ curl -X PUT $BASE/schema/task -H "$H" -d '{"merge":true,"fields":{"due":"datetim
 ```
 
 See [`examples/`](examples/) for a gallery of complete, single-file frontends backed
-by MorphDB — a minimal todo plus LinkedIn-, Notion-, Figma-, Asana-, and Linear-style
+by MorphDB — a minimal todo plus LinkedIn-, Notion-, Figma-, and Linear-style
 clones. Each ships the `morphdb.schema.json` that defines its data model, so you can
 stand any of them up on your own MorphDB with `morphdb init` and run it unchanged. They
 all hit the *same* generic endpoints — only the schema differs.
