@@ -255,25 +255,29 @@ full URL (`https://db.example.com`) or a bare `host:port`, and always points at 
 *backend* — never a database directly (a browser can't reach a database, only an
 API).
 
-## Sharing a schema across instances (rare — only when asked)
+## Shipping a schema with the repo (rare — only when asked)
 
-**Skip this unless the user explicitly asks to export, snapshot, share, or
-rebuild a schema** — e.g. "export the schema so others can run this repo", or
-setting up a cloned MorphDB-backed project on a fresh instance. Almost every
-session ignores it: the schema already lives in the running backend, so don't
-reach for these proactively.
+**Skip this unless the user explicitly asks to export, snapshot, share, or stand
+up a schema** — e.g. "export the schema so others can run this repo", or setting
+up a cloned MorphDB-backed project on a fresh instance. Almost every session
+ignores it: the schema already lives in the running backend, so don't reach for
+these proactively.
 
-A schema otherwise lives only inside the one MorphDB that holds it. To move an
-app's data model elsewhere (a teammate who cloned the repo, a fresh deploy):
+A schema otherwise lives only inside the one MorphDB that holds it. The portable
+form is `morphdb.schema.json` committed at the website's repo root — self-contained
+JSON (the app key, every type, its fields and relations). Two commands move it:
 
-- **Export** — writes self-contained JSON to stdout; redirect it into a file you
-  commit. Human-readable: the app key, every type, its fields and relations.
+- **Export** — snapshot a running app's data model to that file:
   `morphdb export-schema <app> > morphdb.schema.json`
-- **Reconstruct** on the other instance — the app key comes from the file:
-  `morphdb reconstruct-schema morphdb.schema.json`
-  If that app key already exists it prompts before overwriting; `--force`
-  overwrites non-interactively (which **deletes that app's current schema and its
-  objects**). It rebuilds the schema only — object data is not moved.
+- **Init** on any instance — stand the app up from the file (the app key comes
+  from inside it). Idempotent; the default file is `./morphdb.schema.json`:
+  `morphdb init`
+  - App missing → created and the schema applied.
+  - App exists → the schema is **merged in additively; existing data is kept**. A
+    name clash never deletes — re-running just converges the schema.
+  - `morphdb init --reset` → the only destructive path: delete the app and rebuild
+    it clean (prompts when interactive). Only the schema travels — object data is
+    not moved.
 
 ## Leave a breadcrumb in the site
 

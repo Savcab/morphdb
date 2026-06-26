@@ -435,12 +435,12 @@
     <div class="q"><span class="verb">morphdb</span> query <span class="fld">task</span> 'done=false&amp;sort=priority'</div>
     <div class="note">all talking to the one backend <span class="k">morphdb start</span> runs (or a hosted one via <span class="k">$MORPHDB_HOST</span>) — so there's always a single writer.</div>
   </div>
-  <p class="lede" style="margin-top:1.4em">Need the schema to travel — a teammate clones the repo, you spin a fresh deploy? Export the whole data model to a JSON file you commit, then rebuild it anywhere:</p>
+  <p class="lede" style="margin-top:1.4em">Want the schema to travel — ship a site others can stand up on their own backend? Commit the whole data model as <span class="k">morphdb.schema.json</span> at your repo root, then anyone runs one idempotent command to bring the app up:</p>
   <div class="qbox">
-    <div class="qt">move a schema between instances (the file carries the app key + every type)</div>
+    <div class="qt">ship a schema with your repo (the file carries the app key + every type)</div>
     <div class="q"><span class="verb">morphdb</span> export-schema <span class="rel">my-site</span> &gt; morphdb.schema.json</div>
-    <div class="q"><span class="verb">morphdb</span> reconstruct-schema morphdb.schema.json</div>
-    <div class="note">Self-contained, human-readable JSON — <b>only the schema travels, not object data.</b> Reconstruct recreates the app + its types; if the app key already exists it prompts first, or <span class="k">--force</span> overwrites.</div>
+    <div class="q"><span class="verb">morphdb</span> init</div>
+    <div class="note">Self-contained, human-readable JSON — <b>only the schema travels, not object data.</b> <span class="k">init</span> reads <span class="k">./morphdb.schema.json</span>, creating the app or <b>merging the schema into an existing one (keeps its data — a clash never wipes)</b>. Safe to re-run; <span class="k">--reset</span> is the only destructive path.</div>
   </div>
 </div></section>
 

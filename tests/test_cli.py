@@ -226,20 +226,23 @@ class TestSchemaCli(unittest.TestCase):
         self._json("schema", "add-relation", "task", "assignee", "--to", "user",
                    "--cardinality", "many_to_one", "--inverse", "tasks", "--app", self.APP)
 
-    def test_export_then_reconstruct_roundtrip(self):
+    def _export_to_file(self):
+        """Build the sample schema, export it, and write it to a temp file. Returns
+        (path, exported_doc)."""
         self._build_sample_schema()
-
         exported = self._json("export-schema", self.APP)
-        self.assertEqual(exported["app"], self.APP)
-        self.assertEqual({t["name"] for t in exported["types"]}, {"user", "task"})
-        path = os.path.join(tempfile.mkdtemp(), "schema.json")
+        path = os.path.join(tempfile.mkdtemp(), "morphdb.schema.json")
         with open(path, "w") as f:
             json.dump(exported, f)
+        return path, exported
 
-        # wipe the app, then rebuild it purely from the file
-        self._json("app", "delete", self.APP)
-        res = self._json("reconstruct-schema", path)
+    def test_init_creates_app_from_file(self):
+        path, _ = self._export_to_file()
+        self._json("app", "delete", self.APP)           # fresh backend
+
+        res = self._json("init", path)
         self.assertEqual(res["app"], self.APP)
+        self.assertEqual(res["status"], "created")
 
         task = self._json("schema", "show", "task", "--app", self.APP)
         self.assertIn("title", task["fields"])
@@ -247,24 +250,42 @@ class TestSchemaCli(unittest.TestCase):
         self.assertTrue(task["fields"]["done"]["index"])
         self.assertEqual(task["relations"]["assignee"]["to"], "user")
 
-    def test_reconstruct_clash_needs_force(self):
-        self._build_sample_schema()
-        exported = self._json("export-schema", self.APP)
-        path = os.path.join(tempfile.mkdtemp(), "schema.json")
-        with open(path, "w") as f:
-            json.dump(exported, f)
+    def test_init_clash_merges_and_keeps_data(self):
+        """The core guarantee: re-init onto an existing app must NOT wipe it."""
+        path, _ = self._export_to_file()
+        harness.req("POST", "/objects/task", {"title": "keep me"}, app=self.APP)
 
-        # app still exists → a non-interactive reconstruct must refuse, not hang
-        old_stdin = sys.stdin
-        sys.stdin = io.StringIO("")                     # isatty() False, reads EOF
+        res = self._json("init", path)                  # app already exists
+        self.assertEqual(res["status"], "merged")
+
+        rows = self._json("query", "task", "--app", self.APP)
+        self.assertEqual(rows["total"], 1)              # data survived
+        self.assertEqual(rows["objects"][0]["title"], "keep me")
+
+    def test_init_reset_rebuilds_clean(self):
+        path, _ = self._export_to_file()
+        harness.req("POST", "/objects/task", {"title": "wipe me"}, app=self.APP)
+
+        res = self._json("init", path, "--reset")       # destructive path
+        self.assertEqual(res["status"], "reset")
+
+        rows = self._json("query", "task", "--app", self.APP)
+        self.assertEqual(rows["total"], 0)              # objects gone, schema rebuilt
+
+    def test_init_defaults_to_root_schema_file(self):
+        path, _ = self._export_to_file()
+        self._json("app", "delete", self.APP)
+        cwd = os.getcwd()
+        os.chdir(os.path.dirname(path))                 # holds morphdb.schema.json
         try:
-            with self.assertRaises(SystemExit):
-                self._run("reconstruct-schema", path)
+            res = self._json("init")                    # no file arg
         finally:
-            sys.stdin = old_stdin
-        # --force overwrites in place
-        res = self._json("reconstruct-schema", path, "--force")
-        self.assertEqual(res["app"], self.APP)
+            os.chdir(cwd)
+        self.assertEqual(res["status"], "created")
+
+    def test_init_missing_file_exits(self):
+        with self.assertRaises(SystemExit):
+            self._run("init", os.path.join(tempfile.mkdtemp(), "nope.json"))
 
 
 if __name__ == "__main__":

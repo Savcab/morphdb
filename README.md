@@ -168,27 +168,32 @@ GitHub) and is **idempotent** — re-running overwrites with the current version
 To get the newest skill, `pip install -U morphdb` first, then re-run. Restart
 Claude Code afterward to pick it up.
 
-### Share a schema across instances (export / reconstruct)
+### Ship the schema with your repo (export / init)
 
-A schema lives only inside the one MorphDB that holds it. To move an app's data
-model elsewhere — a teammate who cloned the repo, a fresh deploy — export it to a
-JSON file you commit, then reconstruct it on the other instance:
+A schema lives only inside the one MorphDB that holds it. Commit it to your
+website's repo root as `morphdb.schema.json`, and anyone — a teammate, a fresh
+deploy, someone who cloned your project onto their own MorphDB — stands the app
+up with one idempotent command:
 
 ```bash
-# on the source instance — dump the data model to stdout, redirect into a file
+# author the app, then snapshot its data model to the repo root (commit this file)
 morphdb export-schema my-site > morphdb.schema.json   # app key + every type's fields + relations
 git add morphdb.schema.json && git commit -m "snapshot schema"
 
 # on a clone / fresh MorphDB — the app key comes from inside the file
-morphdb reconstruct-schema morphdb.schema.json
-morphdb reconstruct-schema morphdb.schema.json --force   # if the app key already exists, overwrite it
+morphdb init                       # reads ./morphdb.schema.json by default
+morphdb init path/to/schema.json   # or point at any export file
 ```
 
 The export is self-contained, human-readable JSON. **Only the schema travels —
-object data is not exported.** Reconstruct rebuilds the app and its types; if the
-app key already exists it prompts before overwriting (which deletes that app's
-current schema *and* objects), and `--force` skips the prompt for non-interactive
-use.
+object data is not exported.** `init` is idempotent and safe to re-run:
+
+- **App doesn't exist** → it's created and the schema applied.
+- **App already exists** → the schema is **merged in additively; existing data is
+  kept**. A name clash never deletes anything — re-running just converges the
+  schema.
+- **`morphdb init --reset`** → the only destructive path: delete the app and
+  rebuild it clean from the file (prompts first when run interactively).
 
 ## Why
 

@@ -1,4 +1,4 @@
-"""``morphdb app`` / ``schema`` / ``query`` / ``export-schema`` / ``reconstruct-schema``
+"""``morphdb app`` / ``schema`` / ``query`` / ``export-schema`` / ``init``
 — the data-model CLI.
 
 The coding agent reshapes an app's data model through these subcommands instead
@@ -34,6 +34,10 @@ from ..fieldtypes import FIELD_TYPES as _FIELD_TYPES
 # Ordered lists for argparse `choices`; the canonical sets live in the engine.
 FIELD_TYPES = sorted(_FIELD_TYPES)
 CARDINALITIES = sorted(_CARDINALITIES)
+
+# The portable app-schema file convention: committed at a website's repo root,
+# `morphdb init` reads it to stand the app up on any backend.
+DEFAULT_SCHEMA_FILE = "morphdb.schema.json"
 
 
 def _default_base():
@@ -297,39 +301,64 @@ def cmd_export_schema(args):
     return 0
 
 
-def cmd_reconstruct_schema(args):
-    """Recreate an app and its schema from an export file (the app name lives in
-    the file). If the app already exists, overwrite only on --force / a yes."""
+def _apply_schema(url, app, types):
+    """Apply an export file's types to an app, additively (merge). Two passes:
+    every type's fields first — so a relation's target type already exists by the
+    time the relation is declared — then the relations."""
+    for t in types:
+        _put_type(url, app, t["name"], {"merge": True, "fields": t.get("fields") or {}})
+    for t in types:
+        rels = t.get("relations") or {}
+        if rels:
+            _put_type(url, app, t["name"], {"merge": True, "relations": rels})
+
+
+def cmd_init(args):
+    """Stand an app up from its schema file (default ``./morphdb.schema.json``),
+    idempotently. The app key lives in the file.
+
+    - App missing  -> create it + apply the schema           (status "created")
+    - App exists   -> merge the schema additively, keep data  (status "merged")
+                      — a name clash NEVER deletes anything.
+    - ``--reset``  -> the only destructive path: delete the app and rebuild it
+                      clean (status "reset"). Interactive runs confirm first.
+    """
     try:
         with open(args.file) as f:
             doc = json.load(f)
+    except FileNotFoundError:
+        hint = (f" Run `morphdb export-schema <app> > {args.file}` to create one."
+                if args.file == DEFAULT_SCHEMA_FILE else "")
+        sys.exit(f"error: schema file '{args.file}' not found.{hint}")
     except (OSError, ValueError) as e:
         sys.exit(f"error: cannot read schema file '{args.file}': {e}")
     if not isinstance(doc, dict) or "app" not in doc or "types" not in doc:
         sys.exit("error: not a MorphDB schema export (expected 'app' and 'types' keys).")
     app, types = doc["app"], doc["types"]
 
-    if _app_exists(args.url, app):
-        if not args.force:
-            if not sys.stdin.isatty():        # non-interactive (e.g. an agent): never hang
-                sys.exit(f"App '{app}' already exists. Re-run with --force to overwrite "
-                         "it (this deletes its current schema and objects).")
-            if not _confirm(f"App '{app}' already exists. Overwrite it? This deletes its "
-                            "current schema and objects. [y/N] "):
-                sys.exit("Aborted; nothing changed.")
+    exists = _app_exists(args.url, app)
+    did_reset = False
+    if exists and args.reset:
+        # Only --reset deletes. Confirm interactively; the flag itself is the
+        # confirmation when there's no tty (e.g. an agent), so never hang.
+        if sys.stdin.isatty() and not _confirm(
+                f"Overwrite app '{app}'? Deletes its schema and ALL objects. [y/N] "):
+            sys.exit("Aborted; nothing changed.")
         _request(args.url, "DELETE", f"/app/{app}")
-    _request(args.url, "POST", "/app", {"key": app})
+        exists, did_reset = False, True
 
-    # Two passes: create every type (fields only) before wiring relations, so a
-    # relation's target type always exists by the time it is declared.
-    for t in types:
-        _put_type(args.url, app, t["name"], {"merge": False, "fields": t.get("fields") or {}})
-    for t in types:
-        rels = t.get("relations") or {}
-        if rels:
-            _put_type(args.url, app, t["name"], {"merge": True, "relations": rels})
+    if exists:
+        # Name clash: keep the existing app and its data, merge the schema in.
+        print(f"app '{app}' already exists — merging schema additively; existing "
+              "data kept. Use --reset to rebuild it clean.", file=sys.stderr)
+        _apply_schema(args.url, app, types)
+        status = "merged"
+    else:
+        _request(args.url, "POST", "/app", {"key": app})
+        _apply_schema(args.url, app, types)
+        status = "reset" if did_reset else "created"
 
-    _pretty({"app": app, "types_reconstructed": [t["name"] for t in types]})
+    _pretty({"app": app, "status": status, "types": [t["name"] for t in types]})
     return 0
 
 
@@ -343,7 +372,7 @@ def add_commands(sub):
     url_only.add_argument("--url", default=_default_base(),
                           help="MorphDB base URL (default $MORPHDB_HOST or "
                                "http://127.0.0.1:8787)")
-    # Most commands also take --app; export/reconstruct get the app name elsewhere
+    # Most commands also take --app; export/init get the app name elsewhere
     # (a positional / from the file), so they reuse url_only without an --app flag.
     common = argparse.ArgumentParser(add_help=False, parents=[url_only])
     common.add_argument("--app", default=None,
@@ -432,19 +461,22 @@ def add_commands(sub):
                          "'done=false&sort=priority&order=desc&limit=20'")
     sp.set_defaults(func=cmd_query)
 
-    # morphdb export-schema <app>  /  reconstruct-schema <file> — move an app's
-    # whole data model between instances. Rare: only when the user explicitly
-    # wants to snapshot/share a schema or rebuild it on a fresh MorphDB.
+    # morphdb export-schema <app>  /  init <file> — move an app's whole data model
+    # between instances. export-schema snapshots a schema to a portable file;
+    # init stands an app up from that file on any backend.
     sp = sub.add_parser("export-schema", parents=[url_only],
                         help="export an app's schema as JSON on stdout (redirect to "
                              "a file to commit/share it)")
     sp.add_argument("app_name", metavar="app", help="the app key to export")
     sp.set_defaults(func=cmd_export_schema)
 
-    sp = sub.add_parser("reconstruct-schema", parents=[url_only],
-                        help="recreate an app + its schema from an exported JSON file")
-    sp.add_argument("file", help="a JSON file produced by `morphdb export-schema`")
-    sp.add_argument("--force", action="store_true",
-                    help="if the app already exists, overwrite it without prompting "
-                         "(deletes its current schema and objects)")
-    sp.set_defaults(func=cmd_reconstruct_schema)
+    sp = sub.add_parser("init", parents=[url_only],
+                        help="stand an app up from its schema file (idempotent: "
+                             "merges into an existing app, never deletes)")
+    sp.add_argument("file", nargs="?", default=DEFAULT_SCHEMA_FILE,
+                    help=f"a JSON file from `morphdb export-schema` "
+                         f"(default ./{DEFAULT_SCHEMA_FILE})")
+    sp.add_argument("--reset", action="store_true",
+                    help="if the app already exists, delete and rebuild it clean "
+                         "(destroys its current schema and objects)")
+    sp.set_defaults(func=cmd_init)
