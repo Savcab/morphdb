@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MorphDB · Stride — a Linear-style example</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --accent: #5e6ad2;
+    --accent-fg: #fff;
+    --bg: #ffffff;
+    --panel: #fbfbfc;
+    --col-bg: #f4f5f7;
+    --card: #ffffff;
+    --card-hover: #f7f8fa;
+    --border: #e6e7ea;
+    --border-strong: #d4d6da;
+    --text: #16171a;
+    --muted: #6b6f76;
+    --faint: #9a9ea6;
+    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 1px 1px rgba(0,0,0,.04);
+    --shadow-lg: 0 12px 32px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.10);
+    --radius: 8px;
+    --p-urgent: #f2994a;
+    --st-progress: #f2c94c;
+    --st-done: #5e6ad2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0e10;
+      --panel: #111214;
+      --col-bg: #161719;
+      --card: #1b1d21;
+      --card-hover: #202329;
+      --border: #26282d;
+      --border-strong: #34373d;
+      --text: #e7e8ea;
+      --muted: #9498a1;
+      --faint: #6c7079;
+      --shadow: 0 1px 2px rgba(0,0,0,.4);
+      --shadow-lg: 0 16px 40px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ---- top bar ---- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; letter-spacing: -.01em; }
+  .brand .logo {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: var(--accent);
+    display: grid; place-items: center;
+    box-shadow: var(--shadow);
+  }
+  .crumb { color: var(--faint); margin: 0 1px; }
+  .team-badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-weight: 600;
+  }
+  .team-key {
+    font-size: 11px; font-weight: 700; letter-spacing: .03em;
+    color: var(--muted);
+    border: 1px solid var(--border-strong);
+    border-radius: 5px; padding: 1px 6px;
+    background: var(--bg);
+  }
+  .spacer { flex: 1; }
+  .toolbar { display: flex; align-items: center; gap: 8px; }
+
+  label.field { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+  select, button, input, textarea {
+    font: inherit; color: var(--text);
+  }
+  select {
+    appearance: none;
+    background: var(--card) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M2 3.5L5 6.5L8 3.5' stroke='%238a8f98' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat right 9px center;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    padding: 6px 26px 6px 10px;
+    cursor: pointer;
+  }
+  select:focus, input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -1px; }
+  .seg {
+    display: inline-flex; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; background: var(--card);
+  }
+  .seg button {
+    border: 0; background: transparent; padding: 6px 11px; cursor: pointer; color: var(--muted);
+    border-left: 1px solid var(--border-strong);
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); font-weight: 600; }
+
+  button.btn {
+    border: 1px solid var(--border-strong); background: var(--card); border-radius: 7px;
+    padding: 6px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  button.btn:hover { background: var(--card-hover); }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+
+  /* ---- board ---- */
+  .board {
+    display: flex;
+    gap: 12px;
+    padding: 14px 18px 18px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex: 1;
+    align-items: stretch;
+  }
+  .col {
+    width: 296px; min-width: 296px;
+    background: var(--col-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex; flex-direction: column;
+    max-height: 100%;
+  }
+  .col-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 12px 9px;
+    font-weight: 600; font-size: 13px;
+  }
+  .col-head .count { color: var(--faint); font-weight: 500; }
+  .col-head .add {
+    margin-left: auto; width: 22px; height: 22px; border-radius: 6px; border: 0;
+    background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center;
+  }
+  .col-head .add:hover { background: var(--border); color: var(--text); }
+  .col-body {
+    padding: 4px 8px 10px;
+    display: flex; flex-direction: column; gap: 7px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .col.drop-on { outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: -2px; }
+  .col.drop-on .col-body { background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 8px; }
+
+  .empty-col {
+    color: var(--faint); font-size: 12.5px; text-align: center; padding: 18px 8px;
+    border: 1px dashed var(--border-strong); border-radius: 8px; margin: 2px;
+  }
+
+  /* ---- card ---- */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 9px 10px 8px;
+    box-shadow: var(--shadow);
+    cursor: grab;
+    display: flex; flex-direction: column; gap: 7px;
+    transition: border-color .12s, box-shadow .12s, transform .04s;
+  }
+  .card:hover { border-color: var(--border-strong); background: var(--card-hover); }
+  .card:active { cursor: grabbing; }
+  .card.dragging { opacity: .45; }
+  .card .row1 { display: flex; align-items: center; gap: 8px; }
+  .card .ident { font-size: 12px; color: var(--faint); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .card .row1 .grow { flex: 1; }
+  .card .title { font-size: 13.5px; line-height: 1.35; color: var(--text); }
+  .card .row3 { display: flex; align-items: center; gap: 8px; margin-top: 1px; }
+  .card .row3 .grow { flex: 1; }
+  .meta { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+
+  .iconbtn {
+    border: 0; background: transparent; padding: 2px; cursor: pointer; border-radius: 5px;
+    display: inline-grid; place-items: center; line-height: 0;
+  }
+  .iconbtn:hover { background: var(--border); }
+
+  /* priority bars */
+  .prio { display: inline-flex; align-items: flex-end; gap: 0; }
+
+  /* avatar */
+  .avatar {
+    width: 21px; height: 21px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 9.5px; font-weight: 700; color: #fff; letter-spacing: .02em;
+    flex-shrink: 0; user-select: none;
+  }
+  .avatar.unassigned {
+    background: transparent; color: var(--faint);
+    border: 1.2px dashed var(--border-strong);
+  }
+
+  /* ---- popover ---- */
+  .pop {
+    position: fixed; z-index: 50;
+    background: var(--card); border: 1px solid var(--border-strong);
+    border-radius: 9px; box-shadow: var(--shadow-lg);
+    padding: 4px; min-width: 188px; max-height: 60vh; overflow-y: auto;
+  }
+  .pop .pop-title { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); padding: 6px 9px 4px; }
+  .pop button {
+    display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    border: 0; background: transparent; padding: 7px 9px; border-radius: 6px; cursor: pointer; color: var(--text);
+    font-size: 13px;
+  }
+  .pop button:hover { background: var(--card-hover); }
+  .pop button .chk { margin-left: auto; color: var(--accent); opacity: 0; }
+  .pop button.sel .chk { opacity: 1; }
+
+  /* ---- modal ---- */
+  .scrim {
+    position: fixed; inset: 0; background: rgba(8,9,12,.5);
+    display: grid; place-items: start center; padding-top: 9vh; z-index: 60;
+    backdrop-filter: blur(2px);
+  }
+  .modal {
+    width: min(560px, 94vw); background: var(--card);
+    border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: var(--shadow-lg);
+    overflow: hidden;
+  }
+  .modal .mhead { display: flex; align-items: center; gap: 8px; padding: 13px 16px 4px; }
+  .modal .mhead .ic { color: var(--faint); font-size: 12px; font-weight: 600; }
+  .modal .mbody { padding: 4px 16px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .modal input.t {
+    border: 0; background: transparent; font-size: 18px; font-weight: 600; padding: 6px 0; width: 100%;
+  }
+  .modal input.t::placeholder { color: var(--faint); }
+  .modal textarea {
+    border: 0; background: transparent; resize: vertical; min-height: 56px; width: 100%;
+    color: var(--text); font-size: 13.5px;
+  }
+  .modal textarea::placeholder { color: var(--faint); }
+  .modal .mchips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .modal .mfoot {
+    display: flex; align-items: center; gap: 10px; padding: 11px 16px;
+    border-top: 1px solid var(--border); background: var(--panel);
+  }
+  .modal .mfoot .grow { flex: 1; }
+
+  /* ---- banners ---- */
+  #err {
+    color: #fff; background: #d93b3b; font-size: 13px; padding: 0 18px;
+    max-height: 0; overflow: hidden; transition: max-height .15s, padding .15s;
+  }
+  #err.show { max-height: 80px; padding: 9px 18px; }
+  #banner {
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+    border-bottom: 1px solid var(--border); padding: 12px 18px; font-size: 13px; display: none;
+  }
+  #banner.show { display: block; }
+  #banner code { background: var(--card); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 7px; font-size: 12.5px; }
+
+  .footnote { color: var(--faint); font-size: 11.5px; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+</style>
+</head>
+<body>
+  <div id="banner"></div>
+
+  <header>
+    <div class="brand">
+      <span class="logo">
+        <!-- Stride mark: three forward-leaning bars suggesting motion. Original glyph, not modeled on any real logo. -->
+        <svg width="13" height="13" viewBox="0 0 100 100" fill="#fff">
+          <polygon points="20,80 34,80 46,52 32,52"/>
+          <polygon points="44,80 58,80 70,38 56,38"/>
+          <polygon points="68,80 82,80 94,24 80,24"/>
+        </svg>
+      </span>
+      Stride
+    </div>
+    <span class="crumb">/</span>
+    <span class="team-badge"><span id="teamName">Engineering</span> <span class="team-key" id="teamKey">ENG</span></span>
+    <span class="crumb">/</span>
+    <span style="font-weight:600">Board</span>
+
+    <div class="spacer"></div>
+
+    <div class="toolbar">
+      <label class="field">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6" cy="6" r="4"/><path d="M11 11l3 3" stroke-linecap="round"/></svg>
+        <select id="filterAssignee" title="Filter by assignee"><option value="">All assignees</option></select>
+      </label>
+      <div class="seg" id="sortSeg" title="Order issues within each column">
+        <button data-sort="priority" class="on">Priority</button>
+        <button data-sort="order">Manual</button>
+      </div>
+      <button class="btn primary" id="newBtn">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg>
+        New issue
+      </button>
+    </div>
+  </header>
+
+  <div id="err"></div>
+
+  <div class="board" id="board"></div>
+
+<script>
+const BASE = location.hostname
+  ? `${location.protocol}//${location.hostname}:8787`
+  : "http://127.0.0.1:8787";
+const APP = "linear-demo";   // this site's MorphDB app key (sent as X-App-Key)
+
+const $ = (id) => document.getElementById(id);
+let banneredOnce = false;
+
+function showErr(m) {
+  const el = $("err");
+  el.textContent = m || "";
+  el.classList.toggle("show", !!m);
+  if (m) setTimeout(() => { if (el.textContent === m) { el.classList.remove("show"); } }, 5000);
+}
+function showBanner(html) {
+  const el = $("banner");
+  el.innerHTML = html;
+  el.classList.add("show");
+}
+
+async function api(method, path, body) {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: { "Content-Type": "application/json", "X-App-Key": APP },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = data?.error?.message || `HTTP ${res.status}`;
+    if (/unknown app/i.test(msg) && !banneredOnce) {
+      banneredOnce = true;
+      showBanner(
+        `This demo's backend isn't set up yet. From this folder run ` +
+        `<code>morphdb init morphdb.schema.json</code> (or serve the folder over http so it can self-install), then reload.`);
+    }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/* ---- self-bootstrap: the in-browser equivalent of `morphdb init` ---- */
+async function bootstrap() {
+  // 1) register this site's app (409 = already there, which is fine)
+  try {
+    await fetch(BASE + "/app", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: APP }),
+    });
+  } catch (_) { /* surfaced on the first real call */ }
+
+  // 2) apply the shipped schema file, exactly like `morphdb init`:
+  //    every type's fields first, THEN relations (so relation targets exist).
+  let schema = null;
+  try {
+    const r = await fetch("./morphdb.schema.json");
+    if (r.ok) schema = await r.json();
+  } catch (_) { /* opened via file:// — assume `morphdb init` already ran */ }
+  if (schema?.types) {
+    for (const t of schema.types) {
+      await api("PUT", `/schema/${t.name}`, { merge: true, fields: t.fields || {} });
+    }
+    for (const t of schema.types) {
+      const rels = t.relations || {};
+      if (Object.keys(rels).length) {
+        await api("PUT", `/schema/${t.name}`, { merge: true, relations: rels });
+      }
+    }
+  }
+}
+
+/* ---- status + priority + avatar presentation ---- */
+const STATUSES = [
+  { id: "backlog",     label: "Backlog",     color: "#95a2b3" },
+  { id: "todo",        label: "Todo",        color: "#6b7280" },
+  { id: "in_progress", label: "In Progress", color: "var(--st-progress)" },
+  { id: "done",        label: "Done",        color: "var(--st-done)" },
+  { id: "canceled",    label: "Canceled",    color: "#8a8f98" },
+];
+const STATUS_BY_ID = Object.fromEntries(STATUSES.map(s => [s.id, s]));
+
+function statusIcon(id, size = 14) {
+  const c = "currentColor";
+  const wrap = (inner) => `<svg width="${size}" height="${size}" viewBox="0 0 16 16" style="color:${STATUS_BY_ID[id].color}">${inner}</svg>`;
+  switch (id) {
+    case "backlog":
+      return wrap(`<circle cx="8" cy="8" r="6" fill="none" stroke="${c}" stroke-width="1.6" stroke-dasharray="2 2"/>`);
+    case "todo":
+      return wrap(`<circle cx="8" cy="8" r="6" fill="none" stroke="${c}" stroke-width="1.6"/>`);
+    case "in_progress":
+      return wrap(`<circle cx="8" cy="8" r="6" fill="none" stroke="${c}" stroke-width="1.6"/><path d="M8 8 V2 A6 6 0 0 1 14 8 Z" fill="${c}"/>`);
+    case "done":
+      return wrap(`<circle cx="8" cy="8" r="7" fill="${c}"/><path d="M5 8.2l2 2 4-4.2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`);
+    case "canceled":
+      return wrap(`<circle cx="8" cy="8" r="7" fill="${c}"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>`);
+  }
+}
+
+const PRIO = [
+  { n: 0, label: "No priority" },
+  { n: 1, label: "Low" },
+  { n: 2, label: "Medium" },
+  { n: 3, label: "High" },
+  { n: 4, label: "Urgent" },
+];
+function priorityIcon(p, size = 15) {
+  if (p === 4) {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="3.5" fill="var(--p-urgent)"/><rect x="7" y="3.5" width="2" height="5.5" rx="1" fill="#fff"/><rect x="7" y="11" width="2" height="2" rx="1" fill="#fff"/></svg>`;
+  }
+  const on = "var(--muted)", off = "var(--border-strong)";
+  const bar = (x, h, lit) => `<rect x="${x}" y="${14 - h}" width="3" height="${h}" rx="1" fill="${lit ? on : off}"/>`;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 16 16">${bar(1.5, 5, p >= 1)}${bar(6.5, 9, p >= 2)}${bar(11.5, 13, p >= 3)}</svg>`;
+}
+
+const AV_COLORS = ["#6e56cf","#3b82f6","#0ea5a3","#e0823d","#d6477a","#5b8c2a","#9333ea","#c2410c"];
+function avatarColor(name) {
+  let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AV_COLORS[h % AV_COLORS.length];
+}
+function initials(name) {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "?";
+}
+function avatarEl(user) {
+  const el = document.createElement("span");
+  if (!user) { el.className = "avatar unassigned"; el.textContent = "?"; el.title = "Unassigned"; return el; }
+  el.className = "avatar";
+  el.style.background = avatarColor(user.name);
+  el.textContent = initials(user.name);
+  el.title = user.name;
+  return el;
+}
+
+/* ---- app state ---- */
+const state = {
+  team: null,
+  users: [],
+  usersById: {},
+  issues: [],
+  filterAssignee: "",   // "", "none", or a user guid
+  sort: "priority",     // "priority" | "order"
+};
+
+/* ---- seeding (only when empty) ---- */
+async function seedIfEmpty() {
+  const probe = await api("GET", "/objects/issue?limit=1");
+  if (probe.total > 0) return;
+
+  const team = await api("POST", "/objects/team", { name: "Engineering", key: "ENG" });
+  const names = ["Alice Reed", "Ravi Patel", "Mia Chen", "Tom Okafor"];
+  const users = [];
+  for (const name of names) users.push(await api("POST", "/objects/user", { name }));
+
+  // status, priority, assignee index (null = unassigned)
+  const rows = [
+    ["Set up CI pipeline for the monorepo",         "done",        2, 0],
+    ["Fix flaky login test on CI",                  "in_progress", 3, 1],
+    ["Add dark mode toggle to settings",            "todo",        1, 2],
+    ["Migrate auth to the new identity service",    "in_progress", 4, 0],
+    ["Write onboarding docs for new engineers",     "backlog",     1, null],
+    ["Optimize image loading on the dashboard",     "todo",        2, 3],
+    ["Crash when search query is empty",            "todo",        4, 1],
+    ["Refactor the billing module",                 "backlog",     0, 2],
+    ["Deprecate legacy API v1",                     "canceled",    1, 3],
+    ["Improve kanban drag performance",             "done",        3, 0],
+    ["Add keyboard shortcuts for navigation",       "backlog",     2, null],
+    ["Email notifications for @mentions",           "todo",        3, 1],
+  ];
+  const created = [];
+  let i = 0;
+  for (const [title, status, priority, ai] of rows) {
+    i++;
+    const body = {
+      title, description: "", status, priority,
+      identifier: `${team.key}-${i}`, order: i,
+      team: team._guid,
+      assignee: ai === null ? null : users[ai]._guid,
+    };
+    created.push(await api("POST", "/objects/issue", body));
+  }
+
+  const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString();
+  const flaky = created[1]._guid, migrate = created[3]._guid;
+  await api("POST", "/objects/comment", { body: "I can repro this about 1 in 5 runs locally.", created: daysAgo(3), issue: flaky });
+  await api("POST", "/objects/comment", { body: "Looks like a race in the token refresh.",     created: daysAgo(2), issue: flaky });
+  await api("POST", "/objects/comment", { body: "Blocked on the auth team's staging env.",      created: daysAgo(1), issue: migrate });
+}
+
+/* ---- loading ---- */
+async function loadMeta() {
+  const teams = await api("GET", "/objects/team?limit=1");
+  state.team = teams.objects[0] || null;
+  // user.name isn't indexed (the board never filters/sorts issues by it), so we
+  // fetch unsorted and order client-side rather than add a needless index.
+  const users = await api("GET", "/objects/user?limit=200");
+  state.users = users.objects.sort((a, b) => a.name.localeCompare(b.name));
+  state.usersById = Object.fromEntries(state.users.map(u => [u._guid, u]));
+  if (state.team) { $("teamName").textContent = state.team.name; $("teamKey").textContent = state.team.key; }
+  renderAssigneeFilter();
+}
+
+async function loadBoard() {
+  // sort + filter happen on INDEXED fields / a relation — the morphable backend's
+  // generic endpoints, never changed as the schema grows.
+  const order = state.sort === "priority" ? "desc" : "asc";
+  let q = `/objects/issue?include=assignee,comments&limit=300&sort=${state.sort}&order=${order}`;
+  if (state.team) q += `&team=${state.team._guid}`;
+  if (state.filterAssignee === "none") q += `&assignee__exists=false`;
+  else if (state.filterAssignee) q += `&assignee=${state.filterAssignee}`;
+
+  const res = await api("GET", q);
+  state.issues = res.objects;
+  renderBoard();
+}
+
+/* ---- rendering ---- */
+function renderAssigneeFilter() {
+  const sel = $("filterAssignee");
+  const cur = state.filterAssignee;
+  sel.innerHTML = `<option value="">All assignees</option><option value="none">Unassigned</option>`;
+  for (const u of state.users) {
+    const o = document.createElement("option");
+    o.value = u._guid; o.textContent = u.name;
+    sel.appendChild(o);
+  }
+  sel.value = cur;
+}
+
+function renderBoard() {
+  const board = $("board");
+  board.innerHTML = "";
+  const buckets = Object.fromEntries(STATUSES.map(s => [s.id, []]));
+  for (const it of state.issues) (buckets[it.status] || (buckets[it.status] = [])).push(it);
+
+  for (const s of STATUSES) {
+    const items = buckets[s.id] || [];
+    const col = document.createElement("section");
+    col.className = "col";
+    col.dataset.status = s.id;
+
+    const head = document.createElement("div");
+    head.className = "col-head";
+    head.innerHTML = `${statusIcon(s.id)}<span>${s.label}</span><span class="count">${items.length}</span>
+      <button class="add" title="New issue in ${s.label}">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg></button>`;
+    head.querySelector(".add").onclick = () => openModal(s.id);
+    col.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "col-body";
+    if (!items.length) {
+      const e = document.createElement("div");
+      e.className = "empty-col";
+      e.textContent = "No issues";
+      body.appendChild(e);
+    } else {
+      for (const it of items) body.appendChild(cardEl(it));
+    }
+    col.appendChild(body);
+
+    // drop target
+    col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("drop-on"); });
+    col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove("drop-on"); });
+    col.addEventListener("drop", (e) => {
+      e.preventDefault(); col.classList.remove("drop-on");
+      const guid = e.dataTransfer.getData("text/plain");
+      moveIssue(guid, s.id);
+    });
+
+    board.appendChild(col);
+  }
+}
+
+function cardEl(it) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.draggable = true;
+  card.dataset.guid = it._guid;
+
+  const row1 = document.createElement("div");
+  row1.className = "row1";
+  const prioBtn = document.createElement("button");
+  prioBtn.className = "iconbtn";
+  prioBtn.innerHTML = priorityIcon(it.priority);
+  prioBtn.title = `Priority: ${PRIO[it.priority]?.label || "—"} (click to change)`;
+  prioBtn.onclick = (e) => openPriorityPop(e.currentTarget, it);
+  const ident = document.createElement("span");
+  ident.className = "ident";
+  ident.textContent = it.identifier || "";
+  row1.append(prioBtn, ident, Object.assign(document.createElement("span"), { className: "grow" }));
+  card.appendChild(row1);
+
+  const title = document.createElement("div");
+  title.className = "title";
+  title.textContent = it.title;
+  card.appendChild(title);
+
+  const row3 = document.createElement("div");
+  row3.className = "row3";
+  const cc = (it.comments || []).length;
+  if (cc) {
+    const c = document.createElement("span");
+    c.className = "meta";
+    c.title = `${cc} comment${cc > 1 ? "s" : ""}`;
+    c.innerHTML = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v5A1.5 1.5 0 0 1 11.5 11H6l-3 2.5V4.5Z" stroke-linejoin="round"/></svg><span>${cc}</span>`;
+    row3.appendChild(c);
+  }
+  row3.appendChild(Object.assign(document.createElement("span"), { className: "grow" }));
+  const av = avatarEl(it.assignee);
+  const avBtn = document.createElement("button");
+  avBtn.className = "iconbtn";
+  avBtn.appendChild(av);
+  avBtn.title = (it.assignee ? it.assignee.name : "Unassigned") + " (click to reassign)";
+  avBtn.onclick = (e) => openAssigneePop(e.currentTarget, it);
+  row3.appendChild(avBtn);
+  card.appendChild(row3);
+
+  card.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", it._guid);
+    e.dataTransfer.effectAllowed = "move";
+    card.classList.add("dragging");
+  });
+  card.addEventListener("dragend", () => card.classList.remove("dragging"));
+
+  return card;
+}
+
+/* ---- mutations ---- */
+async function moveIssue(guid, status) {
+  const it = state.issues.find(x => x._guid === guid);
+  if (!it || it.status === status) return;
+  it.status = status;                 // optimistic
+  renderBoard();
+  try { await api("PATCH", `/objects/issue/${guid}`, { status }); }
+  catch (e) { showErr(e.message); loadBoard().catch(() => {}); }
+}
+
+async function setPriority(guid, priority) {
+  const it = state.issues.find(x => x._guid === guid);
+  if (it) it.priority = priority;     // optimistic
+  renderBoard();
+  try { await api("PATCH", `/objects/issue/${guid}`, { priority }); }
+  catch (e) { showErr(e.message); loadBoard().catch(() => {}); }
+}
+
+async function setAssignee(guid, userGuid) {
+  const it = state.issues.find(x => x._guid === guid);
+  if (it) it.assignee = userGuid ? state.usersById[userGuid] : null;   // optimistic
+  // if a filter is active a reassign may move the card out of view — reload
+  if (state.filterAssignee) { try { await api("PATCH", `/objects/issue/${guid}`, { assignee: userGuid }); await loadBoard(); } catch (e) { showErr(e.message); } return; }
+  renderBoard();
+  try { await api("PATCH", `/objects/issue/${guid}`, { assignee: userGuid }); }
+  catch (e) { showErr(e.message); loadBoard().catch(() => {}); }
+}
+
+/* ---- popovers ---- */
+let activePop = null;
+function closePop() { if (activePop) { activePop.remove(); activePop = null; document.removeEventListener("mousedown", onDocDown, true); } }
+function onDocDown(e) { if (activePop && !activePop.contains(e.target)) closePop(); }
+function openPop(anchor, build) {
+  closePop();
+  const pop = document.createElement("div");
+  pop.className = "pop";
+  build(pop);
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let left = Math.min(r.left, window.innerWidth - pw - 8);
+  let top = r.bottom + 6;
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);
+  pop.style.left = Math.max(8, left) + "px";
+  pop.style.top = top + "px";
+  activePop = pop;
+  setTimeout(() => document.addEventListener("mousedown", onDocDown, true), 0);
+}
+function openPriorityPop(anchor, it) {
+  openPop(anchor, (pop) => {
+    pop.innerHTML = `<div class="pop-title">Priority</div>`;
+    for (const p of [...PRIO].reverse()) {
+      const b = document.createElement("button");
+      if (p.n === it.priority) b.classList.add("sel");
+      b.innerHTML = `${priorityIcon(p.n, 16)}<span>${p.label}</span><span class="chk">✓</span>`;
+      b.onclick = () => { closePop(); setPriority(it._guid, p.n); };
+      pop.appendChild(b);
+    }
+  });
+}
+function openAssigneePop(anchor, it) {
+  openPop(anchor, (pop) => {
+    pop.innerHTML = `<div class="pop-title">Assignee</div>`;
+    const mk = (user) => {
+      const b = document.createElement("button");
+      const cur = it.assignee ? it.assignee._guid : null;
+      if ((user?._guid || null) === cur) b.classList.add("sel");
+      b.appendChild(avatarEl(user));
+      const span = document.createElement("span");
+      span.textContent = user ? user.name : "Unassigned";
+      b.appendChild(span);
+      const chk = document.createElement("span"); chk.className = "chk"; chk.textContent = "✓"; b.appendChild(chk);
+      b.onclick = () => { closePop(); setAssignee(it._guid, user ? user._guid : null); };
+      pop.appendChild(b);
+    };
+    mk(null);
+    for (const u of state.users) mk(u);
+  });
+}
+
+/* ---- new-issue modal ---- */
+function nextIdentifier() {
+  const key = state.team?.key || "ENG";
+  let max = 0;
+  for (const it of state.issues) {
+    const m = /-(\d+)$/.exec(it.identifier || "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${key}-${max + 1}`;
+}
+function nextOrder() {
+  let max = 0; for (const it of state.issues) max = Math.max(max, it.order || 0);
+  return max + 1;
+}
+
+function openModal(presetStatus) {
+  closePop();
+  const nextId = nextIdentifier();
+  const scrim = document.createElement("div");
+  scrim.className = "scrim";
+  scrim.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="mhead"><span class="ic">${state.team?.key || "ENG"} ·</span><span class="ic" id="m_id">${nextId}</span></div>
+      <div class="mbody">
+        <input class="t" id="m_title" placeholder="Issue title" autocomplete="off" />
+        <textarea id="m_desc" placeholder="Add a description…"></textarea>
+        <div class="mchips">
+          <label class="field">Status
+            <select id="m_status"></select></label>
+          <label class="field">Priority
+            <select id="m_prio"></select></label>
+          <label class="field">Assignee
+            <select id="m_assignee"></select></label>
+        </div>
+      </div>
+      <div class="mfoot">
+        <span class="footnote">Stored via MorphDB's generic <code style="font-size:11px">/objects/issue</code> endpoint.</span>
+        <span class="grow"></span>
+        <button class="btn" id="m_cancel">Cancel</button>
+        <button class="btn primary" id="m_create">Create issue</button>
+      </div>
+    </div>`;
+  document.body.appendChild(scrim);
+
+  const mStatus = scrim.querySelector("#m_status");
+  for (const s of STATUSES) mStatus.appendChild(new Option(s.label, s.id));
+  mStatus.value = presetStatus && STATUS_BY_ID[presetStatus] ? presetStatus : "backlog";
+
+  const mPrio = scrim.querySelector("#m_prio");
+  for (const p of [...PRIO].reverse()) mPrio.appendChild(new Option(p.label, p.n));
+  mPrio.value = "0";
+
+  const mAss = scrim.querySelector("#m_assignee");
+  mAss.appendChild(new Option("Unassigned", ""));
+  for (const u of state.users) mAss.appendChild(new Option(u.name, u._guid));
+
+  const title = scrim.querySelector("#m_title");
+  setTimeout(() => title.focus(), 30);
+
+  const close = () => scrim.remove();
+  scrim.querySelector("#m_cancel").onclick = close;
+  scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) close(); });
+  scrim.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
+  });
+
+  async function create() {
+    const t = title.value.trim();
+    if (!t) { title.focus(); return; }
+    const body = {
+      title: t,
+      description: scrim.querySelector("#m_desc").value.trim(),
+      status: mStatus.value,
+      priority: Number(mPrio.value),
+      identifier: nextIdentifier(),
+      order: nextOrder(),
+      assignee: mAss.value || null,
+    };
+    if (state.team) body.team = state.team._guid;
+    const btn = scrim.querySelector("#m_create");
+    btn.disabled = true; btn.textContent = "Creating…";
+    try { await api("POST", "/objects/issue", body); close(); await loadBoard(); }
+    catch (e) { showErr(e.message); btn.disabled = false; btn.textContent = "Create issue"; }
+  }
+  scrim.querySelector("#m_create").onclick = create;
+}
+
+/* ---- wiring ---- */
+$("newBtn").onclick = () => openModal(null);
+$("filterAssignee").onchange = (e) => { state.filterAssignee = e.target.value; loadBoard().catch(err => showErr(err.message)); };
+$("sortSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-sort]"); if (!b) return;
+  state.sort = b.dataset.sort;
+  for (const x of $("sortSeg").children) x.classList.toggle("on", x === b);
+  loadBoard().catch(err => showErr(err.message));
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key === "c" && !/input|textarea|select/i.test(document.activeElement.tagName) && !activePop) {
+    e.preventDefault(); openModal(null);
+  }
+});
+window.addEventListener("resize", closePop);
+
+/* ---- go ---- */
+(async () => {
+  try {
+    await bootstrap();
+    await seedIfEmpty();
+    await loadMeta();
+    await loadBoard();
+  } catch (e) {
+    showErr("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")");
+  }
+})();
+</script>
+</body>
+</html>

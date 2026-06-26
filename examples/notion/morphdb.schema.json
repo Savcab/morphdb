@@ -1,0 +1,29 @@
+{
+  "morphdb_schema_version": 1,
+  "app": "notion-demo",
+  "types": [
+    {
+      "name": "page",
+      "fields": {
+        "title": "string",
+        "icon": "string",
+        "order": { "type": "number", "index": true, "default": 0 }
+      },
+      "relations": {
+        "parent": { "to": "page", "cardinality": "many_to_one", "inverse": "children" }
+      }
+    },
+    {
+      "name": "block",
+      "fields": {
+        "kind": "string",
+        "text": "string",
+        "checked": "boolean",
+        "order": { "type": "number", "index": true, "default": 0 }
+      },
+      "relations": {
+        "page": { "to": "page", "cardinality": "many_to_one", "inverse": "blocks" }
+      }
+    }
+  ]
+}

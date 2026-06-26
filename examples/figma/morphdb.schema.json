@@ -1,0 +1,29 @@
+{
+  "morphdb_schema_version": 1,
+  "app": "figma-demo",
+  "types": [
+    {
+      "name": "doc",
+      "fields": {
+        "name": "string"
+      },
+      "relations": {}
+    },
+    {
+      "name": "shape",
+      "fields": {
+        "kind": "string",
+        "x": { "type": "number", "index": true },
+        "y": { "type": "number", "index": true },
+        "w": "number",
+        "h": "number",
+        "fill": "string",
+        "text": "string",
+        "z": { "type": "number", "index": true }
+      },
+      "relations": {
+        "doc": { "to": "doc", "cardinality": "many_to_one", "inverse": "shapes" }
+      }
+    }
+  ]
+}

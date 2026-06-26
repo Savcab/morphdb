@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MorphDB · Boardly — an Asana-style example</title>
+<!-- MorphDB-backed app. App key: "asana-demo". Data model travels in ./morphdb.schema.json
+     (run `morphdb init morphdb.schema.json`, or just open this page over http and it self-bootstraps). -->
+<style>
+  :root{
+    color-scheme: light dark;
+    --accent:#f06a6a;            /* coral accent */
+    --accent-d:#d65a5a;
+    --green:#37a169;
+    --red:#e8384f;
+    --bg:#ffffff;
+    --board-bg:#f6f7f8;
+    --panel:#ffffff;
+    --line:#e6e7eb;
+    --line-2:#d9dadd;
+    --text:#1e1f21;
+    --muted:#6d6e6f;
+    --shadow:0 1px 2px rgba(0,0,0,.07), 0 1px 1px rgba(0,0,0,.04);
+    --pop-shadow:0 10px 34px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.10);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1e1f21; --board-bg:#181a1b; --panel:#2a2b2d; --line:#3a3b3d; --line-2:#46484a;
+      --text:#ececec; --muted:#9b9c9d; --shadow:0 1px 2px rgba(0,0,0,.45);
+      --pop-shadow:0 12px 36px rgba(0,0,0,.55);
+    }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0; color:var(--text); background:var(--bg);
+    font:14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display:flex; flex-direction:column;
+  }
+
+  /* ---- top bar ---- */
+  .topbar{
+    display:flex; align-items:center; gap:14px;
+    padding:10px 18px; border-bottom:1px solid var(--line); background:var(--bg);
+    flex:0 0 auto;
+  }
+  .brand{ display:flex; align-items:center; gap:8px; font-weight:800; letter-spacing:.2px; font-size:16px; }
+  .proj{ display:flex; align-items:center; gap:9px; font-weight:650; font-size:16px; padding-left:6px; border-left:1px solid var(--line); }
+  .proj .dot{ width:14px; height:14px; border-radius:5px; background:var(--accent); }
+  .spacer{ flex:1; }
+  .members{ display:flex; align-items:center; padding-right:4px; }
+  .members .av{ margin-left:-7px; box-shadow:0 0 0 2px var(--bg); }
+  .members .av:first-child{ margin-left:0; }
+  .toggle{ display:flex; align-items:center; gap:7px; font-size:13px; color:var(--muted); cursor:pointer; user-select:none; }
+  .toggle input{ accent-color:var(--accent); }
+
+  /* ---- error / banner ---- */
+  .err{ padding:8px 18px; color:var(--red); background:color-mix(in srgb, var(--red) 9%, transparent); border-bottom:1px solid var(--line); font-size:13px; }
+  .err:empty{ display:none; }
+  .banner{ padding:12px 18px; background:color-mix(in srgb, var(--accent) 12%, transparent); border-bottom:1px solid var(--line); font-size:13px; }
+  .banner code{ background:#0001; padding:2px 6px; border-radius:6px; font-size:12px; }
+  @media (prefers-color-scheme: dark){ .banner code{ background:#fff2; } }
+
+  /* ---- board ---- */
+  .board{
+    flex:1 1 auto; min-height:0;
+    display:flex; gap:16px; align-items:flex-start;
+    overflow:auto; padding:18px 18px 28px; background:var(--board-bg);
+  }
+  .col{ flex:0 0 290px; max-height:100%; display:flex; flex-direction:column; min-height:0; }
+  .col-head{ display:flex; align-items:center; gap:8px; padding:2px 4px 10px; }
+  .col-title{ font-weight:650; }
+  .count{ color:var(--muted); font-size:12px; background:var(--line); border-radius:999px; padding:1px 8px; }
+  .cards{ display:flex; flex-direction:column; gap:8px; overflow-y:auto; padding:1px; min-height:0; }
+  .col-empty{ color:var(--muted); font-size:13px; padding:10px 4px; opacity:.7; }
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:10px 11px; box-shadow:var(--shadow); cursor:default;
+    transition:border-color .12s, box-shadow .12s;
+  }
+  .card:hover{ border-color:var(--line-2); box-shadow:0 2px 6px rgba(0,0,0,.10); }
+  .card-top{ display:flex; align-items:flex-start; gap:9px; }
+  .title{ flex:1; word-break:break-word; padding-top:1px; }
+  .card.done .title{ text-decoration:line-through; color:var(--muted); }
+
+  .check{
+    flex:0 0 auto; width:18px; height:18px; margin-top:1px; border-radius:50%;
+    border:1.6px solid var(--line-2); background:transparent; cursor:pointer;
+    display:grid; place-items:center; color:transparent; transition:all .12s;
+  }
+  .check:hover{ border-color:var(--green); color:var(--green); }
+  .check.on{ background:var(--green); border-color:var(--green); color:#fff; }
+
+  .more{
+    flex:0 0 auto; border:none; background:transparent; color:var(--muted);
+    cursor:pointer; font-size:16px; line-height:1; padding:0 2px; border-radius:6px;
+    opacity:0; transition:opacity .12s;
+  }
+  .card:hover .more{ opacity:.65; }
+  .more:hover{ opacity:1; background:var(--line); }
+
+  .card-meta{ display:flex; align-items:center; gap:8px; margin-top:8px; margin-left:27px; }
+  .due{
+    display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--muted);
+    border:1px solid transparent; border-radius:7px; padding:2px 6px; cursor:pointer; background:transparent;
+  }
+  .due:hover{ background:var(--line); }
+  .due.overdue{ color:var(--red); font-weight:600; }
+  .due.today{ color:var(--accent); font-weight:600; }
+  .due.done{ color:var(--muted); }
+  .due.add{ opacity:0; padding:2px 5px; }
+  .card:hover .due.add{ opacity:.55; }
+  .due svg{ display:block; }
+
+  .asg{ margin-left:auto; border:none; background:transparent; padding:0; cursor:pointer; border-radius:50%; }
+  .spacer-m{ flex:1; }
+
+  .add-task{ display:flex; align-items:center; margin-top:8px; padding:7px 9px; border-radius:9px; color:var(--muted); }
+  .add-task:hover{ background:var(--panel); }
+  .add-task input{ border:none; background:transparent; font:inherit; flex:1; color:var(--text); outline:none; }
+  .add-task input::placeholder{ color:var(--muted); }
+
+  .add-col{ flex:0 0 230px; }
+  .add-col > button, .add-col .sec-input{
+    width:100%; text-align:left; border:1px dashed var(--line-2); background:transparent;
+    border-radius:10px; padding:10px 12px; color:var(--muted); cursor:pointer; font:inherit;
+  }
+  .add-col > button:hover{ background:var(--panel); color:var(--text); }
+  .add-col .sec-input{ color:var(--text); outline:none; border-style:solid; cursor:text; }
+
+  /* ---- avatars ---- */
+  .av{
+    display:inline-grid; place-items:center; border-radius:50%; color:#fff;
+    font-weight:650; line-height:1; user-select:none; flex:0 0 auto;
+  }
+  .av.empty{ background:transparent; border:1.4px dashed var(--line-2); color:var(--muted); }
+
+  /* ---- popover / menu ---- */
+  .pop{
+    position:fixed; z-index:60; background:var(--panel); border:1px solid var(--line);
+    border-radius:11px; box-shadow:var(--pop-shadow); padding:6px; min-width:184px;
+  }
+  .menu{ display:flex; flex-direction:column; max-height:300px; overflow:auto; }
+  .menu-item{
+    display:flex; align-items:center; gap:9px; padding:7px 9px; border:none; background:transparent;
+    border-radius:8px; cursor:pointer; font:inherit; color:var(--text); text-align:left; width:100%;
+  }
+  .menu-item:hover{ background:var(--line); }
+  .menu-item.danger{ color:var(--red); }
+  .menu-label{ flex:1; white-space:nowrap; }
+  .menu-check{ color:var(--accent); font-weight:700; }
+  .menu-div{ height:1px; background:var(--line); margin:5px 2px; }
+  .due-edit{ display:flex; flex-direction:column; gap:8px; padding:3px; }
+  .due-edit input[type=date]{ font:inherit; padding:7px 8px; border:1px solid var(--line-2); border-radius:8px; background:var(--bg); color:var(--text); }
+  .due-row{ display:flex; }
+  .mini{ font:inherit; padding:5px 9px; border:1px solid var(--line); border-radius:7px; background:transparent; color:var(--muted); cursor:pointer; }
+  .mini.danger{ color:var(--red); border-color:color-mix(in srgb, var(--red) 40%, transparent); }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <!-- Original Boardly mark: a coral rounded-square "board" tile with two stacked white task bars. -->
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" fill="#f06a6a"/>
+        <rect x="6" y="7" width="12" height="3.6" rx="1.8" fill="#fff"/>
+        <rect x="6" y="13.4" width="8" height="3.6" rx="1.8" fill="#fff"/>
+      </svg>
+      Boardly
+    </div>
+    <div class="proj"><span class="dot" id="projDot"></span><span id="projName">Loading…</span></div>
+    <span class="spacer"></span>
+    <div class="members" id="members"></div>
+    <label class="toggle"><input type="checkbox" id="hideDone" /> Hide completed</label>
+  </header>
+
+  <div class="err" id="err"></div>
+  <div class="banner" id="banner" hidden></div>
+  <main class="board" id="board"></main>
+
+<script>
+const BASE = location.hostname
+  ? `${location.protocol}//${location.hostname}:8787`
+  : "http://127.0.0.1:8787";
+const APP = "asana-demo";   // this site's MorphDB app key (sent as X-App-Key)
+
+const $ = (id) => document.getElementById(id);
+const err = (m) => { $("err").textContent = m || ""; };
+
+async function api(method, path, body) {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: { "Content-Type": "application/json", "X-App-Key": APP },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = res.status === 204 ? null : await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+function handleErr(e) {
+  const m = e?.message || String(e);
+  if (/unknown app/i.test(m)) { $("banner").hidden = false; $("banner").innerHTML =
+    'This page needs its MorphDB app. Run <code>morphdb init ' +
+    'examples/asana/morphdb.schema.json</code> (or serve this folder over http) and reload.'; }
+  else err(m);
+}
+
+/* ---------- tiny DOM helper ---------- */
+function h(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k === "html") e.innerHTML = v;
+    else if (k === "style") e.style.cssText = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) {
+    if (k == null || k === false) continue;
+    e.append(k.nodeType ? k : document.createTextNode(k));
+  }
+  return e;
+}
+
+/* ---------- icons ---------- */
+const CHECK = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>';
+const CAL   = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4.5" width="18" height="16.5" rx="2.4"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>';
+const PERSON= '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-4.1 0-7 2.1-7 4.6V20h14v-1.4c0-2.5-2.9-4.6-7-4.6Z"/></svg>';
+
+/* ---------- avatars ---------- */
+const AV_COLORS = ["#f06a6a","#4573d2","#5da283","#b86bd6","#e8a13a","#3aa6b9","#d6657f","#7d6bd6","#e07a5f"];
+function avColor(u){ let n=0; const s=u._guid||u.name||""; for(const c of s) n=(n*31+c.charCodeAt(0))>>>0; return AV_COLORS[n%AV_COLORS.length]; }
+function initials(u){
+  if (u.avatar && u.avatar.trim()) return u.avatar.trim().slice(0,2);
+  const p=(u.name||"?").trim().split(/\s+/);
+  return ((p[0]?.[0]||"")+(p[1]?.[0]||"")).toUpperCase() || "?";
+}
+function avatar(u, size=26){
+  if (!u) return h("span",{class:"av empty", style:`width:${size}px;height:${size}px`, html:PERSON});
+  return h("span",{class:"av", title:u.name,
+    style:`width:${size}px;height:${size}px;background:${avColor(u)};font-size:${Math.round(size*0.4)}px`},
+    initials(u));
+}
+
+/* ---------- dates ---------- */
+function fmtDue(iso){
+  const d=new Date(iso), now=new Date();
+  const o={month:"short",day:"numeric"};
+  if (d.getFullYear()!==now.getFullYear()) o.year="numeric";
+  return d.toLocaleDateString(undefined,o);
+}
+function dueState(t){
+  if(!t.due) return "";
+  if(t.done) return "done";
+  const d=new Date(t.due); d.setHours(0,0,0,0);
+  const today=new Date(); today.setHours(0,0,0,0);
+  if(d<today) return "overdue";
+  if(d.getTime()===today.getTime()) return "today";
+  return "";
+}
+
+/* ---------- popover / menu ---------- */
+let activePop=null;
+function closePop(){
+  if(!activePop) return;
+  activePop.remove(); activePop=null;
+  document.removeEventListener("mousedown", onDoc, true);
+  document.removeEventListener("keydown", onKey, true);
+  window.removeEventListener("scroll", closePop, true);
+  window.removeEventListener("resize", closePop, true);
+}
+function onDoc(e){ if(activePop && !activePop.contains(e.target)) closePop(); }
+function onKey(e){ if(e.key==="Escape") closePop(); }
+function popover(anchor, build){
+  closePop();
+  const pop=h("div",{class:"pop"});
+  pop.append(build(closePop));
+  document.body.append(pop);
+  activePop=pop;
+  const r=anchor.getBoundingClientRect();
+  const pw=pop.offsetWidth, ph=pop.offsetHeight;
+  let left=r.left, top=r.bottom+6;
+  if(left+pw > innerWidth-8) left=innerWidth-8-pw;
+  if(top+ph  > innerHeight-8) top=r.top-6-ph;
+  pop.style.left=Math.max(8,left)+"px";
+  pop.style.top =Math.max(8,top)+"px";
+  setTimeout(()=>{
+    document.addEventListener("mousedown", onDoc, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", closePop, true);
+    window.addEventListener("resize", closePop, true);
+  },0);
+  return closePop;
+}
+function menu(anchor, items){
+  popover(anchor,(close)=>{
+    const m=h("div",{class:"menu"});
+    for(const it of items){
+      if(it.divider){ m.append(h("div",{class:"menu-div"})); continue; }
+      const row=h("button",{class:"menu-item"+(it.danger?" danger":""),
+        onClick:()=>{ close(); it.onClick&&it.onClick(); }});
+      if("avatar" in it) row.append(avatar(it.avatar,22));
+      row.append(h("span",{class:"menu-label"}, it.label));
+      if(it.checked) row.append(h("span",{class:"menu-check"},"✓"));
+      m.append(row);
+    }
+    return m;
+  });
+}
+
+/* ---------- state ---------- */
+const state={ project:null, users:[], sections:[], tasks:[], hideDone:false };
+let pendingFocus=null;
+const maxOrder=()=> state.tasks.reduce((m,t)=>Math.max(m, t.order||0), -1);
+
+/* ---------- load ---------- */
+async function loadAll(){
+  err("");
+  try{
+    const pj = await api("GET","/objects/project?limit=1&sort=_created_at&order=asc");
+    state.project = pj.objects[0] || null;
+    if(!state.project){ render(); return; }
+    const pg = state.project._guid;
+    const [us, secs, tks] = await Promise.all([
+      api("GET","/objects/user?limit=200&sort=_created_at&order=asc"),
+      api("GET",`/objects/section?project=${pg}&sort=order&order=asc&limit=200`),
+      api("GET",`/objects/task?project=${pg}&include=assignee&sort=order&order=asc&limit=500`
+              + (state.hideDone ? "&done=false" : "")),
+    ]);
+    state.users=us.objects; state.sections=secs.objects; state.tasks=tks.objects;
+    render();
+  }catch(e){ handleErr(e); }
+}
+
+/* ---------- mutations (optimistic) ---------- */
+function patchTask(guid, patch){
+  const t=state.tasks.find(x=>x._guid===guid);
+  if(t){
+    const local={...patch};
+    if("assignee" in patch)
+      local.assignee = patch.assignee ? (state.users.find(u=>u._guid===patch.assignee)||null) : null;
+    Object.assign(t, local); render();
+  }
+  api("PATCH","/objects/task/"+guid, patch).catch(e=>{ handleErr(e); loadAll(); });
+}
+function moveTask(guid, sectionGuid){
+  const ord=maxOrder()+1;
+  const t=state.tasks.find(x=>x._guid===guid);
+  if(t){ t.section=sectionGuid; t.order=ord; render(); }
+  api("PATCH","/objects/task/"+guid, {section:sectionGuid, order:ord}).catch(e=>{ handleErr(e); loadAll(); });
+}
+function deleteTask(guid){
+  state.tasks=state.tasks.filter(x=>x._guid!==guid); render();
+  api("DELETE","/objects/task/"+guid).catch(e=>{ handleErr(e); loadAll(); });
+}
+async function addTask(sectionGuid, title){
+  title=(title||"").trim(); if(!title) return;
+  try{
+    await api("POST","/objects/task",{
+      title, notes:"", done:false, due:null, order:maxOrder()+1,
+      project:state.project._guid, section:sectionGuid, assignee:null,
+    });
+    pendingFocus=sectionGuid;
+    await loadAll();
+  }catch(e){ handleErr(e); }
+}
+async function addSection(name){
+  name=(name||"").trim(); if(!name){ render(); return; }
+  const ord=state.sections.reduce((m,s)=>Math.max(m, s.order||0), -1)+1;
+  try{ await api("POST","/objects/section",{ name, order:ord, project:state.project._guid }); await loadAll(); }
+  catch(e){ handleErr(e); }
+}
+
+/* ---------- menus ---------- */
+function openAssignMenu(anchor, t){
+  const cur=t.assignee ? t.assignee._guid : null;
+  const items=[{label:"Unassigned", avatar:null, checked:cur===null, onClick:()=>patchTask(t._guid,{assignee:null})}];
+  for(const u of state.users)
+    items.push({label:u.name, avatar:u, checked:cur===u._guid, onClick:()=>patchTask(t._guid,{assignee:u._guid})});
+  menu(anchor, items);
+}
+function openTaskMenu(anchor, t){
+  const items=[];
+  for(const s of state.sections){
+    if(s._guid===t.section) continue;
+    items.push({label:"Move to "+s.name, onClick:()=>moveTask(t._guid, s._guid)});
+  }
+  if(items.length) items.push({divider:true});
+  items.push({label:"Delete task", danger:true, onClick:()=>deleteTask(t._guid)});
+  menu(anchor, items);
+}
+function openDueEditor(anchor, t){
+  popover(anchor,(close)=>{
+    const w=h("div",{class:"due-edit"});
+    const inp=h("input",{type:"date", value: t.due ? t.due.slice(0,10) : ""});
+    inp.addEventListener("change",()=>{
+      const v=inp.value;
+      patchTask(t._guid,{ due: v ? new Date(v+"T12:00:00").toISOString() : null });
+      close();
+    });
+    const row=h("div",{class:"due-row"});
+    if(t.due) row.append(h("button",{class:"mini danger", onClick:()=>{ patchTask(t._guid,{due:null}); close(); }},"Clear date"));
+    w.append(inp, row);
+    setTimeout(()=>inp.focus(),0);
+    return w;
+  });
+}
+
+/* ---------- render ---------- */
+function render(){
+  // header
+  $("projName").textContent = state.project ? state.project.name : "Boardly";
+  $("projDot").style.background = state.project?.color || "var(--accent)";
+  const ms=$("members"); ms.innerHTML="";
+  for(const u of state.users) ms.append(avatar(u,26));
+
+  const board=$("board"); board.innerHTML="";
+  if(!state.project){
+    board.append(h("div",{style:"color:var(--muted);padding:20px"},"No project yet."));
+    return;
+  }
+  for(const s of state.sections){
+    const tasks=state.tasks.filter(t => t.section===s._guid && (!state.hideDone || !t.done));
+    board.append(columnEl(s, tasks));
+  }
+  board.append(addSectionEl());
+}
+
+function columnEl(s, tasks){
+  const head=h("div",{class:"col-head"},
+    h("span",{class:"col-title"}, s.name),
+    h("span",{class:"count"}, String(tasks.length)));
+  const cards=h("div",{class:"cards"});
+  if(!tasks.length) cards.append(h("div",{class:"col-empty"}, state.hideDone ? "All done 🎉" : "No tasks yet"));
+  for(const t of tasks) cards.append(cardEl(t));
+
+  const input=h("input",{type:"text", placeholder:"+ Add task"});
+  input.addEventListener("keydown",(e)=>{
+    if(e.key==="Enter"){ const v=input.value; input.value=""; addTask(s._guid, v); }
+  });
+  const col=h("div",{class:"col"}, head, cards, h("div",{class:"add-task"}, input));
+  if(pendingFocus===s._guid){ pendingFocus=null; setTimeout(()=>input.focus(),0); }
+  return col;
+}
+
+function cardEl(t){
+  const card=h("div",{class:"card"+(t.done?" done":"")});
+
+  const check=h("button",{class:"check"+(t.done?" on":""),
+    title: t.done ? "Mark incomplete" : "Mark complete", html:CHECK,
+    onClick:()=>patchTask(t._guid,{done:!t.done})});
+  const title=h("div",{class:"title"}, t.title || "(untitled)");
+  const more=h("button",{class:"more", title:"Task actions",
+    onClick:()=>openTaskMenu(more, t)}, "⋯");
+  const top=h("div",{class:"card-top"}, check, title, more);
+
+  const ds=dueState(t);
+  const due = t.due
+    ? h("button",{class:"due "+ds, title:"Change due date",
+        onClick:()=>openDueEditor(due, t), html: CAL+"<span>"+fmtDue(t.due)+"</span>"})
+    : h("button",{class:"due add", title:"Set due date",
+        onClick:()=>openDueEditor(due, t), html: CAL});
+
+  const asg=h("button",{class:"asg",
+    title: t.assignee ? ("Assigned to "+t.assignee.name) : "Assign",
+    onClick:()=>openAssignMenu(asg, t)}, avatar(t.assignee, 24));
+
+  const meta=h("div",{class:"card-meta"}, due, h("span",{class:"spacer-m"}), asg);
+  card.append(top, meta);
+  return card;
+}
+
+function addSectionEl(){
+  const wrap=h("div",{class:"add-col"});
+  const btn=h("button",{}, "+ Add section");
+  btn.addEventListener("click",()=>{
+    const input=h("input",{class:"sec-input", type:"text", placeholder:"Section name…"});
+    input.addEventListener("keydown",(e)=>{
+      if(e.key==="Enter") addSection(input.value);
+      if(e.key==="Escape") render();
+    });
+    input.addEventListener("blur",()=>{ if(!input.value.trim()) render(); });
+    wrap.innerHTML=""; wrap.append(input); setTimeout(()=>input.focus(),0);
+  });
+  wrap.append(btn);
+  return wrap;
+}
+
+/* ---------- self-bootstrap (in-browser `morphdb init`) ---------- */
+async function ensureApp(){
+  try{
+    await fetch(BASE+"/app",{ method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:APP}) });
+  }catch(_){ /* connection errors surface on the first real call */ }
+}
+async function applySchemaFromFile(){
+  let doc;
+  try{
+    const r=await fetch("./morphdb.schema.json");
+    if(!r.ok) throw new Error("no schema file");
+    doc=await r.json();
+  }catch(_){ return; }            // opened via file:// — assume `morphdb init` already ran
+  for(const t of doc.types)               // pass 1: every type's fields
+    await api("PUT","/schema/"+t.name, { merge:true, fields:t.fields||{} });
+  for(const t of doc.types){              // pass 2: relations (targets now exist)
+    const rels=t.relations||{};
+    if(Object.keys(rels).length) await api("PUT","/schema/"+t.name, { merge:true, relations:rels });
+  }
+}
+
+/* ---------- seed sample data (idempotent) ---------- */
+async function seedIfEmpty(){
+  const probe=await api("GET","/objects/project?limit=1");
+  if(probe.total!==0) return;
+
+  const mk=(name,avatar)=>api("POST","/objects/user",{name,avatar});
+  const [ana,theo,mira,leo]=await Promise.all([
+    mk("Ana Ruiz","AR"), mk("Theo Park","TP"), mk("Mira Shah","MS"), mk("Leo Kim","LK"),
+  ]);
+
+  const project=await api("POST","/objects/project",{ name:"Q3 Product Launch", color:"#4573d2" });
+  const pg=project._guid;
+
+  const sectionDefs=["To do","In progress","Done"];
+  const sections=[];
+  for(let i=0;i<sectionDefs.length;i++)
+    sections.push(await api("POST","/objects/section",{ name:sectionDefs[i], order:i, project:pg }));
+
+  const DAY=86400000, now=Date.now();
+  const due=(n)=> new Date(now + n*DAY).toISOString();
+  // [title, sectionIdx, assignee, {done, due}]
+  const rows=[
+    ["Finalize launch messaging", 0, ana,  { due:due(3) }],
+    ["Design landing-page hero",  0, mira, { due:due(5) }],
+    ["Draft press release",       0, leo,  {}],
+    ["Build pricing page",        1, theo, { due:due(1) }],
+    ["Wire up analytics events",  1, ana,  { due:due(-1) }],
+    ["Record product demo video", 1, mira, {}],
+    ["Audit competitor features", 2, leo,  { done:true }],
+    ["Kickoff meeting notes",     2, theo, { done:true, due:due(-4) }],
+  ];
+  let order=0;
+  for(const [title, si, who, opt] of rows){
+    await api("POST","/objects/task",{
+      title, notes:"", order:order++,
+      done: !!opt.done, due: opt.due || null,
+      project:pg, section:sections[si]._guid, assignee:who._guid,
+    });
+  }
+}
+
+/* ---------- events ---------- */
+$("hideDone").addEventListener("change",(e)=>{ state.hideDone=e.target.checked; loadAll(); });
+
+/* ---------- go ---------- */
+(async()=>{
+  try{ await ensureApp(); await applySchemaFromFile(); }
+  catch(e){ err("Could not reach MorphDB at "+BASE+" — is it running? ("+e.message+")"); return; }
+  try{ await seedIfEmpty(); }
+  catch(e){ handleErr(e); }
+  await loadAll();
+})();
+</script>
+</body>
+</html>

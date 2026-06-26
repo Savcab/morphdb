@@ -277,6 +277,7 @@
     <a href="#split">the split</a>
     <a href="#relations">relations</a>
     <a href="#cli">how claude plugs in</a>
+    <a href="#examples">examples</a>
   </nav>
 </div></div>
 
@@ -456,6 +457,21 @@
     <div class="scard"><div class="st">Schema CLI</div><div class="sd"><span class="k">morphdb app · schema · query</span> — the agent edits the model, no curl.</div></div>
     <div class="scard"><div class="st">Claude skill</div><div class="sd">teaches the agent the whole workflow.</div></div>
     <div class="scard"><div class="st">Dashboard</div><div class="sd">read-only ER view of every app + type.</div></div>
+  </div>
+</div></section>
+
+<!-- EXAMPLE APPS -->
+<section id="examples"><div class="wrap">
+  <div class="eyebrow"><span class="n">08</span> example apps <span class="rule"></span></div>
+  <h2>One backend. A LinkedIn, a Notion, a Figma — same endpoints.</h2>
+  <p class="lede">Each app below is a single HTML file hitting the <b>same generic <span class="k">/objects</span> endpoints</b> — only its <span class="k">morphdb.schema.json</span> differs. Every one ships that schema file, so you stand it up on your own MorphDB with a single <span class="k">morphdb init</span> and run it unchanged. <a href="https://github.com/Savcab/morphdb/tree/main/examples">Browse the gallery →</a></p>
+  <div class="stack">
+    <a class="scard" href="https://github.com/Savcab/morphdb/tree/main/examples/linkedin"><div class="st">Linkup</div><div class="sd">LinkedIn-style network — symmetric many-to-many connections, a feed hydrated with <span class="k">include</span>.</div></a>
+    <a class="scard" href="https://github.com/Savcab/morphdb/tree/main/examples/notion"><div class="st">Noted</div><div class="sd">Notion-style docs — a self-referential page tree of ordered blocks.</div></a>
+    <a class="scard" href="https://github.com/Savcab/morphdb/tree/main/examples/figma"><div class="st">Shaper</div><div class="sd">Figma-style canvas — drag a shape and its x/y/z <span class="k">PATCH</span> straight to the DB.</div></a>
+    <a class="scard" href="https://github.com/Savcab/morphdb/tree/main/examples/asana"><div class="st">Boardly</div><div class="sd">Asana-style board — tasks grouped by section, assignees hydrated via <span class="k">include</span>.</div></a>
+    <a class="scard" href="https://github.com/Savcab/morphdb/tree/main/examples/linear"><div class="st">Stride</div><div class="sd">Linear-style tracker — an indexed status field drives the kanban; priority sort.</div></a>
+    <a class="scard" href="https://github.com/Savcab/morphdb/tree/main/examples/todo"><div class="st">Todo</div><div class="sd">The minimal starter — one type, self-bootstrapping. Start here.</div></a>
   </div>
 </div></section>
 

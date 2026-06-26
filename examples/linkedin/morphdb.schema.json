@@ -1,0 +1,47 @@
+{
+  "morphdb_schema_version": 1,
+  "app": "linkedin-demo",
+  "types": [
+    {
+      "name": "person",
+      "fields": {
+        "name": { "type": "string", "index": true },
+        "headline": "string",
+        "location": { "type": "string", "index": true },
+        "about": "string"
+      },
+      "relations": {
+        "connections": {
+          "to": "person",
+          "cardinality": "many_to_many",
+          "symmetric": true
+        }
+      }
+    },
+    {
+      "name": "post",
+      "fields": {
+        "body": "string",
+        "created": { "type": "datetime", "index": true },
+        "likes": { "type": "number", "index": true, "default": 0 }
+      },
+      "relations": {
+        "author": {
+          "to": "person",
+          "cardinality": "many_to_one",
+          "inverse": "posts"
+        }
+      }
+    },
+    {
+      "name": "job",
+      "fields": {
+        "title": "string",
+        "company": { "type": "string", "index": true },
+        "location": { "type": "string", "index": true },
+        "description": "string"
+      },
+      "relations": {}
+    }
+  ]
+}

@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MorphDB · Noted — a Notion-style example</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --sidebar: #fbfbfa;
+    --text: #37352f;
+    --muted: #9a9890;
+    --faint: #b8b6af;
+    --border: #ededec;
+    --hover: #efeeec;
+    --sel: #e6e5e1;
+    --accent: #2383e2;
+    --rule: #e4e3e0;
+    --menu-bg: #ffffff;
+    --menu-shadow: 0 8px 28px rgba(15,15,15,.16), 0 2px 6px rgba(15,15,15,.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #191919;
+      --sidebar: #202020;
+      --text: #e9e9e6;
+      --muted: #8b8b86;
+      --faint: #6a6a66;
+      --border: #2a2a28;
+      --hover: #2c2c2a;
+      --sel: #38352f;
+      --accent: #5b9bd8;
+      --rule: #333330;
+      --menu-bg: #252523;
+      --menu-shadow: 0 8px 28px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 15px/1.5 -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text); background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+  .app { display: flex; height: 100%; }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: 268px; flex: 0 0 268px; background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 9px;
+    padding: 12px 14px 6px; font-weight: 600; font-size: 14px;
+  }
+  .brand .logo {
+    width: 22px; height: 22px; border-radius: 6px; flex: 0 0 22px;
+    background: linear-gradient(135deg, #000 0%, #2c2c2c 100%);
+    color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 14px;
+  }
+  @media (prefers-color-scheme: dark) { .brand .logo { background: linear-gradient(135deg,#f4f4f2,#cfcfca); color:#191919; } }
+  .brand .sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .newpage {
+    margin: 4px 8px 8px; padding: 6px 8px; display: flex; align-items: center; gap: 8px;
+    border: none; background: none; border-radius: 6px; cursor: pointer;
+    color: var(--muted); font-size: 13.5px; width: calc(100% - 16px); text-align: left;
+  }
+  .newpage:hover { background: var(--hover); color: var(--text); }
+  .newpage svg { width: 15px; height: 15px; }
+  .section-label { padding: 4px 16px; font-size: 11px; letter-spacing: .04em; font-weight: 600; color: var(--faint); text-transform: uppercase; }
+  .tree { overflow-y: auto; flex: 1; padding: 2px 8px 16px; }
+  .row {
+    display: flex; align-items: center; gap: 2px; height: 28px; padding-right: 4px;
+    border-radius: 6px; cursor: pointer; user-select: none; color: var(--text);
+  }
+  .row:hover { background: var(--hover); }
+  .row.active { background: var(--sel); }
+  .twisty {
+    flex: 0 0 18px; width: 18px; height: 18px; border: none; background: none; padding: 0;
+    display: grid; place-items: center; border-radius: 4px; cursor: pointer; color: var(--muted);
+    opacity: 0; transition: opacity .1s;
+  }
+  .row:hover .twisty { opacity: 1; }
+  .twisty:hover { background: rgba(140,140,140,.18); }
+  .twisty.leaf { pointer-events: none; }
+  .twisty svg { width: 12px; height: 12px; transition: transform .12s; }
+  .ricon { flex: 0 0 20px; width: 20px; text-align: center; font-size: 15px; line-height: 1; }
+  .rtitle {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 14px;
+  }
+  .rtitle.empty { color: var(--faint); }
+  .radd, .rdel {
+    flex: 0 0 22px; width: 22px; height: 22px; border: none; background: none; border-radius: 4px;
+    display: grid; place-items: center; cursor: pointer; color: var(--muted); opacity: 0; transition: opacity .1s;
+    font-size: 16px; line-height: 1;
+  }
+  .rdel svg { width: 14px; height: 14px; }
+  .row:hover .radd, .row:hover .rdel { opacity: 1; }
+  .radd:hover, .rdel:hover { background: rgba(140,140,140,.2); color: var(--text); }
+  .tree .empty-tree { color: var(--faint); font-size: 13px; padding: 10px 16px; }
+  .foot { padding: 8px 16px; border-top: 1px solid var(--border); color: var(--faint); font-size: 11px; }
+  .foot code { color: var(--muted); }
+
+  /* ---------- Main ---------- */
+  .main { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
+  .topbar {
+    position: sticky; top: 0; z-index: 5; background: var(--bg);
+    display: flex; align-items: center; gap: 6px; min-height: 45px; padding: 0 14px;
+    border-bottom: 1px solid transparent;
+  }
+  .crumbs { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow: hidden; font-size: 14px; }
+  .crumb { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border-radius: 5px; cursor: pointer; color: var(--text);
+           white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; border: none; background: none; }
+  .crumb:hover { background: var(--hover); }
+  .crumb.cur { font-weight: 500; }
+  .crumb .ci { font-size: 14px; }
+  .sep { color: var(--faint); padding: 0 1px; }
+  .topbtn { border: none; background: none; padding: 5px 9px; border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 13.5px; white-space: nowrap; }
+  .topbtn:hover { background: var(--hover); color: var(--text); }
+
+  .doc { width: 100%; max-width: 760px; margin: 0 auto; padding: 8px 60px 40vh; flex: 1; }
+  .doc-icon {
+    font-size: 64px; line-height: 1; display: inline-block; cursor: pointer; border-radius: 10px;
+    padding: 2px 6px; margin: 18px 0 2px -6px;
+  }
+  .doc-icon:hover { background: var(--hover); }
+  .doc-title {
+    font-size: 40px; line-height: 1.15; font-weight: 700; letter-spacing: -.01em;
+    outline: none; margin: 4px 0 10px; min-height: 48px; word-break: break-word;
+  }
+  .doc-title:empty:before { content: attr(data-ph); color: var(--faint); }
+
+  /* ---------- Blocks ---------- */
+  .blocks { margin-top: 4px; }
+  .block { display: grid; grid-template-columns: 44px 1fr; align-items: start; position: relative; }
+  .gutter { display: flex; align-items: center; justify-content: flex-end; gap: 1px; padding-top: 4px; opacity: 0; transition: opacity .08s; }
+  .block:hover .gutter { opacity: 1; }
+  .kind-h1 .gutter { padding-top: 16px; }
+  .kind-h2 .gutter { padding-top: 11px; }
+  .kind-divider .gutter { padding-top: 10px; }
+  .gbtn {
+    border: none; background: none; border-radius: 4px; cursor: pointer; color: var(--faint);
+    display: grid; place-items: center; padding: 0;
+  }
+  .gbtn.plus { width: 20px; height: 22px; font-size: 17px; }
+  .gbtn.handle { width: 17px; height: 22px; }
+  .gbtn.handle svg { width: 12px; height: 16px; }
+  .gbtn:hover { background: var(--hover); color: var(--text); }
+  .content { min-width: 0; }
+  .ce { outline: none; padding: 3px 2px; word-break: break-word; white-space: pre-wrap; }
+  .ce:empty:before { content: attr(data-ph); color: var(--faint); pointer-events: none; }
+  .ce.text { }
+  .ce.h1 { font-size: 1.85em; font-weight: 700; padding-top: 14px; letter-spacing: -.01em; }
+  .ce.h2 { font-size: 1.4em; font-weight: 650; padding-top: 9px; }
+  .ce.quote {
+    border-left: 3px solid var(--text); padding-left: 14px; margin: 3px 0; font-size: 1.02em;
+  }
+  .kind-todo .content { display: flex; align-items: flex-start; gap: 9px; }
+  .todobox { margin: 6px 0 0; width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex: 0 0 16px; }
+  .kind-todo .ce { flex: 1; }
+  .block.checked .ce.todo { text-decoration: line-through; color: var(--faint); }
+  .kind-divider .content { padding: 8px 0; }
+  .kind-divider hr { border: none; border-top: 1px solid var(--rule); margin: 0; }
+
+  .addblock {
+    display: flex; align-items: center; gap: 8px; margin: 4px 0 0 44px; padding: 6px 2px;
+    color: var(--faint); cursor: text; border-radius: 4px; font-size: 15px; user-select: none;
+  }
+  .addblock:hover { color: var(--muted); }
+  .addblock svg { width: 16px; height: 16px; }
+
+  .doc-empty { text-align: center; color: var(--muted); margin-top: 18vh; }
+  .doc-empty .big { font-size: 46px; margin-bottom: 12px; }
+  .doc-empty button {
+    margin-top: 16px; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--accent); color: #fff; cursor: pointer; font-weight: 500;
+  }
+
+  /* ---------- Floating menu / pickers ---------- */
+  .menu {
+    position: fixed; z-index: 50; background: var(--menu-bg); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: var(--menu-shadow); padding: 6px; min-width: 188px;
+    font-size: 14px; max-height: 78vh; overflow: auto;
+  }
+  .menu .mlabel { padding: 5px 9px 3px; color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .mitem { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none; background: none;
+           padding: 7px 9px; border-radius: 6px; cursor: pointer; color: var(--text); }
+  .mitem:hover { background: var(--hover); }
+  .mitem .mi { width: 18px; text-align: center; color: var(--muted); font-size: 15px; }
+  .mitem.danger { color: #e0544b; }
+  .mitem.danger .mi { color: #e0544b; }
+  .msep { height: 1px; background: var(--border); margin: 5px 4px; }
+  .emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+  .emoji-grid button { border: none; background: none; font-size: 20px; padding: 5px; border-radius: 6px; cursor: pointer; line-height: 1; }
+  .emoji-grid button:hover { background: var(--hover); }
+
+  /* ---------- Surfaces ---------- */
+  .banner {
+    display: none; margin: 12px; padding: 12px 14px; border-radius: 10px;
+    background: #fde8e6; color: #8a1c12; border: 1px solid #f5c6c0; font-size: 13.5px;
+  }
+  @media (prefers-color-scheme: dark) { .banner { background: #3a2220; color: #f3b6af; border-color: #5a302c; } }
+  .banner code { background: rgba(0,0,0,.08); padding: 1px 5px; border-radius: 4px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: #e0544b; color: #fff; padding: 9px 16px; border-radius: 8px; font-size: 13.5px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 80; max-width: 80vw;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 6.5h12M9.5 12h8.5M9.5 17.5h6"/>
+        </svg>
+      </span>
+      <span>Noted <span class="sub">· MorphDB</span></span>
+    </div>
+    <button class="newpage" id="newRoot">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+      New page
+    </button>
+    <div class="section-label">Private</div>
+    <nav class="tree" id="tree"></nav>
+    <div class="foot">Backed by <strong>MorphDB</strong> · app <code>notion-demo</code></div>
+  </aside>
+
+  <main class="main">
+    <div class="banner" id="banner"></div>
+    <div class="topbar" id="topbar"></div>
+    <div id="doc" class="doc"></div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const BASE = location.hostname
+  ? `${location.protocol}//${location.hostname}:8787`
+  : "http://127.0.0.1:8787";
+const APP = "notion-demo";   // this site's MorphDB app key (sent as X-App-Key)
+
+const $ = (id) => document.getElementById(id);
+
+async function api(method, path, body) {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: { "Content-Type": "application/json", "X-App-Key": APP },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = res.status === 204 ? null : await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+let toastTimer;
+function showErr(msg) {
+  if (/unknown app|no such app/i.test(msg || "")) { showBanner(); return; }
+  const t = $("toast"); t.textContent = msg || "Something went wrong";
+  t.classList.add("show"); clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3800);
+}
+function showBanner() {
+  const b = $("banner");
+  b.innerHTML = `This page can't find its backend app. Run <code>morphdb init ` +
+    `&lt;this folder&gt;/morphdb.schema.json</code> (or serve the folder over http) and reload.`;
+  b.style.display = "block";
+}
+
+/* ---------- Self-bootstrap (in-browser `morphdb init`) ---------- */
+async function ensureApp() {
+  try {
+    await fetch(BASE + "/app", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: APP }),
+    }); // 409 (already registered) is fine — we don't inspect it
+  } catch (_) { /* connection errors surface on the first real call */ }
+}
+async function ensureSchema() {
+  let doc = null;
+  try { const r = await fetch("./morphdb.schema.json"); if (r.ok) doc = await r.json(); }
+  catch (_) { /* opened via file:// — assume `morphdb init` already ran */ }
+  if (!doc || !Array.isArray(doc.types)) return;
+  for (const t of doc.types)
+    await api("PUT", `/schema/${t.name}`, { merge: true, fields: t.fields || {} });
+  for (const t of doc.types)
+    if (t.relations && Object.keys(t.relations).length)
+      await api("PUT", `/schema/${t.name}`, { merge: true, relations: t.relations });
+}
+
+/* ---------- Seed (only when empty) ---------- */
+async function mkPage(title, icon, order, parent) {
+  const body = { title, icon, order };
+  if (parent) body.parent = parent;
+  return api("POST", "/objects/page", body);
+}
+async function mkBlocks(pageGuid, rows) {
+  let i = 0;
+  for (const r of rows)
+    await api("POST", "/objects/block",
+      { kind: r.k, text: r.t || "", checked: !!r.c, order: i++, page: pageGuid });
+}
+async function seedIfEmpty() {
+  const { total } = await api("GET", "/objects/page?limit=1");
+  if (total > 0) return;
+
+  const gs = await mkPage("Getting started", "📓", 0, null);
+  await mkBlocks(gs._guid, [
+    { k: "h1", t: "Getting started" },
+    { k: "text", t: "Welcome to your workspace. This is Noted, a tiny Notion-style workspace built on MorphDB — pages nest into each other through a self-relation, and every block is its own object." },
+    { k: "todo", t: "Open a page from the sidebar", c: true },
+    { k: "todo", t: "Hover a page and hit “+” to create a sub-page", c: false },
+    { k: "quote", t: "Tip: press Enter at the end of a block to add the next one." },
+  ]);
+
+  const eng = await mkPage("Engineering", "🚀", 1, null);
+  await mkBlocks(eng._guid, [
+    { k: "text", t: "Home base for the engineering team." },
+    { k: "h2", t: "Squads" },
+    { k: "todo", t: "Platform", c: true },
+    { k: "todo", t: "Product", c: false },
+  ]);
+  const road = await mkPage("Roadmap", "🗺️", 0, eng._guid);
+  await mkBlocks(road._guid, [
+    { k: "h2", t: "Q3 roadmap" },
+    { k: "todo", t: "Ship real-time sync", c: false },
+    { k: "todo", t: "Polish the block editor", c: true },
+    { k: "text", t: "Owner: the whole team." },
+  ]);
+  const notes = await mkPage("Meeting notes", "📝", 1, eng._guid);
+  await mkBlocks(notes._guid, [
+    { k: "h2", t: "Weekly standup" },
+    { k: "text", t: "Attendees: everyone" },
+    { k: "divider" },
+    { k: "text", t: "Action items 👇" },
+    { k: "todo", t: "Write the design doc", c: false },
+  ]);
+}
+
+/* ---------- State ---------- */
+const state = {
+  pages: [], byId: {}, childrenMap: {}, roots: [],
+  expanded: new Set(), currentPageGuid: null, blocks: [], focusGuid: null,
+};
+const PH = { text: "Type something…", h1: "Heading 1", h2: "Heading 2", todo: "To-do", quote: "Empty quote" };
+const KINDS = [
+  ["text", "¶", "Text"], ["h1", "H₁", "Heading 1"], ["h2", "H₂", "Heading 2"],
+  ["todo", "☑", "To-do list"], ["quote", "❝", "Quote"], ["divider", "—", "Divider"],
+];
+const EMOJIS = "📄 📝 📓 📔 📕 📗 📘 📙 🗒️ 📋 ✅ 🚀 🎯 💡 🔥 ⭐ 🌱 🧩 🛠️ 🧠 📊 📈 💬 📌 🗂️ 🔖 🏷️ 🧪 🎨 🎵 ☕ 🌍 🏆 ❤️ ⚡ 🔭".split(" ");
+
+const ICONS = {
+  caretR: '<svg viewBox="0 0 12 12" fill="currentColor"><path d="M4 2.5l4 3.5-4 3.5z"/></svg>',
+  caretD: '<svg viewBox="0 0 12 12" fill="currentColor"><path d="M2.5 4h7L6 8.5z"/></svg>',
+  grip: '<svg viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></svg>',
+  trash: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5h10M6.5 4V3h3v1M5 4.5l.6 8h4.8l.6-8"/></svg>',
+  plus: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
+};
+
+/* ---------- Tree / sidebar ---------- */
+async function loadTree() {
+  const { objects } = await api("GET", "/objects/page?sort=order&order=asc&limit=500");
+  state.pages = objects;
+  state.byId = {}; state.childrenMap = {}; state.roots = [];
+  for (const p of objects) state.byId[p._guid] = p;
+  for (const p of objects) {
+    const par = p.parent;                         // a guid string, or null
+    if (par && state.byId[par]) (state.childrenMap[par] ||= []).push(p);
+    else state.roots.push(p);
+  }
+  renderSidebar();
+}
+
+function renderSidebar() {
+  const tree = $("tree");
+  tree.innerHTML = "";
+  if (!state.roots.length) {
+    tree.innerHTML = '<div class="empty-tree">No pages yet — create one above.</div>';
+    return;
+  }
+  for (const r of state.roots) tree.appendChild(rowEl(r, 0));
+}
+
+function rowEl(p, depth) {
+  const frag = document.createDocumentFragment();
+  const row = document.createElement("div");
+  row.className = "row" + (p._guid === state.currentPageGuid ? " active" : "");
+  row.style.paddingLeft = (6 + depth * 16) + "px";
+
+  const kids = state.childrenMap[p._guid] || [];
+  const tw = document.createElement("button");
+  tw.className = "twisty" + (kids.length ? "" : " leaf");
+  if (kids.length) {
+    tw.innerHTML = state.expanded.has(p._guid) ? ICONS.caretD : ICONS.caretR;
+    tw.onclick = (e) => { e.stopPropagation(); toggleExpand(p._guid); };
+  }
+  const ic = document.createElement("span"); ic.className = "ricon"; ic.textContent = p.icon || "📄";
+  const tt = document.createElement("span");
+  tt.className = "rtitle" + (p.title ? "" : " empty");
+  tt.textContent = p.title || "Untitled";
+
+  const add = document.createElement("button");
+  add.className = "radd"; add.title = "Add a sub-page"; add.textContent = "+";
+  add.onclick = (e) => { e.stopPropagation(); newPage(p._guid); };
+  const del = document.createElement("button");
+  del.className = "rdel"; del.title = "Delete page"; del.innerHTML = ICONS.trash;
+  del.onclick = (e) => { e.stopPropagation(); deletePage(p._guid); };
+
+  row.append(tw, ic, tt, add, del);
+  row.onclick = () => selectPage(p._guid);
+  frag.appendChild(row);
+
+  if (kids.length && state.expanded.has(p._guid))
+    for (const k of kids) frag.appendChild(rowEl(k, depth + 1));
+  return frag;
+}
+
+function toggleExpand(guid) {
+  if (state.expanded.has(guid)) state.expanded.delete(guid);
+  else state.expanded.add(guid);
+  renderSidebar();
+}
+
+/* ---------- Page open / doc render ---------- */
+async function selectPage(guid, focusTitle) {
+  closeMenu();
+  state.currentPageGuid = guid;
+  renderSidebar();
+  await loadDoc(guid);
+  if (focusTitle) { const t = document.querySelector(".doc-title"); if (t) placeCaretEnd(t); }
+}
+
+async function loadDoc(guid) {
+  try {
+    // include= hydrates the page's blocks in a single round trip
+    const page = await api("GET", `/objects/page/${guid}?include=blocks`);
+    state.byId[guid] = Object.assign(state.byId[guid] || {}, {
+      title: page.title, icon: page.icon, order: page.order, parent: page.parent,
+    });
+    state.blocks = (page.blocks || []).slice().sort((a, b) => a.order - b.order);
+    renderDoc();
+  } catch (e) { showErr(e.message); }
+}
+
+function crumbsFor(guid) {
+  const arr = []; let g = guid;
+  while (g && state.byId[g]) { arr.unshift(state.byId[g]); g = state.byId[g].parent; }
+  return arr;
+}
+
+function renderTopbar() {
+  const bar = $("topbar"); bar.innerHTML = "";
+  if (!state.currentPageGuid) return;
+  const crumbs = document.createElement("div"); crumbs.className = "crumbs";
+  const chain = crumbsFor(state.currentPageGuid);
+  chain.forEach((p, i) => {
+    if (i) { const s = document.createElement("span"); s.className = "sep"; s.textContent = "/"; crumbs.appendChild(s); }
+    const c = document.createElement("button");
+    c.className = "crumb" + (i === chain.length - 1 ? " cur" : "");
+    c.innerHTML = `<span class="ci"></span><span class="cl"></span>`;
+    c.querySelector(".ci").textContent = p.icon || "📄";
+    c.querySelector(".cl").textContent = p.title || "Untitled";
+    c.onclick = () => selectPage(p._guid);
+    crumbs.appendChild(c);
+  });
+  const sub = document.createElement("button");
+  sub.className = "topbtn"; sub.textContent = "+ Sub-page";
+  sub.title = "Add a sub-page inside this page";
+  sub.onclick = () => newPage(state.currentPageGuid);
+  bar.append(crumbs, sub);
+}
+
+function renderDoc() {
+  renderTopbar();
+  const doc = $("doc"); doc.innerHTML = "";
+  if (!state.currentPageGuid) { renderEmptyDoc(); return; }
+  const page = state.byId[state.currentPageGuid];
+
+  const icon = document.createElement("div");
+  icon.className = "doc-icon"; icon.textContent = page.icon || "📄"; icon.title = "Change icon";
+  icon.onclick = (e) => { e.stopPropagation(); openEmojiPicker(icon); };
+
+  const title = document.createElement("div");
+  title.className = "doc-title"; title.contentEditable = "true"; title.spellcheck = false;
+  title.dataset.ph = "Untitled"; title.textContent = page.title || "";
+  title.onblur = () => {
+    const t = title.textContent.trim();
+    if (t !== (page.title || "")) patchPage(page._guid, { title: t });
+  };
+  title.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault(); title.blur();
+      if (state.blocks.length) placeCaretEnd(document.querySelector(`.block[data-guid="${state.blocks[0]._guid}"] .ce`));
+      else addBlockAfter(null);
+    }
+  };
+
+  const blocks = document.createElement("div"); blocks.className = "blocks";
+  for (const b of state.blocks) blocks.appendChild(blockEl(b));
+
+  const add = document.createElement("div");
+  add.className = "addblock";
+  add.innerHTML = ICONS.plus + "<span>Add a block</span>";
+  add.onclick = () => addBlockAfter(null);
+
+  doc.append(icon, title, blocks, add);
+}
+
+function renderEmptyDoc() {
+  $("topbar").innerHTML = "";
+  $("doc").innerHTML =
+    `<div class="doc-empty"><div class="big">🗂️</div>` +
+    `<div>No page selected.</div>` +
+    `<button id="emptyNew">Create a page</button></div>`;
+  const b = document.getElementById("emptyNew");
+  if (b) b.onclick = () => newPage(null);
+}
+
+/* ---------- Block element ---------- */
+function blockEl(b) {
+  const wrap = document.createElement("div");
+  wrap.className = "block kind-" + b.kind + (b.kind === "todo" && b.checked ? " checked" : "");
+  wrap.dataset.guid = b._guid;
+
+  const gutter = document.createElement("div"); gutter.className = "gutter";
+  const plus = document.createElement("button");
+  plus.className = "gbtn plus"; plus.textContent = "+"; plus.title = "Add block below";
+  plus.onclick = (e) => { e.stopPropagation(); addBlockAfter(b._guid); };
+  const handle = document.createElement("button");
+  handle.className = "gbtn handle"; handle.innerHTML = ICONS.grip; handle.title = "Options";
+  handle.onclick = (e) => { e.stopPropagation(); openBlockMenu(b, handle); };
+  gutter.append(plus, handle);
+
+  const content = document.createElement("div"); content.className = "content";
+  if (b.kind === "divider") {
+    content.appendChild(document.createElement("hr"));
+  } else if (b.kind === "todo") {
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "todobox"; cb.checked = !!b.checked;
+    cb.onchange = () => toggleChecked(b._guid, cb.checked);
+    content.append(cb, editable(b));
+  } else {
+    content.appendChild(editable(b));
+  }
+  wrap.append(gutter, content);
+  return wrap;
+}
+
+function editable(b) {
+  const d = document.createElement("div");
+  d.className = "ce " + b.kind; d.contentEditable = "true"; d.spellcheck = false;
+  d.dataset.ph = PH[b.kind] || "";
+  d.textContent = b.text || "";
+  d.onblur = () => {
+    const t = d.textContent;
+    if (t !== (b.text || "")) { b.text = t; patchBlock(b._guid, { text: t }); }
+  };
+  d.onkeydown = (e) => onBlockKey(e, b, d);
+  if (state.focusGuid === b._guid) {
+    state.focusGuid = null;
+    requestAnimationFrame(() => placeCaretEnd(d));
+  }
+  return d;
+}
+
+function onBlockKey(e, b, d) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    const t = d.textContent;
+    (async () => {
+      try {
+        if (t !== (b.text || "")) { b.text = t; await api("PATCH", `/objects/block/${b._guid}`, { text: t }); }
+        await addBlockAfter(b._guid);
+      } catch (err) { showErr(err.message); }
+    })();
+  } else if (e.key === "Backspace" && d.textContent === "" && caretAtStart()) {
+    e.preventDefault();
+    deleteBlock(b._guid, true);
+  }
+}
+
+/* ---------- Block mutations ---------- */
+async function addBlockAfter(afterGuid) {
+  try {
+    const blocks = state.blocks;
+    let newOrder;
+    if (afterGuid) {
+      const i = blocks.findIndex((x) => x._guid === afterGuid);
+      newOrder = blocks[i].order + 1;
+      for (const x of blocks)                       // make room: shift the tail down
+        if (x.order >= newOrder) await api("PATCH", `/objects/block/${x._guid}`, { order: x.order + 1 });
+    } else {
+      newOrder = blocks.length ? Math.max(...blocks.map((x) => x.order)) + 1 : 0;
+    }
+    const created = await api("POST", "/objects/block",
+      { kind: "text", text: "", checked: false, order: newOrder, page: state.currentPageGuid });
+    state.focusGuid = created._guid;
+    await loadDoc(state.currentPageGuid);
+  } catch (e) { showErr(e.message); }
+}
+
+async function changeKind(guid, kind) {
+  try {
+    await api("PATCH", `/objects/block/${guid}`, { kind });
+    state.focusGuid = kind === "divider" ? null : guid;
+    await loadDoc(state.currentPageGuid);
+  } catch (e) { showErr(e.message); }
+}
+
+async function toggleChecked(guid, val) {
+  try {
+    await api("PATCH", `/objects/block/${guid}`, { checked: val });
+    const b = state.blocks.find((x) => x._guid === guid); if (b) b.checked = val;
+    const row = document.querySelector(`.block[data-guid="${guid}"]`);
+    if (row) row.classList.toggle("checked", val);
+  } catch (e) { showErr(e.message); }
+}
+
+async function moveBlock(guid, dir) {
+  try {
+    const i = state.blocks.findIndex((x) => x._guid === guid);
+    const j = i + dir;
+    if (j < 0 || j >= state.blocks.length) return;
+    const a = state.blocks[i], b = state.blocks[j];
+    await api("PATCH", `/objects/block/${a._guid}`, { order: b.order });
+    await api("PATCH", `/objects/block/${b._guid}`, { order: a.order });
+    await loadDoc(state.currentPageGuid);
+  } catch (e) { showErr(e.message); }
+}
+
+async function deleteBlock(guid, focusPrev) {
+  try {
+    const i = state.blocks.findIndex((x) => x._guid === guid);
+    if (focusPrev && i > 0) state.focusGuid = state.blocks[i - 1]._guid;
+    await api("DELETE", `/objects/block/${guid}`);
+    await loadDoc(state.currentPageGuid);
+  } catch (e) { showErr(e.message); }
+}
+
+async function patchBlock(guid, patch) {
+  try { await api("PATCH", `/objects/block/${guid}`, patch); }
+  catch (e) { showErr(e.message); }
+}
+
+/* ---------- Page mutations ---------- */
+async function newPage(parentGuid) {
+  try {
+    const sibs = parentGuid ? (state.childrenMap[parentGuid] || []) : state.roots;
+    const order = sibs.length ? Math.max(...sibs.map((s) => s.order)) + 1 : 0;
+    const body = { title: "", icon: "📄", order };
+    if (parentGuid) body.parent = parentGuid;
+    const created = await api("POST", "/objects/page", body);
+    if (parentGuid) state.expanded.add(parentGuid);
+    await loadTree();
+    selectPage(created._guid, true);
+  } catch (e) { showErr(e.message); }
+}
+
+async function patchPage(guid, patch) {
+  try {
+    await api("PATCH", `/objects/page/${guid}`, patch);
+    Object.assign(state.byId[guid], patch);
+    renderSidebar();
+    if (guid === state.currentPageGuid && "icon" in patch) {
+      const di = document.querySelector(".doc-icon"); if (di) di.textContent = patch.icon;
+      renderTopbar();
+    }
+    if ("title" in patch) renderTopbar();
+  } catch (e) { showErr(e.message); }
+}
+
+function collectSubtree(guid) {
+  const out = [guid];
+  for (const k of (state.childrenMap[guid] || [])) out.push(...collectSubtree(k._guid));
+  return out;
+}
+
+async function deletePage(guid) {
+  const p = state.byId[guid];
+  if (!confirm(`Delete “${p?.title || "Untitled"}” and everything inside it?`)) return;
+  try {
+    const ids = collectSubtree(guid);
+    for (const id of ids) {
+      const { objects } = await api("GET", `/objects/block?page=${id}&limit=500`);
+      for (const b of objects) await api("DELETE", `/objects/block/${b._guid}`);
+      await api("DELETE", `/objects/page/${id}`);
+    }
+    const wipedCurrent = ids.includes(state.currentPageGuid);
+    await loadTree();
+    if (wipedCurrent) {
+      const next = state.roots[0];
+      if (next) selectPage(next._guid); else { state.currentPageGuid = null; renderDoc(); }
+    }
+  } catch (e) { showErr(e.message); }
+}
+
+/* ---------- Floating menus ---------- */
+let menuEl = null;
+function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+function openMenu(anchor, build) {
+  closeMenu();
+  const m = document.createElement("div"); m.className = "menu";
+  build(m);
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  let top = r.bottom + 4, left = r.left;
+  const mr = m.getBoundingClientRect();
+  if (left + mr.width > innerWidth - 8) left = innerWidth - mr.width - 8;
+  if (top + mr.height > innerHeight - 8) top = Math.max(8, r.top - mr.height - 4);
+  m.style.top = top + "px"; m.style.left = Math.max(8, left) + "px";
+  m.onclick = (e) => e.stopPropagation();
+  menuEl = m;
+}
+
+function openBlockMenu(b, anchor) {
+  openMenu(anchor, (m) => {
+    const lbl = document.createElement("div"); lbl.className = "mlabel"; lbl.textContent = "Turn into";
+    m.appendChild(lbl);
+    for (const [k, ic, name] of KINDS) {
+      const it = document.createElement("button"); it.className = "mitem";
+      it.innerHTML = `<span class="mi"></span><span></span>`;
+      it.querySelector(".mi").textContent = ic;
+      it.lastChild.textContent = name;
+      if (k === b.kind) it.style.fontWeight = "600";
+      it.onclick = () => { closeMenu(); if (k !== b.kind) changeKind(b._guid, k); };
+      m.appendChild(it);
+    }
+    m.appendChild(sep());
+    m.appendChild(mitem("↑", "Move up", () => { closeMenu(); moveBlock(b._guid, -1); }));
+    m.appendChild(mitem("↓", "Move down", () => { closeMenu(); moveBlock(b._guid, +1); }));
+    m.appendChild(mitem(ICONS.trash, "Delete", () => { closeMenu(); deleteBlock(b._guid, false); }, true, true));
+  });
+}
+
+function openEmojiPicker(anchor) {
+  const guid = state.currentPageGuid;
+  openMenu(anchor, (m) => {
+    const grid = document.createElement("div"); grid.className = "emoji-grid";
+    for (const e of EMOJIS) {
+      const btn = document.createElement("button"); btn.textContent = e;
+      btn.onclick = () => { closeMenu(); patchPage(guid, { icon: e }); };
+      grid.appendChild(btn);
+    }
+    m.appendChild(grid);
+  });
+}
+
+function mitem(icon, label, onClick, danger, isSvg) {
+  const it = document.createElement("button");
+  it.className = "mitem" + (danger ? " danger" : "");
+  const mi = document.createElement("span"); mi.className = "mi";
+  if (isSvg) mi.innerHTML = icon; else mi.textContent = icon;
+  const lb = document.createElement("span"); lb.textContent = label;
+  it.append(mi, lb); it.onclick = onClick; return it;
+}
+function sep() { const s = document.createElement("div"); s.className = "msep"; return s; }
+
+document.addEventListener("click", () => closeMenu());
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+
+/* ---------- Caret helpers ---------- */
+function placeCaretEnd(el) {
+  if (!el) return;
+  el.focus();
+  const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+}
+function caretAtStart() {
+  const s = getSelection();
+  if (!s.rangeCount) return false;
+  const r = s.getRangeAt(0);
+  return r.collapsed && r.startOffset === 0;
+}
+
+/* ---------- Wire up + boot ---------- */
+$("newRoot").onclick = () => newPage(null);
+
+(async () => {
+  try {
+    await ensureApp();
+    await ensureSchema();
+    await seedIfEmpty();
+  } catch (e) {
+    showErr("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")");
+    return;
+  }
+  try {
+    await loadTree();
+    // First load: expand every page that has children, then open the first page.
+    for (const p of state.pages)
+      if ((state.childrenMap[p._guid] || []).length) state.expanded.add(p._guid);
+    renderSidebar();
+    if (state.roots[0]) selectPage(state.roots[0]._guid);
+    else renderEmptyDoc();
+  } catch (e) { showErr(e.message); }
+})();
+</script>
+</body>
+</html>

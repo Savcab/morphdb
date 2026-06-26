@@ -1,0 +1,15 @@
+{
+  "morphdb_schema_version": 1,
+  "app": "todo-demo",
+  "types": [
+    {
+      "name": "todo",
+      "fields": {
+        "title": { "type": "string", "index": true },
+        "done": { "type": "boolean", "index": true },
+        "priority": { "type": "number", "index": true }
+      },
+      "relations": {}
+    }
+  ]
+}

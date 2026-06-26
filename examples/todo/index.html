@@ -88,9 +88,16 @@ async function ensureApp() {
 }
 
 async function ensureSchema() {
+  // index the fields we sort/filter on (done, priority, title) — an un-indexed
+  // field is storage-only and a sort/filter on it is a 400. This is the same
+  // schema shipped as ./morphdb.schema.json (so `morphdb init` stands it up too).
   await api("PUT", "/schema/todo", {
     merge: true,
-    fields: { title: "string", done: "boolean", priority: "number" },
+    fields: {
+      title:    { type: "string",  index: true },
+      done:     { type: "boolean", index: true },
+      priority: { type: "number",  index: true },
+    },
   });
 }
 

@@ -1,0 +1,46 @@
+{
+  "morphdb_schema_version": 1,
+  "app": "linear-demo",
+  "types": [
+    {
+      "name": "user",
+      "fields": {
+        "name": "string"
+      },
+      "relations": {}
+    },
+    {
+      "name": "team",
+      "fields": {
+        "name": "string",
+        "key": "string"
+      },
+      "relations": {}
+    },
+    {
+      "name": "issue",
+      "fields": {
+        "title": "string",
+        "description": "string",
+        "status": { "type": "string", "index": true, "default": "backlog" },
+        "priority": { "type": "number", "index": true, "default": 0 },
+        "identifier": { "type": "string", "index": true },
+        "order": { "type": "number", "index": true, "default": 0 }
+      },
+      "relations": {
+        "team": { "to": "team", "cardinality": "many_to_one", "inverse": "issues" },
+        "assignee": { "to": "user", "cardinality": "many_to_one", "inverse": "assigned" }
+      }
+    },
+    {
+      "name": "comment",
+      "fields": {
+        "body": "string",
+        "created": { "type": "datetime", "index": true }
+      },
+      "relations": {
+        "issue": { "to": "issue", "cardinality": "many_to_one", "inverse": "comments" }
+      }
+    }
+  ]
+}
