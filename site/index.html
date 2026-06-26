@@ -433,7 +433,14 @@
     <div class="q"><span class="verb">morphdb</span> schema add-field <span class="fld">task</span> done boolean --index</div>
     <div class="q"><span class="verb">morphdb</span> schema add-relation <span class="fld">task</span> assignee --to user --cardinality many_to_one --inverse tasks</div>
     <div class="q"><span class="verb">morphdb</span> query <span class="fld">task</span> 'done=false&amp;sort=priority'</div>
-    <div class="note"><b>11 commands</b> under <span class="k">morphdb app</span> · <span class="k">morphdb schema</span> · <span class="k">morphdb query</span>, all talking to the one backend <span class="k">morphdb start</span> runs (or a hosted one via <span class="k">$MORPHDB_HOST</span>) — so there's always a single writer.</div>
+    <div class="note">all talking to the one backend <span class="k">morphdb start</span> runs (or a hosted one via <span class="k">$MORPHDB_HOST</span>) — so there's always a single writer.</div>
+  </div>
+  <p class="lede" style="margin-top:1.4em">Need the schema to travel — a teammate clones the repo, you spin a fresh deploy? Export the whole data model to a JSON file you commit, then rebuild it anywhere:</p>
+  <div class="qbox">
+    <div class="qt">move a schema between instances (the file carries the app key + every type)</div>
+    <div class="q"><span class="verb">morphdb</span> export-schema <span class="rel">my-site</span> &gt; morphdb.schema.json</div>
+    <div class="q"><span class="verb">morphdb</span> reconstruct-schema morphdb.schema.json</div>
+    <div class="note">Self-contained, human-readable JSON — <b>only the schema travels, not object data.</b> Reconstruct recreates the app + its types; if the app key already exists it prompts first, or <span class="k">--force</span> overwrites.</div>
   </div>
 </div></section>
 

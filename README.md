@@ -168,6 +168,28 @@ GitHub) and is **idempotent** — re-running overwrites with the current version
 To get the newest skill, `pip install -U morphdb` first, then re-run. Restart
 Claude Code afterward to pick it up.
 
+### Share a schema across instances (export / reconstruct)
+
+A schema lives only inside the one MorphDB that holds it. To move an app's data
+model elsewhere — a teammate who cloned the repo, a fresh deploy — export it to a
+JSON file you commit, then reconstruct it on the other instance:
+
+```bash
+# on the source instance — dump the data model to stdout, redirect into a file
+morphdb export-schema my-site > morphdb.schema.json   # app key + every type's fields + relations
+git add morphdb.schema.json && git commit -m "snapshot schema"
+
+# on a clone / fresh MorphDB — the app key comes from inside the file
+morphdb reconstruct-schema morphdb.schema.json
+morphdb reconstruct-schema morphdb.schema.json --force   # if the app key already exists, overwrite it
+```
+
+The export is self-contained, human-readable JSON. **Only the schema travels —
+object data is not exported.** Reconstruct rebuilds the app and its types; if the
+app key already exists it prompts before overwriting (which deletes that app's
+current schema *and* objects), and `--force` skips the prompt for non-interactive
+use.
+
 ## Why
 
 AI coding agents are great at building HTML/CSS/JS frontends but thrash hard on
