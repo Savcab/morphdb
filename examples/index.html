@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MorphDB example apps</title>
+<style>
+  :root { color-scheme: light dark; --bg:#0e1320; --panel:#151b2b; --line:#2a3550; --ink:#e6ecf7; --dim:#8593ad; --aqua:#5fd3c4; --violet:#c9a0ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--ink);
+    font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:880px; margin:0 auto; padding:64px 20px 80px; }
+  h1 { font-size:2rem; margin:0 0 6px; letter-spacing:-.02em; }
+  h1 b { color:var(--aqua); }
+  .sub { color:var(--dim); margin:0 0 8px; font-size:1.05rem; }
+  .note { color:var(--dim); font-size:.9rem; margin:0 0 36px; }
+  .note code { background:#0006; padding:1px 6px; border-radius:4px; color:var(--aqua); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; }
+  a.card { display:block; text-decoration:none; color:inherit; background:var(--panel);
+    border:1px solid var(--line); border-radius:14px; padding:18px; transition:border-color .15s, transform .15s; }
+  a.card:hover { border-color:var(--aqua); transform:translateY(-2px); }
+  .card .nm { font-size:1.15rem; font-weight:650; }
+  .card .nm .of { color:var(--dim); font-weight:400; font-size:.92rem; }
+  .card .d { color:var(--dim); font-size:.9rem; margin-top:6px; }
+  .card .feat { margin-top:10px; font-size:.78rem; color:var(--violet); font-family:ui-monospace,Menlo,monospace; }
+  footer { margin-top:42px; color:var(--dim); font-size:.85rem; }
+  footer a { color:var(--aqua); text-decoration:none; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>MorphDB <b>example apps</b></h1>
+    <p class="sub">One generic backend. Five products. Only the schema differs.</p>
+    <p class="note">Each app is a single HTML file that ships its own <code>morphdb.schema.json</code> and talks to the <b>same</b> generic <code>/objects</code> endpoints &mdash; here, a cloud-hosted MorphDB. It registers its app and seeds sample data on first load.</p>
+
+    <div class="grid">
+      <a class="card" href="./linkedin/index.html">
+        <div class="nm">Linkup <span class="of">· a LinkedIn</span></div>
+        <div class="d">Profiles, a feed, jobs, connections.</div>
+        <div class="feat">symmetric m2m · include=</div>
+      </a>
+      <a class="card" href="./notion/index.html">
+        <div class="nm">Noted <span class="of">· a Notion</span></div>
+        <div class="d">Nested pages of blocks, slash menu, drag.</div>
+        <div class="feat">self-referential tree</div>
+      </a>
+      <a class="card" href="./figma/index.html">
+        <div class="nm">Shaper <span class="of">· a Figma</span></div>
+        <div class="d">A canvas: shapes, lines, freehand, layers.</div>
+        <div class="feat">spatial PATCH · zoom/pan</div>
+      </a>
+      <a class="card" href="./linear/index.html">
+        <div class="nm">Stride <span class="of">· a Linear</span></div>
+        <div class="d">Kanban issues by status, priority, comments.</div>
+        <div class="feat">indexed status board</div>
+      </a>
+      <a class="card" href="./todo/index.html">
+        <div class="nm">Todo <span class="of">· the starter</span></div>
+        <div class="d">The minimal one type. Start here.</div>
+        <div class="feat">one type · self-bootstrap</div>
+      </a>
+    </div>
+
+    <footer>
+      Built on <a href="https://github.com/Savcab/morphdb">MorphDB</a> &mdash; schema-fluid, API-stable.
+      Original, educational clones (not affiliated with those products).
+    </footer>
+  </div>
+</body>
+</html>

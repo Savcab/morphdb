@@ -98,6 +98,12 @@
   .shape.line    { background: transparent !important; pointer-events: none; }
   .shape.line svg { width: 100%; height: 100%; display: block; overflow: visible; pointer-events: none; }
   .shape.line svg .hit { pointer-events: stroke; cursor: move; }
+  /* the pen (freehand) shape mirrors the line: a click-through box, an inline SVG
+     that stretches with the box, and a wide transparent "hit" path so only the
+     stroke is interactive (empty areas of the bounding box click through). */
+  .shape.pen     { background: transparent !important; pointer-events: none; }
+  .shape.pen svg { width: 100%; height: 100%; display: block; overflow: visible; pointer-events: none; }
+  .shape.pen svg .hit { pointer-events: stroke; cursor: move; }
   .shape.text {
     background: transparent; cursor: move; font-weight: 600; font-size: 22px;
     line-height: 1.2; padding: 2px 4px; white-space: pre-wrap; word-break: break-word;
@@ -320,6 +326,9 @@
       <button class="tool" data-tool="line" title="Line (L)" aria-label="Line tool" aria-pressed="false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 19 19 5"/></svg>
       </button>
+      <button class="tool" data-tool="pen" title="Pen (P)" aria-label="Pen tool" aria-pressed="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15 q3 -7 6 0 t6 0 t6 0"/></svg>
+      </button>
       <span class="tbsep"></span>
       <button class="swatch-btn" id="drawFillBtn" title="Fill for new shapes" aria-label="Fill color for new shapes">
         <span class="chip" id="drawFillChip"></span>
@@ -333,9 +342,13 @@
 </div>
 
 <script>
-const BASE = location.hostname
-  ? `${location.protocol}//${location.hostname}:8787`
-  : "http://127.0.0.1:8787";
+const CLOUD = "https://hjvvxxmlcrp6jzkfaohctk7cda0qshum.lambda-url.us-west-1.on.aws";
+// Local dev (localhost) talks to your own MorphDB on :8787; anywhere else (e.g.
+// GitHub Pages) talks to the hosted cloud MorphDB. Override with window.MORPHDB_HOST.
+const BASE = (typeof window !== "undefined" && window.MORPHDB_HOST) ? window.MORPHDB_HOST
+  : /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
+    ? `${location.protocol}//${location.hostname}:8787`
+    : CLOUD;
 const APP = "figma-demo";            // this site's MorphDB app key (sent as X-App-Key)
 
 const $  = (id) => document.getElementById(id);
@@ -443,6 +456,7 @@ const KIND_ICON = {
   ellipse: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="8"/></svg>',
   text:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6h12M12 6v12"/></svg>',
   line:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 19 19 5"/></svg>',
+  pen:     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15 q3 -7 6 0 t6 0 t6 0"/></svg>',
 };
 
 /* a line shape spans its bounding box along one of the two diagonals; the box
@@ -461,6 +475,22 @@ function lineSvg(color, dir) {
        + `stroke-width="14" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`
        + `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${escapeHtml(color)}" `
        + `stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+/* a pen (freehand) shape stores its stroke as an SVG path in the `text` field, in
+   the box's LOCAL space normalized to 0..100 on each axis (so the path is
+   independent of the shape's canvas position and size). Like lineSvg, the viewBox
+   is a fixed 0 0 100 100 stretched onto the box with preserveAspectRatio="none";
+   a non-scaling stroke keeps the line a constant 3px at any box size or zoom, and a
+   wide transparent "hit" path under the visible one makes only the stroke clickable
+   while the box's empty corners stay click-through to shapes painted behind it. */
+function penSvg(color, d) {
+  const path = escapeAttr(d || "");
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none">`
+       + `<path class="hit" d="${path}" stroke="transparent" fill="none" `
+       + `stroke-width="14" stroke-linecap="round" vector-effect="non-scaling-stroke" pointer-events="stroke"/>`
+       + `<path d="${path}" fill="none" stroke="${escapeHtml(color)}" `
+       + `stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
 const sceneEl = () => $("scene");
@@ -505,6 +535,7 @@ function makeShapeEl(sh) {
   applyBox(el, sh);
   if (sh.kind === "text")      { el.textContent = sh.text || "Text"; el.style.color = sh.fill; }
   else if (sh.kind === "line") { el.innerHTML = lineSvg(sh.fill, sh.text); }   // fill→stroke, text→direction
+  else if (sh.kind === "pen")  { el.innerHTML = penSvg(sh.fill, sh.text); }    // fill→stroke, text→path
   else                         { el.style.background = sh.fill; }
 
   el.addEventListener("mousedown", (e) => onShapeDown(e, sh));
@@ -725,6 +756,7 @@ $("canvas").addEventListener("mousedown", (e) => {
 /* click-drag to draw a shape at a chosen size; a bare click drops a sensible
    default size centered on the cursor (Figma behaviour). */
 function startDrawDrag(e) {
+  if (tool === "pen") { startPenDraw(e); return; }   // freehand has its own gesture
   const drawTool = tool;
   const start = canvasPoint(e);
   let cur = start;
@@ -763,6 +795,120 @@ function startDrawDrag(e) {
   }
   document.addEventListener("mousemove", move);
   document.addEventListener("mouseup", up);
+}
+
+/* freehand pen: capture pointer points in SCENE coords (scale-aware via
+   canvasPoint), decimate near-duplicate points, show a live preview stroke, then
+   finalize a "pen" shape whose smoothed path is stored in the `text` field. */
+const SVG_NS = "http://www.w3.org/2000/svg";
+function startPenDraw(e) {
+  const pts = [canvasPoint(e)];
+  const MIN_DIST = 2;                       // drop points closer than ~2 scene-px
+  // a 0×0 overlay SVG inside #scene: with overflow visible its <path> draws in raw
+  // scene coordinates, so it inherits the same zoom/pan as the shapes around it.
+  // a full-bleed overlay SVG inside #scene (so it tracks zoom/pan exactly like the
+  // shapes). It has NO viewBox, so 1 user-unit = 1 scene-px and the path can be drawn
+  // directly in scene coordinates. It MUST have a real, non-zero size — a 0×0 svg
+  // paints nothing even with overflow:visible — so it fills the scene and lets the
+  // stroke spill past the edges with overflow:visible. pointer-events:none = inert.
+  const pv = document.createElementNS(SVG_NS, "svg");
+  pv.setAttribute("class", "pen-preview");
+  pv.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:1";
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", drawFill);
+  path.setAttribute("stroke-width", "3");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("vector-effect", "non-scaling-stroke");
+  pv.appendChild(path);
+  sceneEl().appendChild(pv);
+
+  function move(ev) {
+    const p = canvasPoint(ev);
+    const last = pts[pts.length - 1];
+    if (Math.hypot(p.x - last.x, p.y - last.y) >= MIN_DIST) pts.push(p);
+    path.setAttribute("d", smoothPath(pts));      // preview in scene coords
+  }
+  function up() {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    pv.remove();
+    finalizePen(pts);
+  }
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
+/* quadratic midpoint smoothing: each interior point is a control point and the
+   curve passes through the midpoint between consecutive points — reads as a pen
+   stroke. Works in any coordinate space (used for both preview and stored path). */
+function smoothPath(pts) {
+  const r = (n) => Math.round(n * 100) / 100;
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M ${r(pts[0].x)} ${r(pts[0].y)}`;
+  if (pts.length === 2) return `M ${r(pts[0].x)} ${r(pts[0].y)} L ${r(pts[1].x)} ${r(pts[1].y)}`;
+  let d = `M ${r(pts[0].x)} ${r(pts[0].y)}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+    d += ` Q ${r(pts[i].x)} ${r(pts[i].y)} ${r(mx)} ${r(my)}`;
+  }
+  const lp = pts[pts.length - 1];
+  return d + ` L ${r(lp.x)} ${r(lp.y)}`;
+}
+
+/* turn the captured scene-space points into a pen shape: the bounding box becomes
+   x/y/w/h; the path is normalized into the box's local 0..100 space and stored in
+   `text` (so it survives moves/resizes/re-renders, scaling with the box). */
+function finalizePen(pts) {
+  if (pts.length < 2) return;                       // a bare click → no stroke
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+  }
+  const w0 = maxX - minX, h0 = maxY - minY;
+  if (w0 < 1 && h0 < 1) return;                      // zero-length scribble → ignore
+  const norm = pts.map(p => ({
+    x: w0 > 0 ? ((p.x - minX) / w0) * 100 : 50,
+    y: h0 > 0 ? ((p.y - minY) / h0) * 100 : 50,
+  }));
+  const z = shapes.length ? Math.max(...shapes.map(s => s.z)) + 1 : 1;
+  commitPen({
+    kind: "pen",
+    x: Math.round(minX), y: Math.round(minY),
+    w: Math.max(MIN_SIZE, Math.round(w0)), h: Math.max(MIN_SIZE, Math.round(h0)),
+    fill: drawFill, text: smoothPath(norm), z, doc: docGuid,
+  });
+}
+
+/* optimistic create: draw the finished stroke RIGHT AWAY under a provisional id (a
+   zero-flicker handoff from the live preview, which sat at the same scene coords),
+   then POST in the background and swap in the real _guid — mirroring how the drag
+   commits optimistically. remapGuid() carries the selection + any history snapshots
+   across the id swap, so undo/redo and selection keep working. */
+let tmpSeq = 0;
+async function commitPen(body) {
+  const tmpId = "tmp_" + (++tmpSeq);
+  shapes.push({ _guid: tmpId, ...body });
+  shapes.sort((a, b) => a.z - b.z);
+  setTool("select");
+  buildShapes();
+  selectOnly(tmpId);                       // visible + selected with no wait on the POST
+  try {
+    const created = await api("POST", "/objects/shape", body);
+    const i = shapes.findIndex(s => s._guid === tmpId);
+    if (i >= 0) shapes[i] = created;       // replace the provisional row with the persisted one
+    remapGuid(tmpId, created._guid);       // fix selection + any history snapshots holding tmpId
+    render();                              // rebind DOM + inspector closures to the real guid
+    pushHistory();
+    setErr("");
+  } catch (e) {
+    shapes = shapes.filter(s => s._guid !== tmpId);   // roll the optimistic stroke back on failure
+    sel.delete(tmpId);
+    render();
+    setErr(e.message);
+  }
 }
 
 /* drag an empty area (select tool) to marquee-select intersecting shapes */
@@ -813,8 +959,12 @@ function startPan(e) {
 
 async function createShape(kind, x, y, w, h, opts = {}) {
   const z = shapes.length ? Math.max(...shapes.map(s => s.z)) + 1 : 1;
-  // `text` carries content for text shapes and the diagonal direction for lines
-  const text = kind === "text" ? "Text" : (kind === "line" ? (opts.dir || "\\") : "");
+  // `text` carries content for text shapes, the diagonal direction for lines, and
+  // the freehand SVG path (in the box's local 0..100 space) for pen shapes
+  const text = kind === "text" ? "Text"
+             : kind === "line" ? (opts.dir || "\\")
+             : kind === "pen"  ? (opts.path || "")
+             : "";
   const body = {
     kind, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
     fill: drawFill, text, z, doc: docGuid,
@@ -1117,6 +1267,7 @@ function liveFill(sh, c) {
   if (el) {
     if (sh.kind === "text") el.style.color = c;
     else if (sh.kind === "line") el.innerHTML = lineSvg(c, sh.text);
+    else if (sh.kind === "pen") el.innerHTML = penSvg(c, sh.text);
     else el.style.background = c;
   }
   const hx = $("in-hex"); if (hx) { hx.value = c; hx.classList.remove("invalid"); }
@@ -1134,7 +1285,8 @@ function renderInspector() {
       `<div class="hint">
          <b>Nothing selected.</b><br>
          Pick <span class="kbd">R</span> rectangle, <span class="kbd">O</span> ellipse,
-         <span class="kbd">T</span> text, or <span class="kbd">L</span> line, then drag on the canvas.
+         <span class="kbd">T</span> text, <span class="kbd">L</span> line, or
+         <span class="kbd">P</span> pen, then drag on the canvas.
          Drag to move, drag a corner to resize, double-click text to edit, arrow keys nudge,
          <span class="kbd">Del</span> deletes. <span class="kbd">⌘Z</span> undo ·
          scroll to pan · <span class="kbd">⌘</span>+scroll or pinch to zoom.
@@ -1290,7 +1442,9 @@ function renderInspector() {
 function layersHtml() {
   const ordered = [...shapes].sort((a, b) => b.z - a.z); // top-most first
   const rows = ordered.map(s => {
-    const label = s.kind === "text" ? (s.text || "Text") : (s.kind[0].toUpperCase() + s.kind.slice(1));
+    const label = s.kind === "text" ? (s.text || "Text")
+                : s.kind === "pen"  ? "Drawing"
+                : (s.kind[0].toUpperCase() + s.kind.slice(1));
     return `<div class="layer ${sel.has(s._guid)?'active':''}" data-id="${s._guid}"
                  tabindex="0" role="button" aria-label="${escapeAttr(label)} layer">
         <span class="ic">${KIND_ICON[s.kind]}</span>
@@ -1484,7 +1638,7 @@ document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey) return;
   if (e.key === "1" && e.shiftKey) { zoomFit(); return; }
   if (e.key === "0" && e.shiftKey) { zoomReset(); return; }
-  const map = { v:"select", r:"rect", o:"ellipse", t:"text", l:"line" };
+  const map = { v:"select", r:"rect", o:"ellipse", t:"text", l:"line", p:"pen" };
   const k = e.key.toLowerCase();
   if (map[k]) setTool(map[k]);
 });

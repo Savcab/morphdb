@@ -1,0 +1,38 @@
+name: Deploy example clones to GitHub Pages
+
+# Publishes examples/ as a static site: the gallery (examples/index.html) is the
+# root, each clone lives at /<app>/. The clones talk to the cloud MorphDB backend
+# (a public Lambda + Postgres), so they work fully hosted — no local server.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'examples/**'
+      - '.github/workflows/deploy-clones.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress one.
+concurrency:
+  group: pages-clones
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: examples
+      - id: deployment
+        uses: actions/deploy-pages@v4

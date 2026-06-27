@@ -495,9 +495,13 @@
   <div id="toasts" aria-live="polite"></div>
 
 <script>
-const BASE = (typeof window !== "undefined" && window.MORPHDB_HOST)
-  ? window.MORPHDB_HOST
-  : (location.hostname ? `${location.protocol}//${location.hostname}:8787` : "http://127.0.0.1:8787");
+const CLOUD = "https://hjvvxxmlcrp6jzkfaohctk7cda0qshum.lambda-url.us-west-1.on.aws";
+// Local dev (localhost) talks to your own MorphDB on :8787; anywhere else (e.g.
+// GitHub Pages) talks to the hosted cloud MorphDB. Override with window.MORPHDB_HOST.
+const BASE = (typeof window !== "undefined" && window.MORPHDB_HOST) ? window.MORPHDB_HOST
+  : /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
+    ? `${location.protocol}//${location.hostname}:8787`
+    : CLOUD;
 const APP = "linear-demo";   // this site's MorphDB app key (sent as X-App-Key)
 
 const $ = (id) => document.getElementById(id);
