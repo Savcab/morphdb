@@ -54,6 +54,38 @@
   }
   #docName:hover { border-color: var(--line); }
   #docName:focus { outline: none; border-color: var(--accent); background: var(--field); }
+  /* file switcher (dropdown next to the doc name) — lists every document so a
+     visitor can switch between their own canvas and browse everyone else's. */
+  .docpicker { position: relative; display: inline-flex; align-items: center; gap: 2px; }
+  .hbtn.caret { width: 20px; font-size: 11px; color: var(--muted); }
+  .docmenu {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+    min-width: 248px; max-width: 340px; max-height: 64vh; overflow-y: auto;
+    background: var(--chrome); border: 1px solid var(--line); border-radius: 10px;
+    padding: 6px; box-shadow: 0 12px 32px #00000060;
+  }
+  .docmenu[hidden] { display: none; }
+  .docmenu .mhead {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 8px 8px; color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .docmenu .mitem {
+    display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 6px;
+    cursor: pointer; color: var(--ink); overflow: hidden;
+  }
+  .docmenu .mitem:hover { background: #ffffff12; }
+  .docmenu .mitem:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .docmenu .mitem.active { background: var(--accent); color: #fff; }
+  .docmenu .mitem .chk { width: 12px; flex: none; font-size: 11px; }
+  .docmenu .mitem .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .docmenu .msep { height: 1px; background: var(--line); margin: 6px 4px; }
+  .docmenu .mnew {
+    display: flex; align-items: center; width: 100%; padding: 8px;
+    border: none; background: transparent; color: var(--accent); font: inherit;
+    font-weight: 500; text-align: left; border-radius: 6px; cursor: pointer;
+  }
+  .docmenu .mnew:hover { background: #ffffff12; }
   .spacer { flex: 1; }
   .histbtns { display: inline-flex; gap: 2px; }
   .hbtn {
@@ -288,7 +320,12 @@
     <span class="brand">MorphDB&nbsp;Shaper</span>
     <span class="sep"></span>
     <label for="docName" class="sr-only">Document name</label>
-    <input id="docName" value="Untitled" spellcheck="false" aria-label="Document name" />
+    <span class="docpicker">
+      <input id="docName" value="Untitled" spellcheck="false" aria-label="Document name" />
+      <button id="docMenuBtn" class="hbtn caret" title="Switch file"
+              aria-label="Switch file" aria-haspopup="true" aria-expanded="false">▾</button>
+      <div id="docMenu" class="docmenu" role="menu" aria-label="Files" hidden></div>
+    </span>
     <span class="sep"></span>
     <span class="histbtns" role="group" aria-label="History">
       <button id="undoBtn" class="hbtn" title="Undo (⌘Z)" aria-label="Undo" disabled>↶</button>
@@ -361,6 +398,8 @@ let tool    = "select";              // select | rect | ellipse | text | line
 let drawFill = "#4c6ef5";            // fill applied to newly drawn shapes
 let view    = { scale: 1, tx: 0, ty: 0 };   // zoom + pan of the scene
 let busy    = false;                 // guards undo/redo reconcile from overlap
+let docs    = [];                    // every document, for the file switcher
+let suppressHash = false;            // guard so our own hash writes don't re-trigger open
 
 /* ------- generic MorphDB client — these endpoints never change ---------- */
 async function api(method, path, body) {
@@ -421,25 +460,117 @@ async function bootstrap() {
   } catch (_) { /* file:// — assume the schema was applied out of band */ }
 }
 
-/* ------- load (or seed) the one document and its shapes ------------------ */
+/* ------- pick the document to open: deep-linked, else first, else seed ---- */
 async function loadOrSeed() {
-  const probe = await api("GET", "/objects/doc?limit=1");
-  if (probe.total === 0) {
-    const d = await api("POST", "/objects/doc", { name: "Welcome to MorphDB" });
-    docGuid = d._guid;
-    // a few overlapping shapes of different kinds & colors
-    const seed = [
-      { kind: "rect",    x: 220, y: 150, w: 260, h: 180, fill: "#4c6ef5", text: "", z: 1 },
-      { kind: "ellipse", x: 360, y: 230, w: 220, h: 220, fill: "#f783ac", text: "", z: 2 },
-      { kind: "rect",    x: 300, y: 320, w: 180, h: 120, fill: "#38d9a9", text: "", z: 3 },
-      { kind: "text",    x: 250, y: 190, w: 280, h: 56,  fill: "#ffffff", text: "Design, persisted.", z: 4 },
-    ];
-    for (const s of seed) await api("POST", "/objects/shape", { ...s, doc: docGuid });
-  } else {
-    docGuid = probe.objects[0]._guid;
+  await loadDocList();                          // populate `docs` + the switcher
+  const hashGuid = location.hash.slice(1);
+
+  // 1) a deep-linked file in the URL hash wins (fetch it if it wasn't in the list page)
+  if (hashGuid) {
+    let d = docs.find(x => x._guid === hashGuid);
+    if (!d) { try { d = await api("GET", `/objects/doc/${hashGuid}`); } catch (_) { d = null; } }
+    if (d) return openDoc(hashGuid);
   }
-  $("docName").value = (probe.total ? probe.objects[0].name : "Welcome to MorphDB");
+
+  // 2) otherwise open the most-recently created existing doc
+  if (docs.length) return openDoc(docs[0]._guid);
+
+  // 3) only when there are ZERO docs: seed the welcome doc + a few overlapping shapes
+  const d = await api("POST", "/objects/doc", { name: "Welcome to MorphDB" });
+  const seed = [
+    { kind: "rect",    x: 220, y: 150, w: 260, h: 180, fill: "#4c6ef5", text: "", z: 1 },
+    { kind: "ellipse", x: 360, y: 230, w: 220, h: 220, fill: "#f783ac", text: "", z: 2 },
+    { kind: "rect",    x: 300, y: 320, w: 180, h: 120, fill: "#38d9a9", text: "", z: 3 },
+    { kind: "text",    x: 250, y: 190, w: 280, h: 56,  fill: "#ffffff", text: "Design, persisted.", z: 4 },
+  ];
+  for (const s of seed) await api("POST", "/objects/shape", { ...s, doc: d._guid });
+  docs = [d];
+  await openDoc(d._guid);
+}
+
+/* ------- file switcher: list, open, and create documents ----------------- */
+// the switcher doubles as "browse everyone's canvases" — it lists ALL docs.
+async function loadDocList() {
+  try {
+    const { objects } = await api(
+      "GET", "/objects/doc?sort=_created_at&order=desc&limit=200");
+    docs = objects;
+    renderDocMenu();
+  } catch (e) { setErr(e.message); }
+}
+
+function renderDocMenu() {
+  const menu = $("docMenu");
+  if (!menu) return;
+  const rows = docs.map(d => `
+    <div class="mitem ${d._guid === docGuid ? "active" : ""}" data-id="${d._guid}"
+         role="menuitemradio" aria-checked="${d._guid === docGuid}" tabindex="0">
+      <span class="chk">${d._guid === docGuid ? "✓" : ""}</span>
+      <span class="nm">${escapeHtml(d.name || "Untitled")}</span>
+    </div>`).join("");
+  menu.innerHTML =
+    `<div class="mhead"><span>Files</span><span>${docs.length}</span></div>`
+    + (rows || `<div class="mitem" style="color:var(--muted);cursor:default">No files yet</div>`)
+    + `<div class="msep"></div>`
+    + `<button class="mnew" id="newDocBtn">+&nbsp;New file</button>`;
+  menu.querySelectorAll(".mitem[data-id]").forEach(it => {
+    const id = it.dataset.id;
+    const go = () => { closeDocMenu(); if (id !== docGuid) openDoc(id); };
+    it.addEventListener("click", go);
+    it.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+    });
+  });
+  const nb = $("newDocBtn");
+  if (nb) nb.addEventListener("click", () => { closeDocMenu(); newDoc(); });
+}
+
+function openDocMenu() {
+  const menu = $("docMenu"); if (!menu) return;
+  renderDocMenu();                     // paint instantly from cache…
+  menu.hidden = false;
+  $("docMenuBtn").setAttribute("aria-expanded", "true");
+  loadDocList();                       // …then refresh so new files (incl. others') show up
+}
+function closeDocMenu() {
+  const menu = $("docMenu"); if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  $("docMenuBtn").setAttribute("aria-expanded", "false");
+}
+function toggleDocMenu() { $("docMenu").hidden ? openDocMenu() : closeDocMenu(); }
+
+/* switch the whole canvas to another document: swap docGuid, reset transient
+   view/selection/history, reload that doc's shapes, and deep-link it in the hash. */
+async function openDoc(guid, opts = {}) {
+  if (!guid) return;
+  let d = docs.find(x => x._guid === guid);
+  if (!d) {                            // deep-linked / unseen doc — fetch it directly
+    try { d = await api("GET", `/objects/doc/${guid}`); }
+    catch (e) { setErr("That file could not be opened."); return; }
+  }
+  docGuid = guid;
+  $("docName").value = d.name || "Untitled";
+  sel = new Set();
+  history = []; histIndex = -1; updateHistButtons();   // undo history is per-document
+  setTool("select");
+  zoomReset();
+  if (location.hash.slice(1) !== guid) { suppressHash = true; location.hash = guid; }
   await loadShapes();
+  pushHistory();                       // per-doc undo baseline
+  renderDocMenu();                     // refresh the active highlight
+  if (opts.focusName) { const n = $("docName"); n.focus(); n.select(); }
+  setErr("");
+}
+
+/* "+ New file": create a blank doc, switch to it, refresh the list, and drop the
+   cursor into #docName so it can be renamed immediately. No shapes are seeded. */
+async function newDoc() {
+  try {
+    const d = await api("POST", "/objects/doc", { name: "Untitled" });
+    docs.unshift(d);
+    await openDoc(d._guid, { focusName: true });
+    loadDocList();                     // refresh list + count from the server
+  } catch (e) { setErr(e.message); }
 }
 
 async function loadShapes() {
@@ -1574,8 +1705,27 @@ $("redoBtn").addEventListener("click", redo);
 $("docName").addEventListener("change", async (e) => {
   const name = e.target.value.trim() || "Untitled";
   e.target.value = name;          // reflect what was actually saved (no blank field)
-  try { await api("PATCH", `/objects/doc/${docGuid}`, { name }); setErr(""); }
-  catch (err) { setErr(err.message); }
+  try {
+    await api("PATCH", `/objects/doc/${docGuid}`, { name });
+    const d = docs.find(x => x._guid === docGuid);
+    if (d) d.name = name;         // keep the switcher list (and its highlight) in sync
+    renderDocMenu();
+    setErr("");
+  } catch (err) { setErr(err.message); }
+});
+
+/* ------- file switcher wiring + deep-link ------------------------------- */
+$("docMenuBtn").addEventListener("click", toggleDocMenu);
+// click anywhere outside the picker closes the open menu
+document.addEventListener("mousedown", (e) => {
+  if (!$("docMenu").hidden && !e.target.closest(".docpicker")) closeDocMenu();
+});
+// back/forward and shared links (#<docGuid>) open the right file
+window.addEventListener("hashchange", () => {
+  if (suppressHash) { suppressHash = false; return; }
+  const g = location.hash.slice(1);
+  if (g && g !== docGuid) openDoc(g);
+  else if (!g && docGuid) { suppressHash = true; location.hash = docGuid; }  // keep it deep-linked
 });
 
 function typing(t) { return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable); }
@@ -1623,7 +1773,10 @@ document.addEventListener("keydown", (e) => {
   if (e.code === "Space" && !spaceDown) { spaceDown = true; $("canvas").style.cursor = "grab"; e.preventDefault(); return; }
 
   if ((e.key === "Delete" || e.key === "Backspace") && sel.size) { e.preventDefault(); deleteSelected(); return; }
-  if (e.key === "Escape") { selectOnly(null); setTool("select"); return; }
+  if (e.key === "Escape") {
+    if (!$("docMenu").hidden) { closeDocMenu(); $("docMenuBtn").focus(); return; }
+    selectOnly(null); setTool("select"); return;
+  }
 
   if (e.key.startsWith("Arrow") && sel.size) {
     e.preventDefault();
@@ -1677,8 +1830,7 @@ function escapeAttr(s) { return escapeHtml(s); }
   applyView();
   await bootstrap();
   try {
-    await loadOrSeed();
-    pushHistory();           // baseline state for undo
+    await loadOrSeed();      // opens the deep-linked / first / seeded doc + sets its baseline
     setErr("");
   } catch (e) {
     if (/unknown app/i.test(e.message)) {
