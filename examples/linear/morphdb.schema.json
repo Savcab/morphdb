@@ -40,7 +40,8 @@
         "created": { "type": "datetime", "index": true }
       },
       "relations": {
-        "issue": { "to": "issue", "cardinality": "many_to_one", "inverse": "comments" }
+        "issue": { "to": "issue", "cardinality": "many_to_one", "inverse": "comments" },
+        "author": { "to": "user", "cardinality": "many_to_one", "inverse": "comments_authored" }
       }
     }
   ]

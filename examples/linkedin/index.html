@@ -170,7 +170,7 @@
   .post .head .meta b { font-size: 14px; }
   .post .head .meta small { color: var(--muted); display: block; font-size: 12.5px; }
   .post .head .time { color: var(--faint); font-size: 12px; }
-  .post .body { padding: 2px 16px 12px; white-space: pre-wrap; line-height: 1.5; }
+  .post .body { padding: 2px 16px 12px; white-space: pre-wrap; line-height: 1.5; overflow-wrap: anywhere; word-break: break-word; }
   .post .likebar { padding: 4px 16px 6px; color: var(--faint); font-size: 12.5px; display: flex; align-items: center; gap: 5px; border-bottom: 1px solid var(--line); }
   .post .likebar .heart { width: 16px; height: 16px; border-radius: 50%; background: var(--brand); display: grid; place-items: center; }
   .post .likebar .heart svg { width: 10px; height: 10px; fill: #fff; }
@@ -263,7 +263,7 @@
   .mpost .mp-head b { font-size: 13.5px; display: block; }
   .mpost .mp-head small { color: var(--muted); font-size: 12px; display: block; }
   .mpost .mp-head .time { margin-left: auto; color: var(--faint); font-size: 12px; }
-  .mpost .mp-body { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; font-size: 13.5px; }
+  .mpost .mp-body { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; font-size: 13.5px; overflow-wrap: anywhere; word-break: break-word; }
   .mpost .mp-likes { margin-top: 8px; color: var(--faint); font-size: 12.5px; display: flex; align-items: center; gap: 5px; }
   .mpost .mp-likes .heart { width: 15px; height: 15px; border-radius: 50%; background: var(--brand); display: grid; place-items: center; }
   .mpost .mp-likes .heart svg { width: 9px; height: 9px; fill: #fff; }
@@ -353,7 +353,7 @@
   .pmenu button { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 10px 14px; color: var(--text); font-size: 13px; }
   .pmenu button:hover { background: var(--hover); }
   .pmenu button.danger { color: #d11a2a; }
-  .edit-area { width: 100%; min-height: 84px; max-height: 260px; border: 1px solid var(--brand); border-radius: 10px; padding: 10px 12px; font: inherit; background: var(--bg); color: var(--text); resize: vertical; }
+  .edit-area { width: 100%; min-height: 84px; max-height: 260px; border: 1px solid var(--brand); border-radius: 10px; padding: 10px 12px; font: inherit; background: var(--bg); color: var(--text); resize: vertical; overflow-wrap: anywhere; word-break: break-word; }
   .edit-bar { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 8px; }
   .edit-bar .count { margin-right: auto; color: var(--faint); font-size: 12px; }
   .edit-bar .count.over { color: #d11a2a; }
@@ -366,6 +366,18 @@
   /* ---- job applied / saved tags ---- */
   .job-tags { margin-left: auto; align-self: center; display: flex; gap: 8px; align-items: center; }
   .applied-pill { background: var(--brand-soft); color: var(--brand); border-radius: 999px; padding: 2px 10px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+
+  /* ---- edit-your-own-profile form (self profile modal) ---- */
+  .p-edit { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .pe-field { display: flex; flex-direction: column; gap: 4px; }
+  .pe-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .pe-field input, .pe-field textarea {
+    width: 100%; font: inherit; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  .pe-field textarea { min-height: 92px; resize: vertical; overflow-wrap: anywhere; word-break: break-word; }
+  .pe-field input:focus, .pe-field textarea:focus { outline: none; border-color: var(--brand); }
+  .pe-bar { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
 
 </style>
 </head>
@@ -602,6 +614,13 @@ let savedJobs = new Set(JSON.parse(localStorage.getItem(SAVED_KEY) || "[]"));
 let appliedJobs = new Set(JSON.parse(localStorage.getItem(APPLIED_KEY) || "[]"));
 function persist(key, set) { localStorage.setItem(key, JSON.stringify([...set])); }
 
+// Posts edited from this browser get an "Edited" marker. Tracked client-side
+// (localStorage) rather than as a post field to keep the schema untouched; it is
+// therefore per-browser (see morphdb_limitations / notes) — the editor always
+// sees it, which is the case that matters most.
+const EDITED_KEY = "linkedin-demo:edited-posts";
+let editedPosts = new Set(JSON.parse(localStorage.getItem(EDITED_KEY) || "[]"));
+
 /* ---------- loaders / renderers ---------- */
 async function loadPeople() {
   const { objects } = await api("GET", "/objects/person?sort=name&order=asc&limit=100");
@@ -673,7 +692,12 @@ function renderConnections() {
   if (!conns.length) { list.appendChild(el("div", "empty", "No connections yet.")); return; }
   for (const p of conns) {
     const btn = el("button", "btn ghost", "Connected");
-    btn.onclick = () => toggleConnect(p._guid, btn);
+    btn.title = "Remove connection";
+    // "Connected" is a status, not a one-click destructive action — confirm first.
+    btn.onclick = () => {
+      if (!confirm(`Remove ${p.name} from your connections?`)) return;
+      toggleConnect(p._guid, btn);
+    };
     list.appendChild(personRow(p, btn));
   }
 }
@@ -744,16 +768,18 @@ function renderFeed(posts) {
     meta.querySelector("b").textContent = a.name;
     meta.querySelector("small").textContent = a.headline || "";
     if (a._guid) {                       // author hydrated → make it a link to their profile
+      const nameB = meta.querySelector("b");
       av.classList.add("link");
-      meta.querySelector("b").classList.add("link");
+      nameB.classList.add("link");
       const go = () => openProfile(a._guid);
-      av.onclick = go;
-      meta.querySelector("b").onclick = go;
-      av.title = meta.title = "View profile";
+      // keyboard-operable + announced as buttons (matches sidebar rows / job cards)
+      activate(av, go, `View ${a.name}'s profile`);
+      activate(nameB, go, `View ${a.name}'s profile`);
+      av.title = nameB.title = "View profile";
     }
     head.appendChild(av);
     head.appendChild(meta);
-    head.appendChild(el("div", "time", ago(post.created)));
+    head.appendChild(el("div", "time", ago(post.created) + (editedPosts.has(post._guid) ? " · Edited" : "")));
 
     const body = el("div", "body");
     body.textContent = post.body;
@@ -868,6 +894,7 @@ function startEditPost(post, bodyEl) {
     save.disabled = true;
     try {
       await api("PATCH", `/objects/post/${post._guid}`, { body: v });
+      editedPosts.add(post._guid); persist(EDITED_KEY, editedPosts);   // show an "Edited" marker
       info("Post updated");
       await loadFeed();
     } catch (e) { err(e.message); save.disabled = false; }
@@ -1039,7 +1066,7 @@ function profilePost(post, person) {
   const b = el("b"); b.textContent = a.name; meta.appendChild(b);
   if (a.headline) { const s = el("small"); s.textContent = a.headline; meta.appendChild(s); }
   head.appendChild(meta);
-  head.appendChild(el("div", "time", ago(post.created)));
+  head.appendChild(el("div", "time", ago(post.created) + (editedPosts.has(post._guid) ? " · Edited" : "")));
   node.appendChild(head);
   const body = el("div", "mp-body"); body.textContent = post.body; node.appendChild(body);
   if ((post.likes || 0) > 0)
@@ -1067,10 +1094,19 @@ function renderProfileModal(person, posts) {
                      <span><b>${posts.length}</b> post${posts.length === 1 ? "" : "s"}</span>`;
   top.appendChild(stats);
 
-  if (!isMe && ME) {
+  if (isMe) {
+    // Your own profile — offer an Edit affordance (PATCHes person fields).
+    const cta = el("div", "m-cta");
+    const editBtn = el("button", "btn solid", "Edit profile");
+    editBtn.onclick = () => openProfileEditor(person);
+    cta.appendChild(editBtn);
+    top.appendChild(cta);
+  } else if (ME) {
     const cta = el("div", "m-cta");
     const btn = el("button", "btn " + (connected ? "ghost" : "solid"), connected ? "Disconnect" : "+ Connect");
     btn.onclick = async () => {
+      // Disconnecting destroys a (bidirectional) relationship — confirm it.
+      if (connected && !confirm(`Remove ${person.name} from your connections?`)) return;
       btn.disabled = true; btn.textContent = "…";
       try { await applyConnection(person._guid); openProfile(person._guid); }  // refresh modal + sidebars
       catch (e) { err(e.message); btn.disabled = false; }
@@ -1099,6 +1135,61 @@ function renderProfileModal(person, posts) {
   openOverlay(wrap);
 }
 
+/* ---------- EDIT your own profile (PATCHes existing person fields) ---------- */
+function openProfileEditor(person) {
+  const wrap = el("div");
+  wrap.appendChild(closeBtn());
+  wrap.appendChild(el("div", "m-banner"));
+  const top = el("div", "m-top");
+  top.appendChild(avatar(person.name));
+
+  const form = el("div", "p-edit");
+  const field = (labelText, value, multiline) => {
+    const f = el("label", "pe-field");
+    f.appendChild(el("span", "pe-label", labelText));
+    const input = multiline ? el("textarea") : el("input");
+    if (!multiline) input.type = "text";
+    input.value = value || "";
+    input.maxLength = multiline ? 1200 : 160;
+    f.appendChild(input);
+    form.appendChild(f);
+    return input;
+  };
+  const nameI = field("Name", person.name);
+  const headI = field("Headline", person.headline);
+  const locI = field("Location", person.location);
+  const aboutI = field("About", person.about, true);
+
+  const bar = el("div", "pe-bar");
+  const save = el("button", "btn solid", "Save"); save.type = "button";
+  const cancel = el("button", "btn ghost", "Cancel"); cancel.type = "button";
+  cancel.onclick = () => openProfile(person._guid);
+  save.onclick = async () => {
+    const name = nameI.value.trim();
+    if (!name) { nameI.focus(); err("Name can't be empty."); return; }
+    save.disabled = true;
+    try {
+      await api("PATCH", `/objects/person/${person._guid}`, {
+        name,
+        headline: headI.value.trim(),
+        location: locI.value.trim(),
+        about: aboutI.value.trim(),
+      });
+      info("Profile updated");
+      await loadPeople();          // names/headlines may have changed elsewhere
+      await loadMe();
+      await loadFeed();            // author headlines on posts refresh too
+      openProfile(person._guid);   // back to the (now updated) read view
+    } catch (e) { err(e.message); save.disabled = false; }
+  };
+  bar.append(save, cancel);
+
+  top.append(form, bar);
+  wrap.appendChild(top);
+  openOverlay(wrap);
+  nameI.focus();
+}
+
 /* ---------- JOB detail ---------- */
 function openJob(job) {
   const wrap = el("div");
@@ -1107,11 +1198,11 @@ function openJob(job) {
   const top = el("div", "m-jobtop");
   const logo = el("div", "clogo"); logo.textContent = initials(job.company); logo.style.background = hue(job.company);
   top.appendChild(logo);
-  const info = el("div");
-  const t = el("div", "m-jtitle"); t.textContent = job.title; info.appendChild(t);
-  const c = el("div", "m-jcompany"); c.textContent = job.company; info.appendChild(c);
-  if (job.location) { const lo = el("div", "m-jloc"); lo.textContent = job.location; info.appendChild(lo); }
-  top.appendChild(info);
+  const jobInfo = el("div");
+  const t = el("div", "m-jtitle"); t.textContent = job.title; jobInfo.appendChild(t);
+  const c = el("div", "m-jcompany"); c.textContent = job.company; jobInfo.appendChild(c);
+  if (job.location) { const lo = el("div", "m-jloc"); lo.textContent = job.location; jobInfo.appendChild(lo); }
+  top.appendChild(jobInfo);
   wrap.appendChild(top);
 
   const actions = el("div", "m-jactions");
@@ -1257,7 +1348,7 @@ function renderSearch(qRaw) {
       addItem(avatar(a.name), a.name, snip, () => { if (a._guid) openProfile(a._guid); });
     }
   }
-  if (!srItems.length) box.appendChild(el("div", "sr-empty", "No matches in the loaded data."));
+  if (!srItems.length) box.appendChild(el("div", "sr-empty", "No results found."));
   box.hidden = false; input.setAttribute("aria-expanded", "true");
 }
 

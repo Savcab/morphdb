@@ -10,7 +10,7 @@
         "priority": { "type": "number", "index": true },
         "due": { "type": "datetime", "index": true },
         "position": { "type": "number", "index": true },
-        "notes": { "type": "string" }
+        "notes": { "type": "string", "index": true }
       },
       "relations": {}
     }

@@ -19,7 +19,8 @@
         "kind": "string",
         "text": "string",
         "checked": "boolean",
-        "order": { "type": "number", "index": true, "default": 0 }
+        "order": { "type": "number", "index": true, "default": 0 },
+        "depth": { "type": "number", "index": true, "default": 0 }
       },
       "relations": {
         "page": { "to": "page", "cardinality": "many_to_one", "inverse": "blocks" }

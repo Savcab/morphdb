@@ -60,6 +60,10 @@ There's no unique index and no atomic sequence allocator. An issue tracker needs
 *Surfaced by: Todo (sort by title).*
 `sort=<field>` orders by the raw stored value — for strings that's byte/ASCII order, so `"Zebra"` sorts before `"apple"` (uppercase before lowercase) and there's no locale/case-insensitive option. The Todo app has to re-sort the fetched page client-side with `localeCompare` to get a natural A–Z. A per-sort collation flag (case-insensitive / locale-aware) would let the server return the right order (and keep it correct across pagination, which the client-side re-sort cannot).
 
+## 13. No null-ordering control in sort, and no OR / multi-field filter
+*Surfaced by: Todo (sort by due date; search title-or-notes).*
+Two related query-expressiveness gaps. **(a) Null ordering:** `sort=<field>` has no `NULLS FIRST/LAST` option, and SQLite places NULLs first — so sorting tasks by `due` puts every undated task *above* the dated ones, the opposite of what a to-do app wants. The app re-sorts client-side, which breaks across pagination. **(b) OR / multi-field:** `__contains` matches one field at a time and filters are AND-combined; there's no OR across fields, so "search title **or** notes" must be done as two separate indexed queries merged client-side. A nulls-ordering flag and a basic OR/multi-field filter would close both.
+
 ---
 
 # Architectural gaps for a production rebuild (LinkedIn / Notion / Figma)

@@ -11,8 +11,8 @@
     --bg: #ffffff;
     --sidebar: #fbfbfa;
     --text: #37352f;
-    --muted: #9a9890;
-    --faint: #b8b6af;
+    --muted: #8c8a82;
+    --faint: #82817a;
     --border: #ededec;
     --hover: #efeeec;
     --sel: #e6e5e1;
@@ -28,8 +28,8 @@
       --bg: #191919;
       --sidebar: #202020;
       --text: #e9e9e6;
-      --muted: #8b8b86;
-      --faint: #6a6a66;
+      --muted: #9a9a94;
+      --faint: #82827c;
       --border: #2a2a28;
       --hover: #2c2c2a;
       --sel: #38352f;
@@ -131,6 +131,7 @@
   .doc-icon {
     font-size: 64px; line-height: 1; display: inline-block; cursor: pointer; border-radius: 10px;
     padding: 2px 6px; margin: 18px 0 2px -6px;
+    border: none; background: none; color: inherit; font-family: inherit;
   }
   .doc-icon:hover { background: var(--hover); }
   .doc-title {
@@ -263,8 +264,8 @@
   .kind-image img { max-width: 100%; border-radius: 8px; display: block; }
   .img-empty { color: var(--faint); border: 1px dashed var(--border); border-radius: 8px; padding: 14px;
     cursor: pointer; text-align: center; font-size: 13.5px; }
-  /* Toggle: a caret + summary; the body lives in following indented sibling blocks is not modeled,
-     so a toggle hides/shows its own folded note text on the same block. */
+  /* Toggle: a caret + summary. Its children are the following blocks nested one
+     level deeper (Tab to indent); collapsing the toggle folds them away. */
   .kind-toggle .content { display: flex; align-items: flex-start; gap: 6px; }
   .toggle-caret { flex: 0 0 18px; width: 18px; height: 22px; border: none; background: none; cursor: pointer;
     color: var(--muted); display: grid; place-items: center; padding: 0; }
@@ -301,12 +302,63 @@
     .doc { padding: 8px 18px 40vh; }
     .doc-title { font-size: 30px; min-height: 36px; }
     .doc-icon { font-size: 52px; }
-    .block { grid-template-columns: 0 1fr; }
-    .gutter { display: none; }
-    .addblock { margin-left: 0; }
+    /* Keep a compact gutter on phones so the block menu (turn-into / move /
+       delete / reorder) stays reachable — hiding it stranded mobile users. */
+    .block { grid-template-columns: 26px 1fr; }
+    .gutter { opacity: 1; padding-top: 3px; justify-content: flex-start; }
+    .gutter .plus { display: none; }     /* just the handle/menu on phones */
+    .gbtn.handle { width: 24px; height: 26px; }
+    .gbtn.handle svg { width: 14px; height: 18px; }
+    .addblock { margin-left: 26px; }
     .crumb { max-width: 130px; }
   }
   .doc-title, .ce, .rtitle, .crumb { overflow-wrap: anywhere; }
+
+  /* ---------- Block nesting (depth) ---------- */
+  .block { margin-left: calc(var(--depth, 0) * 24px); }
+
+  /* ---------- Multi-block selection ---------- */
+  .block.bsel { background: var(--sel); border-radius: 5px; }
+  .block.bsel .ce { caret-color: transparent; }
+
+  /* ---------- Accessibility: visible keyboard focus ---------- */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
+  .row:focus-visible { outline-offset: -2px; }
+  .ce:focus, .doc-title:focus, .find input:focus { outline: none; }  /* text surfaces show a caret, not a ring */
+
+  /* ---------- Sidebar drag indicators ---------- */
+  .row.dragging { opacity: .4; }
+  .row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+  .row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+  .row.drop-inside { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+
+  /* ---------- Inline image embed panel (replaces the native prompt) ---------- */
+  .img-embed { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; background: var(--callout-bg); }
+  .img-embed input { flex: 1; min-width: 150px; padding: 6px 9px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: 13.5px; }
+  .img-embed button { padding: 6px 12px; border: none; border-radius: 6px; background: var(--accent);
+    color: #fff; cursor: pointer; font-size: 13.5px; }
+  .img-embed .hint { flex-basis: 100%; color: var(--faint); font-size: 11.5px; }
+  .kind-image figure { margin: 0; }
+
+  /* ---------- Quick Find (search) ---------- */
+  .find-scrim { position: fixed; inset: 0; background: rgba(15,15,15,.32); z-index: 90;
+    display: flex; align-items: flex-start; justify-content: center; }
+  .find { margin-top: 12vh; width: min(92vw, 560px); background: var(--menu-bg);
+    border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--menu-shadow); overflow: hidden; }
+  .find input { width: 100%; border: none; background: none; color: var(--text);
+    font: inherit; font-size: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .find-list { max-height: 50vh; overflow: auto; padding: 6px; }
+  .find-item { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 7px;
+    cursor: pointer; color: var(--text); }
+  .find-item.sel { background: var(--hover); }
+  .find-item .fi { width: 18px; text-align: center; flex: 0 0 18px; }
+  .find-item .ft { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .find-item .fs { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 46%; }
+  .find-empty { padding: 18px; color: var(--faint); text-align: center; }
+  .find-foot { padding: 7px 12px; border-top: 1px solid var(--border); color: var(--faint); font-size: 11.5px; }
 </style>
 </head>
 <body>
@@ -320,6 +372,11 @@
       </span>
       <span>Noted <span class="sub">· MorphDB</span></span>
     </div>
+    <button class="newpage" id="openSearch" aria-label="Search pages (Ctrl/Cmd+K)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="M10.5 10.5L14 14"/></svg>
+      Search
+      <span class="sub" style="margin-left:auto;font-size:11px">⌘K</span>
+    </button>
     <button class="newpage" id="newRoot">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
       New page
@@ -464,7 +521,8 @@ const state = {
   pages: [], byId: {}, childrenMap: {}, roots: [],
   expanded: new Set(), currentPageGuid: null, blocks: [], focusGuid: null,
   focusOffset: null,           // where to place the caret in the focused block ("end" | number)
-  toggles: new Set(),          // open/closed state of toggle blocks (session-local)
+  collapsed: new Set(),        // toggle blocks whose children are folded away (session-local)
+  selected: new Set(),         // multi-block selection (guids highlighted as a group)
 };
 const PH = {
   text: "Type '/' for commands", h1: "Heading 1", h2: "Heading 2",
@@ -566,10 +624,14 @@ function mdToHtml(md) {
   s = s.replace(/\n/g, "<br>");
   return s;
 }
+// Zero-width space we drop in after an auto-formatted inline element so continued
+// typing stays OUTSIDE it; stripped whenever we read the text back out.
+const ZWSP = "​";
+const stripZW = (s) => s.replace(/​/g, "");
 function htmlToMd(node) {
   let out = "";
   node.childNodes.forEach((n) => {
-    if (n.nodeType === 3) { out += n.nodeValue; return; }
+    if (n.nodeType === 3) { out += stripZW(n.nodeValue); return; }
     if (n.nodeType !== 1) return;
     const tag = n.tagName, inner = htmlToMd(n);
     if (tag === "BR") out += "\n";
@@ -586,7 +648,7 @@ function htmlToMd(node) {
 function textWithBreaks(node) {
   let out = "";
   node.childNodes.forEach((n) => {
-    if (n.nodeType === 3) { out += n.nodeValue; return; }
+    if (n.nodeType === 3) { out += stripZW(n.nodeValue); return; }
     if (n.nodeType !== 1) return;
     if (n.tagName === "BR") { out += "\n"; return; }
     if (n.tagName === "DIV" && out && !out.endsWith("\n")) out += "\n";
@@ -650,6 +712,14 @@ function rowEl(p, depth) {
 
   row.append(tw, ic, tt, add, del);
   row.onclick = () => selectPage(p._guid);
+  // Accessibility: each page is a focusable tree item with keyboard navigation.
+  row.tabIndex = 0;
+  row.setAttribute("role", "treeitem");
+  row.setAttribute("aria-label", (p.title || "Untitled") + " page");
+  if (kids.length) row.setAttribute("aria-expanded", String(state.expanded.has(p._guid)));
+  if (p._guid === state.currentPageGuid) row.setAttribute("aria-current", "page");
+  row.onkeydown = (e) => onRowKey(e, p, kids);
+  wirePageDrag(row, p);
   frag.appendChild(row);
 
   if (kids.length && state.expanded.has(p._guid))
@@ -661,6 +731,83 @@ function toggleExpand(guid) {
   if (state.expanded.has(guid)) state.expanded.delete(guid);
   else state.expanded.add(guid);
   renderSidebar();
+}
+
+/* ---------- Sidebar keyboard navigation (accessibility) ---------- */
+function onRowKey(e, p, kids) {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectPage(p._guid); }
+  else if (e.key === "ArrowRight") { if (kids.length && !state.expanded.has(p._guid)) { e.preventDefault(); toggleExpand(p._guid); } }
+  else if (e.key === "ArrowLeft") { if (kids.length && state.expanded.has(p._guid)) { e.preventDefault(); toggleExpand(p._guid); } }
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const rows = [...document.querySelectorAll(".tree .row")];
+    const nx = rows[rows.indexOf(e.currentTarget) + (e.key === "ArrowDown" ? 1 : -1)];
+    if (nx) nx.focus();
+  } else if (e.key === "Delete") { e.preventDefault(); deletePage(p._guid); }
+}
+
+/* ---------- Sidebar drag: reorder siblings & re-parent pages ---------- */
+let dragPageGuid = null;
+function clearPageDropMarks() {
+  document.querySelectorAll(".row.drop-before,.row.drop-after,.row.drop-inside,.row.dragging")
+    .forEach((el) => el.classList.remove("drop-before", "drop-after", "drop-inside", "dragging"));
+}
+function siblingsOf(parentGuid) {
+  return (parentGuid ? (state.childrenMap[parentGuid] || []) : state.roots).slice();
+}
+function dropZone(e, row) {
+  const r = row.getBoundingClientRect();
+  const y = (e.clientY - r.top) / r.height;
+  if (y < 0.28) return "before";
+  if (y > 0.72) return "after";
+  return "inside";                 // dropping on the middle nests under the target
+}
+function wirePageDrag(row, p) {
+  row.setAttribute("draggable", "true");
+  row.addEventListener("dragstart", (e) => {
+    e.stopPropagation();
+    dragPageGuid = p._guid; row.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", p._guid); } catch (_) {}
+  });
+  row.addEventListener("dragend", () => { dragPageGuid = null; clearPageDropMarks(); });
+  row.addEventListener("dragover", (e) => {
+    if (!dragPageGuid || dragPageGuid === p._guid) return;
+    if (collectSubtree(dragPageGuid).includes(p._guid)) return;   // can't drop into own descendant
+    e.preventDefault(); e.dataTransfer.dropEffect = "move";
+    const zone = dropZone(e, row);
+    row.classList.toggle("drop-before", zone === "before");
+    row.classList.toggle("drop-inside", zone === "inside");
+    row.classList.toggle("drop-after", zone === "after");
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-inside", "drop-after"));
+  row.addEventListener("drop", (e) => {
+    if (!dragPageGuid || dragPageGuid === p._guid) return;
+    if (collectSubtree(dragPageGuid).includes(p._guid)) return;
+    e.preventDefault();
+    const zone = dropZone(e, row);
+    const g = dragPageGuid; clearPageDropMarks(); dragPageGuid = null;
+    dropPage(g, p, zone);
+  });
+}
+async function dropPage(g, target, zone) {
+  try {
+    let parent, order;
+    if (zone === "inside") {
+      parent = target._guid;
+      const sibs = siblingsOf(parent).filter((s) => s._guid !== g).sort((a, b) => a.order - b.order);
+      order = sibs.length ? sibs[sibs.length - 1].order + 1 : 0;
+      state.expanded.add(parent);
+    } else {
+      parent = target.parent || null;
+      const sibs = siblingsOf(parent).filter((s) => s._guid !== g).sort((a, b) => a.order - b.order);
+      const ti = sibs.findIndex((s) => s._guid === target._guid);
+      if (zone === "before") order = orderBetween(sibs[ti - 1] ? sibs[ti - 1].order : null, target.order);
+      else order = orderBetween(target.order, sibs[ti + 1] ? sibs[ti + 1].order : null);
+    }
+    await api("PATCH", `/objects/page/${g}`, { parent, order });
+    await loadTree();
+  } catch (e) { showErr(e.message); }
 }
 
 /* ---------- Page open / doc render ---------- */
@@ -738,8 +885,9 @@ function renderDoc() {
   if (!state.currentPageGuid) { renderEmptyDoc(); return; }
   const page = state.byId[state.currentPageGuid];
 
-  const icon = document.createElement("div");
-  icon.className = "doc-icon"; icon.textContent = page.icon || "📄"; icon.title = "Change icon";
+  const icon = document.createElement("button");
+  icon.type = "button"; icon.className = "doc-icon"; icon.textContent = page.icon || "📄";
+  icon.title = "Change icon"; icon.setAttribute("aria-label", "Change page icon");
   icon.onclick = (e) => { e.stopPropagation(); openEmojiPicker(icon); };
 
   const title = document.createElement("div");
@@ -760,11 +908,23 @@ function renderDoc() {
   const blocks = document.createElement("div"); blocks.className = "blocks";
   // Numbered lists count client-side (no aggregation endpoint): a run of
   // consecutive "numbered" blocks restarts at 1 whenever the kind breaks.
+  // A collapsed toggle folds away every following deeper block (its children).
   let n = 0;
-  for (const b of state.blocks) {
+  let collapseDepth = null;
+  for (let i = 0; i < state.blocks.length; i++) {
+    const b = state.blocks[i];
+    const depth = b.depth || 0;
+    if (collapseDepth !== null) {
+      if (depth > collapseDepth) continue;     // child of a folded toggle — hidden
+      collapseDepth = null;                    // returned to/above the toggle's level
+    }
     n = b.kind === "numbered" ? n + 1 : 0;
-    blocks.appendChild(blockEl(b, n));
+    const next = state.blocks[i + 1];
+    const hasChildren = !!next && (next.depth || 0) > depth;
+    blocks.appendChild(blockEl(b, n, hasChildren));
+    if (b.kind === "toggle" && state.collapsed.has(b._guid)) collapseDepth = depth;
   }
+  wireBlockSelection(blocks);
 
   const add = document.createElement("div");
   add.className = "addblock";
@@ -785,10 +945,12 @@ function renderEmptyDoc() {
 }
 
 /* ---------- Block element ---------- */
-function blockEl(b, num) {
+function blockEl(b, num, hasChildren) {
   const wrap = document.createElement("div");
-  wrap.className = "block kind-" + b.kind + (b.kind === "todo" && b.checked ? " checked" : "");
+  wrap.className = "block kind-" + b.kind + (b.kind === "todo" && b.checked ? " checked" : "")
+    + (state.selected.has(b._guid) ? " bsel" : "");
   wrap.dataset.guid = b._guid;
+  wrap.style.setProperty("--depth", b.depth || 0);   // nesting indentation
 
   const gutter = document.createElement("div"); gutter.className = "gutter";
   const plus = document.createElement("button");
@@ -807,15 +969,18 @@ function blockEl(b, num) {
     content.appendChild(document.createElement("hr"));
   } else if (b.kind === "image") {
     if (b.text) {
+      const fig = document.createElement("figure");
       const img = document.createElement("img");
-      img.src = b.text; img.alt = ""; img.onerror = () => { img.replaceWith(imgPlaceholder(b)); };
-      content.appendChild(img);
+      img.src = b.text; img.alt = ""; img.onerror = () => { content.replaceChildren(imgEmbed(b)); };
+      fig.appendChild(img);
+      content.appendChild(fig);
     } else {
-      content.appendChild(imgPlaceholder(b));
+      content.appendChild(imgEmbed(b));
     }
   } else if (b.kind === "todo") {
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.className = "todobox"; cb.checked = !!b.checked; cb.tabIndex = -1;
+    cb.setAttribute("aria-label", b.text ? "To-do: " + b.text : "To-do item");
     cb.onchange = () => toggleChecked(b._guid, cb.checked);
     content.append(cb, editable(b));
   } else if (b.kind === "bullet") {
@@ -827,11 +992,16 @@ function blockEl(b, num) {
   } else if (b.kind === "toggle") {
     const car = document.createElement("button"); car.className = "toggle-caret"; car.tabIndex = -1;
     car.innerHTML = ICONS.caretR;
-    const open = state.toggles.has(b._guid);
+    const open = !state.collapsed.has(b._guid);     // toggles default to open
     car.classList.toggle("open", open);
+    car.title = open ? "Collapse" : "Expand";
+    car.setAttribute("aria-label", open ? "Collapse toggle" : "Expand toggle");
+    car.setAttribute("aria-expanded", String(open));
+    // Hint that an open toggle with no nested blocks is empty (Tab to add children).
+    car.style.opacity = (open && !hasChildren) ? ".45" : "1";
     car.onclick = (e) => {
       e.stopPropagation();
-      if (state.toggles.has(b._guid)) state.toggles.delete(b._guid); else state.toggles.add(b._guid);
+      if (state.collapsed.has(b._guid)) state.collapsed.delete(b._guid); else state.collapsed.add(b._guid);
       renderDoc();
     };
     content.append(car, editable(b));
@@ -847,29 +1017,52 @@ function blockEl(b, num) {
   return wrap;
 }
 
-function imgPlaceholder(b) {
-  const ph = document.createElement("div"); ph.className = "img-empty";
-  ph.textContent = "🖼  Add an image — click to paste a URL";
-  ph.onclick = () => {
-    const url = prompt("Image URL:", b.text || "");
-    if (url == null) return;
-    b.text = url.trim();
-    serialize(async () => { await patchBlock(b._guid, { text: b.text }); await loadDoc(state.currentPageGuid); });
+// Inline image embed — an in-block URL field instead of a native prompt().
+// No contentEditable here, so there's no onblur race that used to overwrite the
+// saved URL with the stray slash text; the write goes through the serialized queue.
+function imgEmbed(b) {
+  const box = document.createElement("div"); box.className = "img-embed";
+  const inp = document.createElement("input");
+  inp.type = "url"; inp.placeholder = "Paste an image link (https://… or data:…)";
+  inp.value = b.text || ""; inp.setAttribute("aria-label", "Image URL");
+  const btn = document.createElement("button"); btn.textContent = "Embed image";
+  const hint = document.createElement("div"); hint.className = "hint";
+  hint.textContent = "🖼  Paste a direct image URL, then press Enter or Embed.";
+  const submit = () => {
+    const url = inp.value.trim();
+    if (!url) { inp.focus(); return; }
+    b.text = url;
+    serialize(async () => { await patchBlock(b._guid, { text: url }); await loadDoc(state.currentPageGuid); });
   };
-  return ph;
+  btn.onclick = submit;
+  inp.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); submit(); }
+    else if (e.key === "Escape") { e.preventDefault(); inp.blur(); }
+  };
+  box.append(inp, btn, hint);
+  requestAnimationFrame(() => { if (!b.text) inp.focus(); });
+  return box;
 }
 
 function editable(b) {
   const d = document.createElement("div");
   d.className = "ce " + b.kind; d.contentEditable = "true"; d.spellcheck = false;
   d.dataset.ph = PH[b.kind] || "";
+  d.setAttribute("role", "textbox"); d.setAttribute("aria-multiline", "true");
+  d.setAttribute("aria-label", (PH[b.kind] || "Text") + " block");
   if (b.kind === "code") d.textContent = b.text || "";
   else d.innerHTML = mdToHtml(b.text || "");
   d.onblur = () => {
+    if (d.__skipSave) { d.__skipSave = false; return; }   // suppressed during programmatic conversion
     const t = readEditable(b, d);
     if (t !== (b.text || "")) { b.text = t; patchBlock(b._guid, { text: t }); }
   };
-  d.oninput = () => { if (b.kind === "code") return; detectMarkdown(b, d); detectSlash(b, d); };
+  d.oninput = () => {
+    if (b.kind === "code") return;
+    if (detectMarkdown(b, d)) return;   // block shortcut converted in place — stop
+    autoFormatInline(b, d);             // WYSIWYG: **x** → bold the moment you close it
+    detectSlash(b, d);
+  };
   d.onkeydown = (e) => onBlockKey(e, b, d);
   if (state.focusGuid === b._guid) {
     state.focusGuid = null;
@@ -880,6 +1073,63 @@ function editable(b) {
     });
   }
   return d;
+}
+
+// 1-based position of `b` within its run of consecutive numbered blocks.
+function blockNumber(b) {
+  let n = 0;
+  for (const x of state.blocks) {
+    n = x.kind === "numbered" ? n + 1 : 0;
+    if (x === b) return n || 1;
+  }
+  return 1;
+}
+
+// Swap ONE block's DOM node in place (no full-doc reload, no network round trip).
+// Used by the markdown-shortcut conversion so text typed right after the trigger
+// isn't dropped while a re-render is in flight. Focus is restored synchronously.
+function rebuildBlock(b, caret) {
+  const old = document.querySelector(`.block[data-guid="${b._guid}"]`);
+  if (!old) return null;
+  const i = state.blocks.findIndex((x) => x === b);
+  const next = state.blocks[i + 1];
+  const hasChildren = !!next && (next.depth || 0) > (b.depth || 0);
+  const fresh = blockEl(b, blockNumber(b), hasChildren);
+  old.replaceWith(fresh);
+  const ce = fresh.querySelector(".ce");
+  if (ce && caret != null) { caret === "end" ? placeCaretEnd(ce) : placeCaretAt(ce, caret); }
+  return ce;
+}
+
+/* ---------- Inline markdown autoformat (WYSIWYG, fires as you close a token) ----------
+   Notion bolds **x** the instant you type the closing **. We render the whole
+   block from its markdown and put the caret back where it was minus the marker
+   characters, so what you see while typing matches what's persisted. */
+function autoFormatInline(b, d) {
+  if (slashState) return;
+  const caret = caretOffset(d);
+  const s = d.textContent.slice(0, caret);
+  let markers = 0;
+  if (/\*\*[^*\s][^*]*?\*\*$/.test(s)) markers = 4;
+  else if (/~~[^~\s][^~]*?~~$/.test(s)) markers = 4;
+  else if (/`[^`\s][^`]*?`$/.test(s)) markers = 2;
+  else if (/(?:^|[^*])\*[^*\s][^*]*?\*$/.test(s)) markers = 2;
+  else return;
+  const md = readEditable(b, d);
+  d.innerHTML = mdToHtml(md);
+  const newCaret = Math.max(0, caret - markers);
+  // Keep continued typing OUTSIDE the new element when the token ends the block:
+  // a bare boundary lets the browser type back inside <strong>, so park the caret
+  // after a zero-width space sibling (stripped on read).
+  if (newCaret >= d.textContent.length && d.lastChild && d.lastChild.nodeType === 1) {
+    const tn = document.createTextNode(ZWSP);
+    d.appendChild(tn);
+    const rng = document.createRange(); rng.setStart(tn, 1); rng.collapse(true);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(rng); d.focus();
+  } else {
+    placeCaretAt(d, newCaret);
+  }
+  if (md !== (b.text || "")) { b.text = md; patchBlock(b._guid, { text: md }); }
 }
 
 // kinds whose Enter continues the same kind (list-like). Everything else → text.
@@ -940,8 +1190,28 @@ function onBlockKey(e, b, d) {
 
   if (e.key === "ArrowUp" && caretAtStart()) { if (focusSibling(b, -1)) e.preventDefault(); return; }
   if (e.key === "ArrowDown" && caretAtEnd(d)) { if (focusSibling(b, +1)) e.preventDefault(); return; }
-  // Tab moves between blocks instead of leaving the editor / hitting gutter buttons.
-  if (e.key === "Tab") { e.preventDefault(); focusSibling(b, e.shiftKey ? -1 : +1); return; }
+  // Tab / Shift+Tab indent / outdent the block (Notion-style nesting), keeping
+  // the caret. Arrow keys already move between blocks, so Tab is free for this.
+  if (e.key === "Tab") { e.preventDefault(); indentBlock(b, e.shiftKey ? -1 : +1, d); return; }
+}
+
+// Change a block's nesting depth in place. You can only indent one level deeper
+// than the block above (so there's always a parent), and never below 0.
+function indentBlock(b, dir, d) {
+  const i = state.blocks.findIndex((x) => x === b);
+  const cur = b.depth || 0;
+  let next;
+  if (dir > 0) {
+    const max = i > 0 ? (state.blocks[i - 1].depth || 0) + 1 : 0;
+    next = Math.min(cur + 1, max);
+  } else {
+    next = Math.max(0, cur - 1);
+  }
+  if (next === cur) return;
+  b.depth = next;
+  const wrap = d.closest(".block");
+  if (wrap) wrap.style.setProperty("--depth", next);
+  serialize(() => patchBlock(b._guid, { depth: next }));
 }
 
 /* ---------- Inline formatting ---------- */
@@ -1017,22 +1287,23 @@ function addBlockAfter(afterGuid, kind = "text", text = "") {
   return serialize(async () => {
     try {
       const blocks = state.blocks;
-      let prev, next;
+      let prev, next, depth = 0;
       if (afterGuid) {
         const i = blocks.findIndex((x) => x._guid === afterGuid);
         prev = blocks[i] ? blocks[i].order : null;
         next = blocks[i + 1] ? blocks[i + 1].order : null;
+        depth = blocks[i] ? (blocks[i].depth || 0) : 0;   // continue at the same nesting level
       } else {
         prev = blocks.length ? blocks[blocks.length - 1].order : null;
         next = null;
       }
       const newOrder = orderBetween(prev, next);
       const created = await api("POST", "/objects/block",
-        { kind, text, checked: false, order: newOrder, page: state.currentPageGuid });
+        { kind, text, checked: false, order: newOrder, depth, page: state.currentPageGuid });
       // Notion: a divider has no caret — drop a fresh text block under it to type in.
       if (kind === "divider") {
         const trail = await api("POST", "/objects/block",
-          { kind: "text", text: "", checked: false, order: orderBetween(newOrder, next), page: state.currentPageGuid });
+          { kind: "text", text: "", checked: false, order: orderBetween(newOrder, next), depth, page: state.currentPageGuid });
         state.focusGuid = trail._guid;
       } else {
         state.focusGuid = created._guid;
@@ -1196,7 +1467,7 @@ async function deletePage(guid) {
       const { objects } = await api("GET", `/objects/block?page=${id}&sort=order&order=asc&limit=500`);
       snap.push({ oldGuid: id, oldParent: pg.parent || null,
         page: { title: pg.title || "", icon: pg.icon || "📄", order: pg.order || 0 },
-        blocks: objects.map((b) => ({ kind: b.kind, text: b.text || "", checked: !!b.checked, order: b.order })) });
+        blocks: objects.map((b) => ({ kind: b.kind, text: b.text || "", checked: !!b.checked, order: b.order, depth: b.depth || 0 })) });
     }
     for (const id of ids) {
       const { objects } = await api("GET", `/objects/block?page=${id}&limit=500`);
@@ -1339,30 +1610,41 @@ const MD_RULES = [
   [/^> $/, "quote"], [/^" $/, "quote"],
   [/^```$/, "code"], [/^---$/, "divider"], [/^\*\*\*$/, "divider"],
 ];
+// Returns true when it converted the block (so oninput stops). The conversion is
+// applied IN PLACE and synchronously: we swap this one block's node and keep the
+// caret, then persist in the background. Previously it PATCHed + reloaded the whole
+// doc asynchronously, so any character typed before the reload landed was dropped.
 function detectMarkdown(b, d) {
-  if (slashState) return;
+  if (slashState) return false;
   const txt = d.textContent;
   for (const [re, kind] of MD_RULES) {
     if (!re.test(txt)) continue;
-    if (kind === b.kind) return;
-    serialize(async () => {
-      try {
-        await api("PATCH", `/objects/block/${b._guid}`, { text: "", kind });
-        b.text = "";
-        if (kind === "divider") {                 // dividers can't hold a caret → add one below
-          const i = state.blocks.findIndex((x) => x._guid === b._guid);
-          const next = state.blocks[i + 1] ? state.blocks[i + 1].order : null;
+    if (kind === b.kind) return false;
+    d.__skipSave = true;                          // old node is about to be replaced
+    b.text = "";                                  // the trigger text ("## ", "- ", …) is consumed
+    if (kind === "divider") {
+      b.kind = "divider";
+      rebuildBlock(b, null);                      // dividers hold no caret
+      const i = state.blocks.findIndex((x) => x === b);
+      const next = state.blocks[i + 1] ? state.blocks[i + 1].order : null;
+      serialize(async () => {
+        try {
+          await api("PATCH", `/objects/block/${b._guid}`, { text: "", kind: "divider" });
           const trail = await api("POST", "/objects/block",
-            { kind: "text", text: "", checked: false, order: orderBetween(b.order, next), page: state.currentPageGuid });
+            { kind: "text", text: "", checked: false, order: orderBetween(b.order, next),
+              depth: b.depth || 0, page: state.currentPageGuid });
           state.focusGuid = trail._guid;
-        } else {
-          state.focusGuid = b._guid;
-        }
-        await loadDoc(state.currentPageGuid);
-      } catch (e) { showErr(e.message); }
-    });
-    return;
+          await loadDoc(state.currentPageGuid);
+        } catch (e) { showErr(e.message); }
+      });
+      return true;
+    }
+    b.kind = kind;
+    rebuildBlock(b, 0);                           // caret at start — typing continues here
+    serialize(() => patchBlock(b._guid, { text: "", kind }));   // persist kind/clearing in background
+    return true;
   }
+  return false;
 }
 
 // Run on every input: open/refresh the menu when a "/command" is being typed.
@@ -1446,11 +1728,13 @@ function chooseSlash(kind) {
   const text = d.textContent;
   let stripped = text.slice(0, st.slashStart) + text.slice(st.slashStart + 1 + st.query.length);
   closeSlash();
-  // Image asks for a URL up front (stored in the block's text field).
-  if (kind === "image") {
-    const url = prompt("Image URL:", "");
-    stripped = url ? url.trim() : "";
-  }
+  // Image has no caret/text content — its URL is entered inline (imgEmbed),
+  // not via a native prompt(). Just drop the slash text and switch kinds.
+  if (kind === "image") stripped = "";
+  // The old editable still literally shows "/image" (or "/h1"); the upcoming
+  // loadDoc rebuild blurs it. Suppress that stale onblur so it can't overwrite
+  // the value we're about to PATCH (this is what silently 404'd images).
+  d.__skipSave = true;
   serialize(async () => {
     try {
       b.text = stripped;
@@ -1471,8 +1755,160 @@ function chooseSlash(kind) {
 
 function closeSlash() { if (slashState) { slashState.menu.remove(); slashState = null; } }
 
+function showInfo(msg) {
+  const t = $("toast"); t.className = "toast info show"; t.textContent = msg;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+/* ---------- Multi-block selection ----------
+   Browsers won't extend a native text selection across separate contenteditable
+   hosts, so we add a block-selection layer: drag across blocks to mark them, then
+   Delete removes the set and Cmd/Ctrl+C copies their text together. */
+function clearBlockSelection() {
+  if (!state.selected.size) return;
+  state.selected.clear();
+  document.querySelectorAll(".block.bsel").forEach((el) => el.classList.remove("bsel"));
+}
+function setBlockSelection(guids) {
+  state.selected = new Set(guids);
+  document.querySelectorAll(".block").forEach((el) =>
+    el.classList.toggle("bsel", state.selected.has(el.dataset.guid)));
+}
+function visibleBlockGuids() {
+  return [...document.querySelectorAll(".blocks .block")].map((el) => el.dataset.guid);
+}
+let selDrag = null;
+function wireBlockSelection(blocksEl) {
+  blocksEl.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest("button, input, a, .img-embed")) return;   // let controls work normally
+    const blk = e.target.closest(".block");
+    if (!blk) return;
+    clearBlockSelection();                                          // a fresh click drops the old set
+    selDrag = { anchor: blk.dataset.guid, moved: false };
+    document.addEventListener("mousemove", onSelMove);
+    document.addEventListener("mouseup", onSelUp, { once: true });
+  });
+}
+function onSelMove(e) {
+  if (!selDrag) return;
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const blk = el && el.closest(".block");
+  if (!blk) return;
+  if (blk.dataset.guid === selDrag.anchor && !selDrag.moved) return;  // within one block → native text select
+  selDrag.moved = true;
+  e.preventDefault();
+  getSelection().removeAllRanges();
+  const order = visibleBlockGuids();
+  const a = order.indexOf(selDrag.anchor), b = order.indexOf(blk.dataset.guid);
+  if (a < 0 || b < 0) return;
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  setBlockSelection(order.slice(lo, hi + 1));
+}
+function onSelUp() {
+  document.removeEventListener("mousemove", onSelMove);
+  if (selDrag && selDrag.moved && document.activeElement && document.activeElement.blur)
+    document.activeElement.blur();   // keyboard ops should target the selection, not a caret
+  selDrag = null;
+}
+function deleteSelectedBlocks() {
+  const guids = visibleBlockGuids().filter((g) => state.selected.has(g));
+  if (!guids.length) return;
+  clearBlockSelection();
+  serialize(async () => {
+    try {
+      for (const g of guids) await api("DELETE", `/objects/block/${g}`);
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
+}
+function copySelectedBlocks() {
+  const set = state.selected;
+  const text = state.blocks.filter((b) => set.has(b._guid)).map((b) => b.text || "").join("\n");
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(
+    () => showInfo(`Copied ${set.size} block${set.size > 1 ? "s" : ""}`), () => {});
+}
+
+/* ---------- Quick Find (Cmd/Ctrl+K) ----------
+   Filters page titles instantly from the loaded tree, and also matches block
+   text by pulling every block once and scanning client-side (there is no backend
+   full-text index — see limitations). */
+let findEl = null;
+async function openFind() {
+  if (findEl) return;
+  closeMenu(); closeSlash();
+  const scrim = document.createElement("div"); scrim.className = "find-scrim";
+  const box = document.createElement("div"); box.className = "find";
+  const input = document.createElement("input");
+  input.type = "text"; input.placeholder = "Search pages and text…"; input.spellcheck = false;
+  input.setAttribute("aria-label", "Search pages and text");
+  const list = document.createElement("div"); list.className = "find-list";
+  const foot = document.createElement("div"); foot.className = "find-foot";
+  foot.textContent = "↑↓ navigate · Enter open · Esc close";
+  box.append(input, list, foot); scrim.appendChild(box);
+  document.body.appendChild(scrim);
+  scrim.onclick = (e) => { if (e.target === scrim) closeFind(); };
+  findEl = scrim;
+
+  let results = [], sel = 0, blocks = [];
+  try { const r = await api("GET", "/objects/block?limit=500"); blocks = r.objects || []; } catch (_) {}
+  const run = () => {
+    const q = input.value.trim().toLowerCase();
+    results = []; const seen = new Set();
+    for (const p of state.pages) {
+      const title = p.title || "Untitled";
+      if (!q || title.toLowerCase().includes(q)) { results.push({ guid: p._guid, icon: p.icon || "📄", title, snip: "" }); seen.add(p._guid); }
+    }
+    if (q) for (const bl of blocks) {
+      if (!(bl.text || "").toLowerCase().includes(q)) continue;
+      const pg = state.byId[bl.page]; if (!pg || seen.has(pg._guid)) continue;
+      seen.add(pg._guid);
+      results.push({ guid: pg._guid, icon: pg.icon || "📄", title: pg.title || "Untitled", snip: bl.text.slice(0, 80) });
+    }
+    sel = 0; draw();
+  };
+  const draw = () => {
+    list.innerHTML = "";
+    if (!results.length) { const e = document.createElement("div"); e.className = "find-empty"; e.textContent = "No matches"; list.appendChild(e); return; }
+    results.forEach((res, i) => {
+      const it = document.createElement("div"); it.className = "find-item" + (i === sel ? " sel" : "");
+      it.innerHTML = `<span class="fi"></span><span class="ft"></span><span class="fs"></span>`;
+      it.querySelector(".fi").textContent = res.icon;
+      it.querySelector(".ft").textContent = res.title;
+      it.querySelector(".fs").textContent = res.snip;
+      it.onmouseenter = () => { sel = i; draw(); };
+      it.onclick = () => { const g = res.guid; closeFind(); selectPage(g); };
+      list.appendChild(it);
+    });
+  };
+  input.oninput = run;
+  input.onkeydown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(sel + 1, results.length - 1); draw(); scrollSel(list); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(sel - 1, 0); draw(); scrollSel(list); }
+    else if (e.key === "Enter") { e.preventDefault(); const r = results[sel]; if (r) { closeFind(); selectPage(r.guid); } }
+    else if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+  };
+  function scrollSel(l) { const el = l.children[sel]; if (el) el.scrollIntoView({ block: "nearest" }); }
+  run();
+  requestAnimationFrame(() => input.focus());
+}
+function closeFind() { if (findEl) { findEl.remove(); findEl = null; } }
+
 document.addEventListener("click", () => { closeMenu(); closeSlash(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeMenu(); closeSlash(); } });
+// Clicking outside the block list drops any multi-block selection.
+document.addEventListener("mousedown", (e) => {
+  if (!e.target.closest(".blocks") && !e.target.closest(".menu")) clearBlockSelection();
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K" || e.key === "p" || e.key === "P")) {
+    e.preventDefault(); openFind(); return;
+  }
+  if (e.key === "Escape") { closeMenu(); closeSlash(); closeFind(); clearBlockSelection(); return; }
+  if (state.selected.size) {
+    if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); deleteSelectedBlocks(); }
+    else if ((e.metaKey || e.ctrlKey) && (e.key === "c" || e.key === "C")) { e.preventDefault(); copySelectedBlocks(); }
+  }
+});
 
 /* ---------- Caret helpers ---------- */
 function placeCaretEnd(el) {
@@ -1528,6 +1964,7 @@ function caretAtEnd(el) {
 
 /* ---------- Wire up + boot ---------- */
 $("newRoot").onclick = () => newPage(null);
+$("openSearch").onclick = () => openFind();
 $("scrim").onclick = () => document.querySelector(".app").classList.remove("nav-open");
 
 // Expand the chain of ancestors so a deep-linked page is visible in the tree.

@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MorphDB · Shaper — a Figma-style example</title>
+<!-- inline SVG favicon (the Shaper mark) — avoids a /favicon.ico 404 on every load -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='9' height='9' rx='2.5' fill='%231abcfe'/%3E%3Cpath d='M17.5 2 L22 11 H13 Z' fill='%23a259ff'/%3E%3Ccircle cx='6.5' cy='17.5' r='4.5' fill='%23ff7262'/%3E%3Crect x='13' y='13' width='9' height='9' rx='2.5' fill='%230acf83'/%3E%3C/svg%3E" />
 <style>
   :root {
     color-scheme: light dark;
@@ -53,6 +55,14 @@
   #docName:hover { border-color: var(--line); }
   #docName:focus { outline: none; border-color: var(--accent); background: var(--field); }
   .spacer { flex: 1; }
+  .histbtns { display: inline-flex; gap: 2px; }
+  .hbtn {
+    width: 28px; height: 26px; border: none; background: transparent; color: var(--ink);
+    border-radius: 6px; cursor: pointer; font-size: 15px; line-height: 1;
+  }
+  .hbtn:hover:not(:disabled) { background: #ffffff14; }
+  .hbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hbtn:disabled { opacity: .35; cursor: default; }
   .status {
     display: inline-flex; align-items: center; gap: 6px;
     color: var(--muted); font-size: 12px;
@@ -105,10 +115,13 @@
   .selframe .nw, .selframe .se { cursor: nwse-resize; }
   .selframe .ne, .selframe .sw { cursor: nesw-resize; }
   .marquee { position: absolute; border: 1px solid var(--accent); background: #0d99ff22; pointer-events: none; }
+  /* multi-select: each member gets a thin outline; one union "group" frame carries the handles */
+  .selframe.member { border-width: 1px; border-color: #0d99ff80; }
+  .selframe.groupframe { border-color: var(--accent); }
 
   .empty {
     position: absolute; inset: 0; display: grid; place-content: center;
-    text-align: center; color: #8a8a92; pointer-events: none; gap: 6px;
+    text-align: center; color: #6b6b73; pointer-events: none; gap: 6px;
   }
   .empty b { color: #5a5a62; font-size: 15px; }
 
@@ -193,6 +206,8 @@
   }
   .fillrow .hex:focus { outline: none; border-color: var(--accent); }
   .fillrow .hex.invalid { border-color: #ff5c5c; }
+  /* inline (field-local) hex validation message — never touches the global sync status */
+  .hexnote { display: none; color: #ff8a8a; font-size: 11px; margin-top: 6px; }
   textarea#tx {
     width: 100%; resize: vertical; min-height: 56px; background: var(--field);
     border: 1px solid transparent; border-radius: 6px; color: var(--ink);
@@ -264,6 +279,11 @@
     <span class="sep"></span>
     <label for="docName" class="sr-only">Document name</label>
     <input id="docName" value="Untitled" spellcheck="false" aria-label="Document name" />
+    <span class="sep"></span>
+    <span class="histbtns" role="group" aria-label="History">
+      <button id="undoBtn" class="hbtn" title="Undo (⌘Z)" aria-label="Undo" disabled>↶</button>
+      <button id="redoBtn" class="hbtn" title="Redo (⌘⇧Z)" aria-label="Redo" disabled>↷</button>
+    </span>
     <span class="spacer"></span>
     <span id="err" role="status" aria-live="polite"></span>
     <span class="status" id="status"><span class="dot"></span><span id="statusText">synced to MorphDB</span></span>
@@ -346,14 +366,27 @@ function showBanner(html) { const b = $("banner"); b.innerHTML = html; b.style.d
 
 /* ------- self-bootstrap: the in-browser equivalent of `morphdb init` ----- */
 async function bootstrap() {
-  // 1) register this app (a 409 "already exists" is expected and ignored)
+  // 1) ensure this app exists. Probe with an authenticated GET first (200 if the
+  //    app is registered, 404 "unknown app" if not) and only POST /app when it's
+  //    genuinely missing — so a normal reload never logs a red 409 in the console.
+  let appExists = false;
   try {
-    await fetch(BASE + "/app", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: APP }),
-    });
-  } catch (_) { /* connection errors surface on the first real call */ }
+    await api("GET", "/schema");
+    appExists = true;
+  } catch (e) {
+    // a 404 means we should register; any other error (e.g. backend down) is left
+    // for the first real call below to surface.
+    appExists = !/unknown app/i.test(e.message) ? null : false;
+  }
+  if (appExists === false) {
+    try {
+      await fetch(BASE + "/app", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: APP }),
+      });
+    } catch (_) { /* connection errors surface on the first real call */ }
+  }
 
   // 2) apply the shipped schema file — fields for every type first, then
   //    relations (so a relation's target type already exists). If the page is
@@ -408,12 +441,16 @@ const KIND_ICON = {
   line:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 19 19 5"/></svg>',
 };
 
-/* a line shape is drawn corner-to-corner across its bounding box; the box scales
-   the SVG (preserveAspectRatio=none) so the diagonal always touches nw & se, and
-   a non-scaling stroke keeps the line a constant 3px no matter the box size. */
-function lineSvg(color) {
+/* a line shape spans its bounding box along one of the two diagonals; the box
+   scales the SVG (preserveAspectRatio=none) and a non-scaling stroke keeps the
+   line a constant 3px no matter the box size. The drag direction is stored per
+   line (in its `text` field, which lines don't otherwise use): "/" = anti-diagonal
+   (bottom-left → top-right), anything else = main diagonal (top-left → bottom-right).
+   This lets "/", "\\", horizontal and vertical lines all follow the gesture. */
+function lineSvg(color, dir) {
+  const [x1, y1, x2, y2] = dir === "/" ? [0, 100, 100, 0] : [0, 0, 100, 100];
   return `<svg viewBox="0 0 100 100" preserveAspectRatio="none">`
-       + `<line x1="0" y1="0" x2="100" y2="100" stroke="${escapeHtml(color)}" `
+       + `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${escapeHtml(color)}" `
        + `stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
@@ -458,7 +495,7 @@ function makeShapeEl(sh) {
     `${sh.kind}${sh.kind === "text" && sh.text ? ": " + sh.text : ""}`);
   applyBox(el, sh);
   if (sh.kind === "text")      { el.textContent = sh.text || "Text"; el.style.color = sh.fill; }
-  else if (sh.kind === "line") { el.innerHTML = lineSvg(sh.fill); }   // fill drives the stroke
+  else if (sh.kind === "line") { el.innerHTML = lineSvg(sh.fill, sh.text); }   // fill→stroke, text→direction
   else                         { el.style.background = sh.fill; }
 
   el.addEventListener("mousedown", (e) => onShapeDown(e, sh));
@@ -469,34 +506,130 @@ function makeShapeEl(sh) {
   return el;
 }
 
-/* draw one selection frame per selected shape; resize handles only when a single
-   shape is selected. The frame is inside #scene so zoom/pan transform it too. */
+/* draw selection frames inside #scene (so zoom/pan transform them too):
+   - single selection → one frame with 4 resize handles;
+   - multi-selection  → a thin outline per member PLUS one union "group" frame
+     whose handles scale every selected shape together (proportionally). */
+const HANDLES_HTML =
+  '<span class="h nw"></span><span class="h ne"></span>'
+  + '<span class="h sw"></span><span class="h se"></span>';
+
+function wireHandles(frame, onDown) {
+  frame.querySelectorAll(".h").forEach(h2 => {
+    const corner = ["nw","ne","sw","se"].find(c => h2.classList.contains(c));
+    h2.addEventListener("mousedown", (e) => onDown(e, corner));
+  });
+}
+
 function updateFrames() {
   const scene = sceneEl();
   scene.querySelectorAll(".selframe").forEach(n => n.remove());
+  if (!sel.size) return;
   const single = sel.size === 1;
+  const boxes = [];
   for (const id of sel) {
     const sh = shapes.find(s => s._guid === id);
     if (!sh) continue;
     const el = scene.querySelector(`.shape[data-id="${id}"]`);
     const w = el ? el.offsetWidth : sh.w;
     const h = el ? el.offsetHeight : sh.h;            // text grows to fit content
+    boxes.push({ x: sh.x, y: sh.y, w, h });
     const f = document.createElement("div");
-    f.className = "selframe";
+    f.className = "selframe" + (single ? "" : " member");
     f.style.left = sh.x + "px";  f.style.top = sh.y + "px";
     f.style.width = w + "px";    f.style.height = h + "px";
-    if (single) {
-      f.innerHTML = '<span class="h nw"></span><span class="h ne"></span>'
-                  + '<span class="h sw"></span><span class="h se"></span>';
-    }
+    if (single) { f.innerHTML = HANDLES_HTML; }
     scene.appendChild(f);
-    if (single) {
-      f.querySelectorAll(".h").forEach(h2 => {
-        const corner = ["nw","ne","sw","se"].find(c => h2.classList.contains(c));
-        h2.addEventListener("mousedown", (e) => onHandleDown(e, sh, corner));
-      });
-    }
+    if (single) wireHandles(f, (e, corner) => onHandleDown(e, sh, corner));
   }
+  if (!single && boxes.length) {
+    const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y));
+    const maxX = Math.max(...boxes.map(b => b.x + b.w)), maxY = Math.max(...boxes.map(b => b.y + b.h));
+    const box = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    const gf = document.createElement("div");
+    gf.className = "selframe groupframe";
+    gf.style.left = box.x + "px";  gf.style.top = box.y + "px";
+    gf.style.width = box.w + "px"; gf.style.height = box.h + "px";
+    gf.innerHTML = HANDLES_HTML;
+    scene.appendChild(gf);
+    wireHandles(gf, (e, corner) => onGroupHandleDown(e, corner, { ...box }));
+  }
+}
+
+/* the union bounding box of the current selection (member heights are taken
+   from the rendered DOM so tall/auto-height text is included). */
+function groupBox() {
+  const scene = sceneEl();
+  const boxes = shapes.filter(s => sel.has(s._guid)).map(s => {
+    const el = scene.querySelector(`.shape[data-id="${s._guid}"]`);
+    return { x: s.x, y: s.y, w: el ? el.offsetWidth : s.w, h: el ? el.offsetHeight : s.h };
+  });
+  if (!boxes.length) return null;
+  const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y));
+  const maxX = Math.max(...boxes.map(b => b.x + b.w)), maxY = Math.max(...boxes.map(b => b.y + b.h));
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/* map every selected shape from union box `box0` into `target`, scaling position
+   and size proportionally about target's top-left. `items` carry each shape's
+   geometry frozen at gesture start. */
+function setGroupBox(box0, target, items) {
+  const sx = box0.w ? target.w / box0.w : 1;
+  const sy = box0.h ? target.h / box0.h : 1;
+  const scene = sceneEl();
+  for (const it of items) {
+    it.s.x = Math.round(target.x + (it.x - box0.x) * sx);
+    it.s.y = Math.round(target.y + (it.y - box0.y) * sy);
+    it.s.w = Math.max(MIN_SIZE, Math.round(it.w * sx));
+    it.s.h = Math.max(MIN_SIZE, Math.round(it.h * sy));
+    const el = scene.querySelector(`.shape[data-id="${it.s._guid}"]`);
+    if (el) applyBox(el, it.s);
+  }
+}
+function groupItems() {
+  return shapes.filter(s => sel.has(s._guid)).map(s => ({ s, x: s.x, y: s.y, w: s.w, h: s.h }));
+}
+// after a group transform, text heights are content-driven — re-read them
+function settleTextHeights(items) {
+  const scene = sceneEl();
+  for (const it of items) if (it.s.kind === "text") {
+    const el = scene.querySelector(`.shape[data-id="${it.s._guid}"]`);
+    if (el) it.s.h = el.offsetHeight;
+  }
+}
+
+/* drag a handle of the multi-select union box: the opposite corner stays anchored
+   and every selected shape scales proportionally with the box. */
+function onGroupHandleDown(e, corner, box0) {
+  e.stopPropagation();
+  e.preventDefault();
+  const sx = e.clientX, sy = e.clientY;
+  const right = box0.x + box0.w, bottom = box0.y + box0.h;
+  const movesLeft   = corner === "nw" || corner === "sw";
+  const movesRight  = corner === "ne" || corner === "se";
+  const movesTop    = corner === "nw" || corner === "ne";
+  const movesBottom = corner === "sw" || corner === "se";
+  const items = groupItems();
+
+  function move(ev) {
+    const dx = (ev.clientX - sx) / view.scale, dy = (ev.clientY - sy) / view.scale;
+    let nx = box0.x, ny = box0.y, nw = box0.w, nh = box0.h;
+    if (movesLeft)   { const l = Math.min(box0.x + dx, right - MIN_SIZE); nx = l; nw = right - l; }
+    if (movesRight)  { const r = Math.max(right + dx, box0.x + MIN_SIZE); nw = r - box0.x; }
+    if (movesTop)    { const t = Math.min(box0.y + dy, bottom - MIN_SIZE); ny = t; nh = bottom - t; }
+    if (movesBottom) { const b = Math.max(bottom + dy, box0.y + MIN_SIZE); nh = b - box0.y; }
+    setGroupBox(box0, { x: nx, y: ny, w: nw, h: nh }, items);
+    updateFrames();
+    syncGroupInputs();
+  }
+  function up() {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    settleTextHeights(items);
+    commitShapes(items.map(it => it.s), ["x","y","w","h"]);
+  }
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
 }
 
 /* ------- resize: drag a corner; the OPPOSITE corner stays anchored ------- */
@@ -577,18 +710,25 @@ function startDrawDrag(e) {
     el.style.width  = Math.abs(cur.x - start.x) + "px";
     el.style.height = Math.abs(cur.y - start.y) + "px";
   }
-  function move(ev) { cur = canvasPoint(ev); place(preview); }
+  // a line follows the gesture: opposite signs of dx/dy ⇒ "/" (anti-diagonal)
+  const lineDir = () => ((cur.x - start.x) * (cur.y - start.y) < 0 ? "/" : "\\");
+  function move(ev) {
+    cur = canvasPoint(ev);
+    place(preview);
+    if (drawTool === "line") preview.innerHTML = lineSvg(drawFill, lineDir());
+  }
   function up() {
     document.removeEventListener("mousemove", move);
     document.removeEventListener("mouseup", up);
     preview.remove();
     const w = Math.abs(cur.x - start.x), h = Math.abs(cur.y - start.y);
+    const opts = drawTool === "line" ? { dir: lineDir() } : {};
     if (w < 4 && h < 4) {
       const def = { rect:{w:180,h:120}, ellipse:{w:160,h:160}, text:{w:200,h:48}, line:{w:200,h:140} }[drawTool];
-      createShape(drawTool, start.x - def.w / 2, start.y - def.h / 2, def.w, def.h);
+      createShape(drawTool, start.x - def.w / 2, start.y - def.h / 2, def.w, def.h, opts);
     } else {
       createShape(drawTool, Math.min(start.x, cur.x), Math.min(start.y, cur.y),
-                  Math.max(Math.round(w), MIN_SIZE), Math.max(Math.round(h), MIN_SIZE));
+                  Math.max(Math.round(w), MIN_SIZE), Math.max(Math.round(h), MIN_SIZE), opts);
     }
   }
   document.addEventListener("mousemove", move);
@@ -641,11 +781,13 @@ function startPan(e) {
   document.addEventListener("mouseup", up);
 }
 
-async function createShape(kind, x, y, w, h) {
+async function createShape(kind, x, y, w, h, opts = {}) {
   const z = shapes.length ? Math.max(...shapes.map(s => s.z)) + 1 : 1;
+  // `text` carries content for text shapes and the diagonal direction for lines
+  const text = kind === "text" ? "Text" : (kind === "line" ? (opts.dir || "\\") : "");
   const body = {
     kind, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
-    fill: drawFill, text: kind === "text" ? "Text" : "", z, doc: docGuid,
+    fill: drawFill, text, z, doc: docGuid,
   };
   try {
     const created = await api("POST", "/objects/shape", body);
@@ -653,6 +795,11 @@ async function createShape(kind, x, y, w, h) {
     setTool("select");
     buildShapes();
     selectOnly(created._guid);
+    // Text: drop straight into edit mode with a caret (Figma behaviour), no dblclick needed
+    if (kind === "text") {
+      const el = sceneEl().querySelector(`.shape[data-id="${created._guid}"]`);
+      if (el) startTextEdit(null, created, el);
+    }
     pushHistory();
     setErr("");
   } catch (e) { setErr(e.message); }
@@ -733,6 +880,52 @@ async function commitGeo(list) {
   } catch (e) { setErr(e.message); }
 }
 
+// commit an arbitrary set of geometry fields for many shapes, then ONE history entry
+async function commitShapes(list, keys) {
+  try {
+    for (const s of list) {
+      const b = {}; for (const k of keys) b[k] = s[k];
+      await writeShape(s._guid, b);
+    }
+    render();
+    pushHistory();
+    setErr("");
+  } catch (e) { setErr(e.message); }
+}
+
+/* ------- copy / paste / duplicate (in-memory clipboard) ----------------- */
+let clipboard = [];
+function selectionData() {
+  return shapes.filter(s => sel.has(s._guid)).map(s => {
+    const o = {}; for (const k of FIELDS) o[k] = s[k]; return o;
+  });
+}
+function copySelection() { if (sel.size) clipboard = selectionData(); }
+// clone a list of shape field-sets as brand-new objects (fresh guids, max-z, offset)
+async function cloneShapes(list, dx, dy) {
+  if (!list.length) return;
+  try {
+    let top = shapes.length ? Math.max(...shapes.map(s => s.z)) : 0;
+    const newIds = [];
+    for (const o of list) {
+      top++;
+      const body = { doc: docGuid };
+      for (const k of FIELDS) body[k] = o[k];
+      body.x = Math.round(o.x + dx); body.y = Math.round(o.y + dy); body.z = top;
+      const created = await api("POST", "/objects/shape", body);
+      shapes.push(created);
+      newIds.push(created._guid);
+    }
+    shapes.sort((a, b) => a.z - b.z);
+    sel = new Set(newIds);          // select the clones, like Figma
+    render();
+    pushHistory();
+    setErr("");
+  } catch (e) { setErr(e.message); }
+}
+function duplicateSelection() { cloneShapes(selectionData(), 24, 24); }
+function pasteClipboard()     { cloneShapes(clipboard, 24, 24); }
+
 async function deleteSelected() {
   const ids = [...sel];
   if (!ids.length) return;
@@ -786,7 +979,7 @@ async function layerStep(sh, dir) {
 }
 
 function startTextEdit(e, sh, el) {
-  e.stopPropagation();
+  if (e) e.stopPropagation();
   el.contentEditable = "true";
   el.focus();
   const r = document.createRange(); r.selectNodeContents(el);
@@ -835,6 +1028,7 @@ function remapGuid(oldG, newG) {
 async function reconcile(target) {
   const tgt = new Map(target.map(s => [s._guid, s]));
   for (const s of [...shapes]) if (!tgt.has(s._guid)) await api("DELETE", `/objects/shape/${s._guid}`);
+  const recreated = [];                                    // shapes brought back (fresh guids)
   for (const t of target) {
     const cur = shapes.find(s => s._guid === t._guid);
     if (!cur) {
@@ -842,6 +1036,7 @@ async function reconcile(target) {
       for (const k of FIELDS) body[k] = t[k];
       const created = await api("POST", "/objects/shape", body);
       remapGuid(t._guid, created._guid);
+      recreated.push(created._guid);
     } else {
       const body = {};
       for (const k of FIELDS) if (cur[k] !== t[k]) body[k] = t[k];
@@ -849,6 +1044,8 @@ async function reconcile(target) {
     }
   }
   await loadShapes();
+  // re-select anything this step recreated — e.g. undoing a delete restores its selection
+  if (recreated.length) { sel = new Set(recreated); selectVisual(); }
 }
 async function undo() {
   if (busy || histIndex <= 0) return;
@@ -880,6 +1077,7 @@ function syncBoxInputs(sh) {
   const set = (id, v) => { const el = $(id); if (el) el.value = Math.round(v); };
   set("in-x", sh.x); set("in-y", sh.y); set("in-w", sh.w); set("in-h", sh.h);
 }
+function syncGroupInputs() { const gb = groupBox(); if (gb) syncBoxInputs(gb); }
 
 // live (un-persisted) fill update so the native color picker can scrub without
 // the inspector re-rendering out from under it (which closed the popup before)
@@ -888,7 +1086,7 @@ function liveFill(sh, c) {
   const el = sceneEl().querySelector(`.shape[data-id="${sh._guid}"]`);
   if (el) {
     if (sh.kind === "text") el.style.color = c;
-    else if (sh.kind === "line") el.innerHTML = lineSvg(c);
+    else if (sh.kind === "line") el.innerHTML = lineSvg(c, sh.text);
     else el.style.background = c;
   }
   const hx = $("in-hex"); if (hx) { hx.value = c; hx.classList.remove("invalid"); }
@@ -897,6 +1095,8 @@ function liveFill(sh, c) {
 function renderInspector() {
   const body = $("inspectBody");
   const selShapes = shapes.filter(s => sel.has(s._guid));
+  const num = (lbl, id, v) =>
+    `<div class="field"><label for="${id}">${lbl}</label><input id="${id}" type="number" value="${Math.round(v)}"></div>`;
 
   // nothing selected
   if (selShapes.length === 0) {
@@ -913,11 +1113,17 @@ function renderInspector() {
     return;
   }
 
-  // multi-selection: shared actions only
+  // multi-selection: union bounding box (shared X/Y/W/H) + shared actions
   if (selShapes.length > 1) {
+    const gb = groupBox() || { x: 0, y: 0, w: 0, h: 0 };
     body.innerHTML = `
       <div class="sect">
         <h3>${selShapes.length} selected</h3>
+        <div class="row">${num("X","in-x",gb.x)}${num("Y","in-y",gb.y)}</div>
+        <div class="row mt8">${num("W","in-w",gb.w)}${num("H","in-h",gb.h)}</div>
+      </div>
+      <div class="sect">
+        <h3>Arrange</h3>
         <div class="row">
           <button class="btn" id="front">Bring to front</button>
           <button class="btn" id="back">Send to back</button>
@@ -927,6 +1133,20 @@ function renderInspector() {
         </div>
       </div>
       ${layersHtml()}`;
+    // editing a group dimension translates (X/Y) or scales (W/H) the whole selection
+    for (const [id, key] of [["in-x","x"],["in-y","y"],["in-w","w"],["in-h","h"]]) {
+      $(id).addEventListener("change", (e) => {
+        const box0 = groupBox(); if (!box0) return;
+        let v = Math.round(Number(e.target.value));
+        if (!Number.isFinite(v)) { e.target.value = Math.round(box0[key]); return; }
+        if ((key === "w" || key === "h") && v < 1) v = 1;
+        const target = { ...box0 }; target[key] = v;
+        const items = groupItems();
+        setGroupBox(box0, target, items);
+        settleTextHeights(items);
+        commitShapes(items.map(it => it.s), ["x","y","w","h"]);
+      });
+    }
     $("front").addEventListener("click", () => arrangeSelected(true));
     $("back").addEventListener("click",  () => arrangeSelected(false));
     $("del").addEventListener("click",   () => deleteSelected());
@@ -936,8 +1156,6 @@ function renderInspector() {
 
   // single selection: full inspector
   const sh = selShapes[0];
-  const num = (lbl, id, v) =>
-    `<div class="field"><label for="${id}">${lbl}</label><input id="${id}" type="number" value="${Math.round(v)}"></div>`;
 
   body.innerHTML = `
     <div class="sect">
@@ -958,6 +1176,7 @@ function renderInspector() {
         <label for="in-hex" class="sr-only">Fill hex value</label>
         <input class="hex" id="in-hex" value="${escapeAttr(sh.fill)}" spellcheck="false">
       </div>
+      <div class="hexnote" id="hexnote" role="status" aria-live="polite"></div>
     </div>
 
     ${sh.kind === "text" ? `
@@ -997,21 +1216,33 @@ function renderInspector() {
   // wire native color picker: scrub live (input), persist once (change)
   $("in-color").addEventListener("input",  (e) => liveFill(sh, e.target.value));
   $("in-color").addEventListener("change", (e) => patchShape(sh._guid, { fill: e.target.value }));
-  // wire hex with validation — an invalid color is rejected, never persisted
+  // wire hex with validation — feedback stays inline on the field; a local typo
+  // must NOT masquerade as a backend/sync failure, so it never touches setErr.
   $("in-hex").addEventListener("change", (e) => {
     const v = e.target.value.trim();
     if (!isValidColor(v)) {
       e.target.classList.add("invalid");
-      setErr(`"${v}" is not a valid color`);
+      const note = $("hexnote");
+      if (note) { note.textContent = `"${v}" is not a valid color`; note.style.display = "block"; }
       e.target.value = sh.fill;
-      setTimeout(() => e.target.classList.remove("invalid"), 1200);
+      setTimeout(() => {                              // transient: auto-dismiss
+        e.target.classList.remove("invalid");
+        const n = $("hexnote"); if (n) n.style.display = "none";
+      }, 1600);
       return;
     }
     patchShape(sh._guid, { fill: v });
   });
-  // wire text
+  // wire text — recompute stored height from the rendered element so H stays in
+  // sync (marquee hit-testing and Zoom-to-fit both rely on s.h matching the box)
   if (sh.kind === "text")
-    $("tx").addEventListener("change", (e) => patchShape(sh._guid, { text: e.target.value }));
+    $("tx").addEventListener("change", (e) => {
+      const t = e.target.value;
+      const el = sceneEl().querySelector(`.shape[data-id="${sh._guid}"]`);
+      let h = sh.h;
+      if (el) { el.textContent = t || "Text"; h = Math.max(MIN_SIZE, el.offsetHeight); }
+      patchShape(sh._guid, { text: t, h });
+    });
   // wire arrange
   $("front").addEventListener("click", () => arrangeSelected(true));
   $("back").addEventListener("click",  () => arrangeSelected(false));
@@ -1145,6 +1376,10 @@ $("zoomOut").addEventListener("click", () => zoomByCenter(1 / 1.2));
 $("zoomFit").addEventListener("click", zoomFit);
 $("zoomVal").addEventListener("click", zoomReset);
 
+/* ------- history buttons (header) — wire the existing enable/disable logic */
+$("undoBtn").addEventListener("click", undo);
+$("redoBtn").addEventListener("click", redo);
+
 /* ------- doc name + keyboard ------------------------------------------- */
 $("docName").addEventListener("change", async (e) => {
   const name = e.target.value.trim() || "Untitled";
@@ -1185,6 +1420,15 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault(); redo(); return;
   }
   if (typing(e.target)) return;
+
+  // editing shortcuts: select-all, copy, paste, duplicate
+  if (e.metaKey || e.ctrlKey) {
+    const k = e.key.toLowerCase();
+    if (k === "a") { e.preventDefault(); sel = new Set(shapes.map(s => s._guid)); selectVisual(); return; }
+    if (k === "c") { if (sel.size) { e.preventDefault(); copySelection(); } return; }
+    if (k === "v") { if (clipboard.length) { e.preventDefault(); pasteClipboard(); } return; }
+    if (k === "d") { if (sel.size) { e.preventDefault(); duplicateSelection(); } return; }
+  }
 
   if (e.code === "Space" && !spaceDown) { spaceDown = true; $("canvas").style.cursor = "grab"; e.preventDefault(); return; }
 

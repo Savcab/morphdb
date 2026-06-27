@@ -39,14 +39,19 @@
   li { display: flex; align-items: flex-start; gap: 10px; padding: 10px;
     border: 1px solid #8883; border-radius: 8px; margin-bottom: 8px; background: #8880; }
   li.dragging { opacity: .4; }
-  li.dragover { border-color: var(--accent); }
+  li.dropbefore { box-shadow: inset 0 2px 0 var(--accent); }
+  li.dropafter { box-shadow: inset 0 -2px 0 var(--accent); }
   li.done .title { text-decoration: line-through; color: #999; }
   .handle { padding: 2px 4px; border: none; background: none; color: #999;
-    cursor: grab; font-size: 16px; line-height: 1.2; touch-action: none; }
+    cursor: grab; font-size: 16px; line-height: 1.2; touch-action: none; border-radius: 4px; }
+  .handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--accent); }
   li input[type=checkbox] { margin-top: 4px; flex: 0 0 auto; width: 18px; height: 18px; }
   .main { flex: 1; min-width: 0; }
   .row1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; cursor: pointer; }
-  .title { flex: 1; min-width: 0; }
+  button.title { flex: 1; min-width: 0; text-align: left; padding: 0; margin: 0; border: none;
+    background: none; color: inherit; font: inherit; cursor: pointer; border-radius: 4px;
+    white-space: normal; overflow-wrap: anywhere; }
+  button.title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .note-dot { color: #888; font-size: 12px; }
   .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #8882;
     flex: 0 0 auto; }
@@ -68,6 +73,9 @@
   .empty { justify-content: center; color: #999; }
   .err { color: #ef4444; min-height: 1.4em; font-size: 13px; margin-top: 8px; }
 
+  @keyframes flashbg { from { background: #3b82f655; } to { background: transparent; } }
+  li.flash { animation: flashbg 1.3s ease; }
+
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
     background: #222; color: #fff; padding: 10px 14px; border-radius: 8px;
     display: none; gap: 14px; align-items: center; box-shadow: 0 4px 16px #0006; z-index: 9; }
@@ -88,15 +96,16 @@
            aria-label="New task title" />
     <input id="due" type="date" aria-label="Due date (optional)" title="Due date (optional)" />
     <select id="priority" aria-label="Priority">
+      <option value="0" selected>No priority</option>
       <option value="1">Low</option>
-      <option value="2" selected>Med</option>
+      <option value="2">Med</option>
       <option value="3">High</option>
     </select>
     <button class="primary" id="add">Add</button>
   </div>
 
   <div class="toolbar">
-    <input id="search" type="search" placeholder="Search tasks…" aria-label="Search tasks" />
+    <input id="search" type="search" placeholder="Search title &amp; notes…" aria-label="Search tasks" />
     <select id="view" aria-label="View">
       <option value="all">All</option>
       <option value="today">Today</option>
@@ -168,92 +177,186 @@ async function ensureBackend() {
       priority: { type: "number",   index: true },
       due:      { type: "datetime", index: true },  // scheduling / Today / Upcoming / sort
       position: { type: "number",   index: true },  // manual drag-reorder
-      notes:    { type: "string" },                 // free-form notes (un-indexed)
+      notes:    { type: "string",   index: true },  // free-form notes (searchable)
     },
   });
 }
 
 // ---- date helpers (compare by calendar date, timezone-agnostic) -------------
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WK = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const todayStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 const dueDate = (it) => (it.due ? String(it.due).slice(0, 10) : "");   // "YYYY-MM-DD" or ""
-const fmtDue = (s) => {
+// Human, unambiguous due label: relative wording for near dates, a month name
+// otherwise, and the year only when it differs from this year (so 2026-06-30 and
+// 2027-06-30 never render identically). cls drives the colour (today / overdue).
+function fmtDue(s) {
   const t = todayStr();
-  if (s === t) return { text: "Today", cls: "today" };
-  if (s < t)   return { text: s.slice(5), cls: "overdue" };           // MM-DD
-  return { text: s.slice(5), cls: "" };
-};
+  const [y, m, d] = s.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((date - today) / 86400000);
+  let text;
+  if (diff === 0) text = "Today";
+  else if (diff === 1) text = "Tomorrow";
+  else if (diff === -1) text = "Yesterday";
+  else if (diff > 1 && diff < 7) text = WK[date.getDay()];           // e.g. "Tue"
+  else text = `${MONTHS[m - 1]} ${d}` + (y !== today.getFullYear() ? `, ${y}` : "");
+  const cls = s === t ? "today" : (s < t ? "overdue" : "");
+  return { text, cls };
+}
 
 // ---- state ------------------------------------------------------------------
-let items = [];                 // current server result (search + sort applied)
-let expanded = null;            // guid of the open detail panel
+let items = [];                 // current server result (search + client sort applied)
+let expanded = null;            // guid of the open detail panel (mirrors location.hash)
 let adding = false;             // re-entry guard for Add
 let lastDeleted = null;         // snapshot for Undo
 let searchTimer = null;
+let focusHandleGuid = null;     // restore handle focus after a keyboard reorder re-render
+
+const posOf = (it) => (Number.isFinite(it.position) ? it.position : 0);
 
 // ---- load / render ----------------------------------------------------------
+function serverSortFor(sort) {
+  if (sort === "manual")   return { key: "position",    order: "asc" };
+  if (sort === "title")    return { key: "title",       order: "asc" };
+  if (sort === "due")      return { key: "due",         order: "asc" };
+  if (sort === "priority") return { key: "priority",    order: "desc" };
+  return { key: "_created_at", order: "desc" };
+}
+
+async function fetchObjects(key, order, filters) {
+  let q = `/objects/todo?sort=${key}&order=${order}&limit=200`;
+  for (const [k, v] of Object.entries(filters)) q += `&${k}=${encodeURIComponent(v)}`;
+  const { objects } = await api("GET", q);
+  return objects;
+}
+
+// Final, deterministic client-side order. The server gives a good first pass,
+// but we always re-sort here so behaviour is identical whether the result came
+// from one query or from merging the title+notes search queries — and so the two
+// cases the backend can't express are handled: case-insensitive title order, and
+// NULLS-LAST for due dates (SQLite returns NULL due before every real date, which
+// would otherwise bury every scheduled task under the undated ones).
+function sortItems(arr, sort) {
+  if (sort === "title") {
+    arr.sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
+  } else if (sort === "due") {
+    arr.sort((a, b) => {
+      const da = dueDate(a), db = dueDate(b);
+      if (da === db) return 0;
+      if (!da) return 1;          // undated -> end
+      if (!db) return -1;
+      return da < db ? -1 : 1;    // overdue -> today -> soonest first
+    });
+  } else if (sort === "priority") {
+    arr.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  } else if (sort === "manual") {
+    arr.sort((a, b) => posOf(a) - posOf(b) || (a._guid < b._guid ? -1 : 1));
+  } else {                        // newest
+    arr.sort((a, b) => (a._created_at < b._created_at ? 1 : a._created_at > b._created_at ? -1 : 0));
+  }
+}
+
 async function load() {
   err("");
   try {
     const sort = $("sort").value;
-    let key = sort, order = "desc";
-    if (sort === "manual")      { key = "position";    order = "asc"; }
-    else if (sort === "title")  { key = "title";       order = "asc"; }
-    else if (sort === "due")    { key = "due";         order = "asc"; }
-    else if (sort === "priority"){ key = "priority";   order = "desc"; }
-    else                         { key = "_created_at"; order = "desc"; }
-
-    let q = `/objects/todo?sort=${key}&order=${order}&limit=200`;
     const term = $("search").value.trim();
-    // Server-side, case-insensitive substring search (LIKE/ILIKE) on the indexed
-    // title — so "find" runs in the backend, not just in the browser.
-    if (term) q += `&title__contains=${encodeURIComponent(term)}`;
-    const { objects } = await api("GET", q);
-    // `title` sort is byte-order server-side (case-sensitive); re-sort the page
-    // case-insensitively here so "apple pie" precedes "Zebra crossing".
-    if (sort === "title") objects.sort((a, b) =>
-      (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
-    items = objects;
+    const { key, order } = serverSortFor(sort);
+
+    if (term) {
+      // Server-side, case-insensitive substring search across BOTH title and
+      // notes (two indexed `__contains` queries), merged by guid client-side.
+      const [byTitle, byNotes] = await Promise.all([
+        fetchObjects(key, order, { title__contains: term }),
+        fetchObjects(key, order, { notes__contains: term }),
+      ]);
+      const byGuid = new Map();
+      for (const o of byTitle) byGuid.set(o._guid, o);
+      for (const o of byNotes) byGuid.set(o._guid, o);
+      items = [...byGuid.values()];
+    } else {
+      items = await fetchObjects(key, order, {});
+    }
+
+    // One-time migration: any task created before `position` existed (or seeded
+    // via the API) has a NULL position. The backend sorts NULLs first, so such a
+    // task can never be reordered above. Backfill finite positions once, in the
+    // current display order, so drag/keyboard reordering is coherent thereafter.
+    if (sort === "manual" && !term && items.some((it) => !Number.isFinite(it.position))) {
+      await backfillPositions();
+      items = await fetchObjects(key, order, {});
+    }
+
+    sortItems(items, sort);
     render();
   } catch (e) { err(e.message); }
 }
 
+async function backfillPositions() {
+  // `items` is in server order (position asc -> NULLs first, then ascending).
+  // Renumber everything to clean, evenly-spaced positions so no NULLs remain.
+  let p = 1000;
+  await Promise.all(items.map((it) => {
+    const np = p; p += 1000;
+    return api("PATCH", `/objects/todo/${it._guid}`, { position: np });
+  }));
+}
+
+// view predicate only (no hide-done) — used for the progress counter so it is
+// scoped to what the active view (Today / Upcoming) is about.
+function matchView(it) {
+  const view = $("view").value, t = todayStr();
+  if (view === "all") return true;
+  const d = dueDate(it);
+  if (view === "today")    return d && d <= t;   // overdue + due today
+  if (view === "upcoming") return d && d > t;
+  return true;
+}
+
 function visible() {
-  const view = $("view").value;
-  const t = todayStr();
   return items.filter((it) => {
     if ($("hideDone").checked && it.done) return false;
-    if (view === "all") return true;
-    const d = dueDate(it);
-    if (view === "today")    return d && d <= t;      // overdue + due today
-    if (view === "upcoming") return d && d > t;
-    return true;
+    return matchView(it);
   });
 }
+
+const PRIO = { 1: "Low", 2: "Med", 3: "High" };
 
 function render() {
   const list = $("list");
   list.innerHTML = "";
 
-  const active = items.filter((i) => !i.done).length;
-  const done = items.length - active;
+  const sort = $("sort").value;
+  const term = $("search").value.trim();
+
+  // Counter scoped to the active view (so "1 visible / 8 to do" can't disagree).
+  const inView = items.filter(matchView);
+  const active = inView.filter((i) => !i.done).length;
+  const done = inView.length - active;
   $("count").textContent = `${active} to do`;
   $("donecount").textContent = `${done} done`;
-  $("fill").style.width = items.length ? `${Math.round((done / items.length) * 100)}%` : "0";
+  $("fill").style.width = inView.length ? `${Math.round((done / inView.length) * 100)}%` : "0";
 
-  const rows = visible();
+  let rows = visible();
+  // Sink completed tasks to the bottom of every view EXCEPT manual order, where
+  // the user arranges rows themselves (and drag positions must stay WYSIWYG).
+  if (sort !== "manual") rows = [...rows.filter((r) => !r.done), ...rows.filter((r) => r.done)];
+
   if (!rows.length) {
     const li = document.createElement("li");
     li.className = "empty";
-    li.textContent = items.length ? "No matching tasks." : "Nothing yet. Add something above.";
+    li.textContent = term ? `No tasks match “${term}”.`
+      : (items.length ? "No matching tasks." : "Nothing yet. Add something above.");
     list.appendChild(li);
     return;
   }
 
-  const labels = { 1: "Low", 2: "Med", 3: "High" };
-  const dragOk = $("sort").value === "manual" && !$("search").value.trim();
+  const dragOk = sort === "manual" && !term;
 
   for (const it of rows) {
     const li = document.createElement("li");
@@ -261,39 +364,51 @@ function render() {
     if (it.done) li.classList.add("done");
 
     const handle = dragOk
-      ? `<button class="handle" aria-label="Drag to reorder" title="Drag to reorder">⠿</button>` : "";
+      ? `<button class="handle" aria-label="Reorder ${escapeAttr(it.title)} — drag, or focus and press Up/Down" title="Drag, or press Up/Down to reorder">⠿</button>` : "";
     const due = dueDate(it);
     const db = due ? fmtDue(due) : null;
+    const showPrio = (it.priority || 0) >= 1;
     li.innerHTML = `
       ${handle}
       <input type="checkbox" ${it.done ? "checked" : ""} />
       <div class="main">
         <div class="row1">
-          <span class="title"></span>
+          <button type="button" class="title" aria-expanded="${expanded === it._guid}"></button>
           ${db ? `<span class="due ${db.cls}"></span>` : ""}
           ${it.notes ? `<span class="note-dot" title="Has notes">🗒</span>` : ""}
-          <span class="pill p${it.priority || 2}"></span>
+          ${showPrio ? `<span class="pill p${it.priority}"></span>` : ""}
         </div>
       </div>
       <button class="del" aria-label="Delete task">✕</button>`;
 
     li.querySelector(".title").textContent = it.title;
     if (db) li.querySelector(".due").textContent = db.text;
-    li.querySelector(".pill").textContent = labels[it.priority] || "Med";
+    if (showPrio) li.querySelector(".pill").textContent = PRIO[it.priority];
     const cb = li.querySelector('input[type=checkbox]');
     cb.setAttribute("aria-label", (it.done ? "Mark incomplete: " : "Mark complete: ") + it.title);
     cb.onchange = (e) => mutate(it._guid, { done: e.target.checked });
     li.querySelector(".del").setAttribute("aria-label", "Delete: " + it.title);
     li.querySelector(".del").onclick = (e) => { e.stopPropagation(); remove(it); };
-    li.querySelector(".row1").onclick = (e) => {
-      if (e.target.closest(".handle")) return;
-      toggleDetail(it._guid);
-    };
+    // Whole row1 opens the detail (mouse); the title is a real <button> so the
+    // same action is keyboard- and screen-reader-operable (Enter/Space) and
+    // exposes aria-expanded.
+    li.querySelector(".row1").onclick = () => toggleDetail(it._guid);
 
     if (expanded === it._guid) li.querySelector(".main").appendChild(buildDetail(it));
-    if (dragOk) wireDrag(li, it);
+    if (dragOk) wireReorder(li, it);
     list.appendChild(li);
   }
+
+  if (focusHandleGuid) {
+    const h = list.querySelector(`li[data-guid="${focusHandleGuid}"] .handle`);
+    if (h) h.focus();
+    focusHandleGuid = null;
+  }
+}
+
+function escapeAttr(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function buildDetail(it) {
@@ -305,6 +420,7 @@ function buildDetail(it) {
     </label>
     <label>Priority
       <select class="e-prio">
+        <option value="0">No priority</option>
         <option value="1">Low</option><option value="2">Med</option><option value="3">High</option>
       </select>
     </label>
@@ -318,7 +434,7 @@ function buildDetail(it) {
 
   const tIn = wrap.querySelector(".e-title");
   tIn.value = it.title || "";
-  wrap.querySelector(".e-prio").value = String(it.priority || 2);
+  wrap.querySelector(".e-prio").value = String(it.priority || 0);
   wrap.querySelector(".e-due").value = dueDate(it);
   wrap.querySelector(".e-notes").value = it.notes || "";
 
@@ -344,49 +460,114 @@ function buildDetail(it) {
   return wrap;
 }
 
-function toggleDetail(guid) {
-  expanded = expanded === guid ? null : guid;
-  location.hash = expanded ? `task-${guid}` : "";
+// ---- detail open/close, kept in sync with location.hash (deep-linkable) ------
+// The hash is the single source of truth: toggling writes the hash, and a
+// `hashchange` listener applies it — so browser Back/Forward open/close the
+// panel instead of leaving the URL and UI contradicting each other.
+function applyHash() {
+  const m = location.hash.match(/^#task-(.+)$/);
+  const next = m ? decodeURIComponent(m[1]) : null;
+  if (next === expanded) return;
+  expanded = next;
   render();
   if (expanded) {
-    const el = $("list").querySelector(`li[data-guid="${guid}"] .e-title`);
+    const el = $("list").querySelector(`li[data-guid="${expanded}"] .e-title`);
     if (el) el.focus();
   }
 }
+function setHashTask(guid) {
+  const want = guid ? `task-${guid}` : "";
+  if (location.hash.replace(/^#/, "") !== want) location.hash = want; // -> hashchange
+  else applyHash();                                                   // already synced
+}
+function toggleDetail(guid) { setHashTask(expanded === guid ? null : guid); }
+window.addEventListener("hashchange", applyHash);
 
-// ---- drag-to-reorder (manual order via a fractional `position` field) -------
-let dragGuid = null;
-function wireDrag(li, it) {
-  li.draggable = true;
-  li.addEventListener("dragstart", (e) => {
-    dragGuid = it._guid; li.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-  });
-  li.addEventListener("dragend", () => { li.classList.remove("dragging"); dragGuid = null;
-    $("list").querySelectorAll(".dragover").forEach((n) => n.classList.remove("dragover")); });
-  li.addEventListener("dragover", (e) => { e.preventDefault(); li.classList.add("dragover"); });
-  li.addEventListener("dragleave", () => li.classList.remove("dragover"));
-  li.addEventListener("drop", (e) => {
-    e.preventDefault(); li.classList.remove("dragover");
-    if (dragGuid && dragGuid !== it._guid) dropBefore(dragGuid, it._guid);
+// ---- reorder: pointer (mouse + touch) and keyboard (Up/Down on the handle) ---
+// Replaces native HTML5 drag-and-drop, which doesn't fire on touch and isn't
+// keyboard-operable. Manual order is a fractional `position` field, so each move
+// is a single PATCH (no full renumber) and is correct under filtering/paging.
+function wireReorder(li, it) {
+  const handle = li.querySelector(".handle");
+  if (!handle) return;
+  handle.addEventListener("pointerdown", (e) => startPointerDrag(e, li, it));
+  handle.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      moveByKeyboard(it._guid, e.key === "ArrowUp" ? -1 : 1);
+    }
   });
 }
 
-// Place `movedGuid` immediately before `targetGuid` by giving it a position
-// midway between the target and its predecessor (fractional indexing — no full
-// renumber, one PATCH). Positions are global, so this is correct even when the
-// list is filtered/paginated. Not atomic: a concurrent reorder could collide
-// (see morphdb_limitations); we re-read the freshly ordered list afterward.
-function dropBefore(movedGuid, targetGuid) {
-  const ordered = [...items].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-  const ti = ordered.findIndex((o) => o._guid === targetGuid);
+function startPointerDrag(e, li, it) {
+  if (e.button > 0) return;                 // primary button / touch only
+  e.preventDefault();
+  const list = $("list");
+  const handle = e.currentTarget;
+  li.classList.add("dragging");
+  try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+  let targetGuid = null, after = false;
+
+  const clear = () => list.querySelectorAll(".dropbefore,.dropafter")
+    .forEach((n) => n.classList.remove("dropbefore", "dropafter"));
+
+  const onMove = (ev) => {
+    const y = ev.clientY;
+    let over = null;
+    for (const r of list.querySelectorAll("li[data-guid]")) {
+      const rect = r.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom) { over = r; break; }
+    }
+    clear();
+    if (over && over !== li) {
+      const rect = over.getBoundingClientRect();
+      after = y > rect.top + rect.height / 2;
+      over.classList.add(after ? "dropafter" : "dropbefore");
+      targetGuid = over.dataset.guid;
+    } else {
+      targetGuid = null;
+    }
+  };
+  const onUp = (ev) => {
+    handle.removeEventListener("pointermove", onMove);
+    handle.removeEventListener("pointerup", onUp);
+    handle.removeEventListener("pointercancel", onUp);
+    li.classList.remove("dragging");
+    clear();
+    try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
+    if (targetGuid && targetGuid !== it._guid) moveRelativeTo(it._guid, targetGuid, after);
+  };
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", onUp);
+  handle.addEventListener("pointercancel", onUp);
+}
+
+// Give `movedGuid` a position midway between `targetGuid` and the neighbour on
+// the requested side, computed on the TRUE position order (not the displayed
+// order). Midpoints assume finite positions — guaranteed by backfillPositions().
+function moveRelativeTo(movedGuid, targetGuid, after) {
+  const seq = [...items].sort((a, b) => posOf(a) - posOf(b) || (a._guid < b._guid ? -1 : 1))
+    .filter((o) => o._guid !== movedGuid);
+  const ti = seq.findIndex((o) => o._guid === targetGuid);
   if (ti < 0) return;
-  const target = ordered[ti];
-  const prev = ordered[ti - 1];
-  const before = prev ? (prev.position ?? 0) : (target.position ?? 0) - 2000;
-  const after = target.position ?? 0;
-  const pos = (before + after) / 2;
-  mutate(movedGuid, { position: pos });
+  let lo, hi;
+  if (after) {
+    lo = posOf(seq[ti]);
+    hi = ti + 1 < seq.length ? posOf(seq[ti + 1]) : lo + 2000;
+  } else {
+    hi = posOf(seq[ti]);
+    lo = ti - 1 >= 0 ? posOf(seq[ti - 1]) : hi - 2000;
+  }
+  mutate(movedGuid, { position: (lo + hi) / 2 });
+}
+
+function moveByKeyboard(guid, dir) {
+  const rows = visible();                   // manual order, what's on screen
+  const i = rows.findIndex((r) => r._guid === guid);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= rows.length) return;
+  focusHandleGuid = guid;                   // keep keyboard focus on the moved row
+  moveRelativeTo(guid, rows[j]._guid, dir > 0);
 }
 
 // ---- mutations (serialized: each write is followed by a re-read) ------------
@@ -405,17 +586,30 @@ async function add() {
   if (!title) return;
   adding = true; $("add").disabled = true;
   try {
-    const maxPos = items.reduce((m, i) => Math.max(m, i.position ?? 0), 0);
-    const due = $("due").value || null;
-    await api("POST", "/objects/todo", {
+    const maxPos = items.reduce((m, i) => Math.max(m, posOf(i)), 0);
+    let due = $("due").value || null;
+    // Quick-add inside the Today smart list with no date: stamp it today so the
+    // new task actually lands in this view instead of silently vanishing.
+    if (!due && $("view").value === "today") due = todayStr();
+    const created = await api("POST", "/objects/todo", {
       title, done: false, priority: Number($("priority").value),
       due, position: maxPos + 1000,
     });
     $("title").value = "";
     $("due").value = "";
-    $("priority").value = "2";              // reset to default (don't stick to last)
+    $("priority").value = "0";              // reset to default ("No priority")
     await load();
     $("title").focus();
+    // Always confirm the add: reveal+flash the new row, or — if it fell outside
+    // the current view/filter — toast it so it never reads as a failed add.
+    const row = created && $("list").querySelector(`li[data-guid="${created._guid}"]`);
+    if (row) {
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      row.classList.add("flash");
+      setTimeout(() => row.classList.remove("flash"), 1300);
+    } else {
+      showToast(`Added “${title}”`, false);
+    }
   } catch (e) { err(e.message); }
   finally { adding = false; $("add").disabled = false; }
 }
@@ -423,21 +617,26 @@ async function add() {
 async function remove(it) {
   try {
     await api("DELETE", `/objects/todo/${it._guid}`);
-    lastDeleted = { title: it.title, done: !!it.done, priority: it.priority ?? 2,
-      due: it.due ? dueDate(it) : null, notes: it.notes || null, position: it.position ?? 0 };
-    showToast(`Deleted "${it.title}"`);
+    lastDeleted = { title: it.title, done: !!it.done, priority: it.priority ?? 0,
+      due: it.due ? dueDate(it) : null, notes: it.notes || null, position: posOf(it) };
+    showToast(`Deleted “${it.title}”`, true);
     if (expanded === it._guid) { expanded = null; location.hash = ""; }
     await load();
   } catch (e) { err(e.message); }
 }
 
-// ---- undo (re-creates the task — a *new* _guid; see morphdb_limitations) ----
+// ---- toast (delete = with Undo; add-out-of-view = info only) -----------------
+// Undo re-creates the task — a *new* _guid; see morphdb_limitations.
 let toastTimer = null;
-function showToast(msg) {
+function showToast(msg, withUndo) {
   $("toastmsg").textContent = msg;
+  $("undo").style.display = withUndo ? "" : "none";
   $("toast").style.display = "flex";
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $("toast").style.display = "none"; lastDeleted = null; }, 7000);
+  toastTimer = setTimeout(() => {
+    $("toast").style.display = "none";
+    if (withUndo) lastDeleted = null;
+  }, 7000);
 }
 $("undo").onclick = async () => {
   if (!lastDeleted) return;
@@ -458,14 +657,14 @@ $("search").addEventListener("input", () => {
   clearTimeout(searchTimer); searchTimer = setTimeout(load, 200);
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && expanded) { expanded = null; location.hash = ""; render(); }
+  if (e.key === "Escape" && expanded) setHashTask(null);
 });
 
 (async () => {
   try { await ensureBackend(); }
   catch (e) { err("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")"); return; }
   const m = location.hash.match(/^#task-(.+)$/);
-  if (m) expanded = m[1];                   // deep-link: open a task's detail
+  if (m) expanded = decodeURIComponent(m[1]);   // deep-link: open a task's detail
   await load();
 })();
 </script>

@@ -146,7 +146,11 @@
     align-items: stretch;
   }
   .col {
-    width: 296px; min-width: 296px;
+    /* Flex so the five workflow columns fit a normal viewport instead of pushing
+       the last one (Canceled) off-screen: they shrink to ~min-width on a ~1280px
+       screen and only scroll horizontally when the window is genuinely narrow. */
+    flex: 1 1 240px;
+    min-width: 232px; max-width: 400px;
     background: var(--col-bg);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -360,6 +364,52 @@
   #banner.show { display: block; }
   #banner code { background: var(--card); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 7px; font-size: 12.5px; }
 
+  /* ---- neutral toast (info / guidance — distinct from the red #err banner) ---- */
+  #toasts {
+    position: fixed; left: 0; right: 0; bottom: 18px; z-index: 95;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    display: inline-flex; align-items: center; gap: 12px;
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: 9px;
+    box-shadow: var(--shadow-lg); padding: 9px 12px; font-size: 13px;
+    max-width: min(560px, 92vw);
+    animation: toast-in .14s ease-out;
+  }
+  .toast .tmsg { overflow-wrap: anywhere; }
+  .toast button.taction {
+    border: 0; background: transparent; color: var(--accent); font-weight: 600;
+    cursor: pointer; padding: 2px 4px; border-radius: 6px; white-space: nowrap;
+  }
+  .toast button.taction:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* current-user (the "you") chip in the toolbar */
+  .me-btn {
+    border: 1px solid var(--border-strong); background: var(--card); border-radius: 999px;
+    padding: 3px; cursor: pointer; display: inline-grid; place-items: center; line-height: 0;
+  }
+  .me-btn:hover { background: var(--card-hover); }
+
+  /* Archived-view toggle active state */
+  .btn.on { background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); color: var(--text); font-weight: 600; }
+
+  /* comment author row */
+  .d-comment .chead { display: flex; align-items: center; gap: 8px; }
+  .d-comment .cname { font-weight: 600; font-size: 13px; }
+  .d-comment .ctime { font-size: 12px; color: var(--faint); }
+  .d-addcomment .ahead { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+
+  /* small "Archived" tag (palette results + drawer) */
+  .arch-tag {
+    font-size: 10.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--border-strong); border-radius: 5px;
+    padding: 0 5px; line-height: 1.5;
+  }
+
   .footnote { color: var(--faint); font-size: 11.5px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
@@ -368,10 +418,13 @@
   @media (max-width: 680px) {
     header { flex-wrap: wrap; gap: 8px 10px; padding: 9px 12px; }
     .crumb, .team-badge + .crumb { display: none; }
-    .toolbar { width: 100%; }
+    /* Wrap toolbar controls so the sort toggle / New issue button reflow onto a
+       second row instead of clipping and overlapping at narrow widths. */
+    .toolbar { width: 100%; flex-wrap: wrap; row-gap: 8px; }
     .toolbar .icon-search .kbd { display: none; }
     .board { padding: 10px 12px 14px; gap: 10px; }
-    .col { width: 84vw; min-width: 84vw; }
+    /* Keep one card-column ~viewport-wide on mobile (don't let it flex-shrink). */
+    .col { flex: 0 0 84vw; width: 84vw; min-width: 84vw; max-width: none; }
     .drawer { width: 100%; }
     .drawer .dbody { padding: 14px 16px; }
   }
@@ -413,16 +466,23 @@
         <button data-sort="priority" class="on">Priority</button>
         <button data-sort="order">Manual</button>
       </div>
+      <button class="btn" id="archivedBtn" title="Show archived issues" aria-pressed="false">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4.5h12M3.5 4.5V13h9V4.5M6 7.5h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Archived
+      </button>
       <button class="btn primary" id="newBtn">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg>
         New issue
       </button>
+      <button class="me-btn" id="meBtn" title="You" aria-label="Current user"></button>
     </div>
   </header>
 
   <div id="err"></div>
 
   <div class="board" id="board"></div>
+
+  <div id="toasts" aria-live="polite"></div>
 
 <script>
 const BASE = (typeof window !== "undefined" && window.MORPHDB_HOST)
@@ -444,6 +504,47 @@ function showBanner(html) {
   el.innerHTML = html;
   el.classList.add("show");
 }
+// Neutral toast for info / guidance (distinct from the red #err banner). Optional
+// { action: { label, fn } } renders an inline action button.
+function showToast(msg, opts = {}) {
+  const wrap = $("toasts");
+  if (!wrap) return;
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.setAttribute("role", "status");
+  const m = document.createElement("span");
+  m.className = "tmsg";
+  m.textContent = msg;
+  t.appendChild(m);
+  let timer;
+  const dismiss = () => { clearTimeout(timer); t.remove(); };
+  if (opts.action) {
+    const b = document.createElement("button");
+    b.className = "taction";
+    b.textContent = opts.action.label;
+    b.onclick = () => { try { opts.action.fn(); } finally { dismiss(); } };
+    t.appendChild(b);
+  }
+  wrap.appendChild(t);
+  timer = setTimeout(dismiss, opts.timeout || (opts.action ? 7000 : 4000));
+  return dismiss;
+}
+
+/* ---- persisted view preferences (sort + assignee filter + archived view) -----
+   Linear keeps per-view display settings across reloads; MorphDB has no per-user
+   server state, so we persist client-side under the app key. */
+const PREFS_KEY = `morphdb:${APP}:prefs`;
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch (_) { return {}; }
+}
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      sort: state.sort, filterAssignee: state.filterAssignee, view: state.view,
+    }));
+  } catch (_) {}
+}
+const ME_KEY = `morphdb:${APP}:me`;
 
 async function api(method, path, body) {
   const res = await fetch(BASE + path, {
@@ -600,23 +701,30 @@ const state = {
   team: null,
   users: [],
   usersById: {},
+  me: null,            // the current user (faked client-side; backend has no auth)
   issues: [],          // full team set (active + archived), as fetched
-  filterAssignee: "",  // "", "none", or a user guid
+  filterAssignee: "",  // "", "me", "none", or a user guid
   sort: "priority",    // "priority" | "order"
+  view: "active",      // "active" | "archived"
   openGuid: null,      // currently open issue in the drawer
 };
 
-// Issues visible on the board: the active (non-archived) set after the
+// Does an issue pass the current assignee filter (ignoring the active/archived
+// split)? Shared by the board and the create-while-filtered toast.
+function passesAssigneeFilter(it) {
+  if (state.filterAssignee === "none") return !it.assignee;
+  if (state.filterAssignee === "me") return !!(state.me && it.assignee && it.assignee._guid === state.me._guid);
+  if (state.filterAssignee) return !!(it.assignee && it.assignee._guid === state.filterAssignee);
+  return true;
+}
+
+// Issues visible on the board: the chosen view (active vs archived) after the
 // assignee filter. Archived issues are kept in state.issues (so identifier
-// allocation still sees them) but hidden here — MorphDB can't filter a
-// non-indexed boolean server-side, so we filter client-side.
+// allocation still sees them, and search can reach them) but split out here —
+// MorphDB can't filter a non-indexed boolean server-side, so we split in JS.
 function boardIssues() {
-  return state.issues.filter(it => {
-    if (it.archived) return false;
-    if (state.filterAssignee === "none") return !it.assignee;
-    if (state.filterAssignee) return it.assignee && it.assignee._guid === state.filterAssignee;
-    return true;
-  });
+  const wantArchived = state.view === "archived";
+  return state.issues.filter(it => !!it.archived === wantArchived && passesAssigneeFilter(it));
 }
 
 /* ---- seeding (only when empty) ---- */
@@ -659,9 +767,9 @@ async function seedIfEmpty() {
 
   const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString();
   const flaky = created[1]._guid, migrate = created[3]._guid;
-  await api("POST", "/objects/comment", { body: "I can repro this about 1 in 5 runs locally.", created: daysAgo(3), issue: flaky });
-  await api("POST", "/objects/comment", { body: "Looks like a race in the token refresh.",     created: daysAgo(2), issue: flaky });
-  await api("POST", "/objects/comment", { body: "Blocked on the auth team's staging env.",      created: daysAgo(1), issue: migrate });
+  await api("POST", "/objects/comment", { body: "I can repro this about 1 in 5 runs locally.", created: daysAgo(3), issue: flaky,   author: users[2]._guid });
+  await api("POST", "/objects/comment", { body: "Looks like a race in the token refresh.",     created: daysAgo(2), issue: flaky,   author: users[1]._guid });
+  await api("POST", "/objects/comment", { body: "Blocked on the auth team's staging env.",      created: daysAgo(1), issue: migrate, author: users[0]._guid });
 }
 
 /* ---- loading ---- */
@@ -674,7 +782,42 @@ async function loadMeta() {
   state.users = users.objects.sort((a, b) => a.name.localeCompare(b.name));
   state.usersById = Object.fromEntries(state.users.map(u => [u._guid, u]));
   if (state.team) { $("teamName").textContent = state.team.name; $("teamKey").textContent = state.team.key; }
+  // Current user ("you"): client-side identity (the backend has no auth — see
+  // limitations). Restore the chosen user, else default to the first one.
+  const savedMe = (() => { try { return localStorage.getItem(ME_KEY); } catch (_) { return null; } })();
+  state.me = state.usersById[savedMe] || state.users[0] || null;
   renderAssigneeFilter();
+  renderMeChip();
+}
+
+function setMe(user) {
+  state.me = user || null;
+  try { user ? localStorage.setItem(ME_KEY, user._guid) : localStorage.removeItem(ME_KEY); } catch (_) {}
+  renderMeChip();
+  renderAssigneeFilter();
+  renderBoard();
+  if (state.openGuid) refreshDrawer();
+}
+
+function renderMeChip() {
+  const btn = $("meBtn");
+  if (!btn) return;
+  btn.innerHTML = "";
+  btn.appendChild(avatarEl(state.me));
+  btn.title = state.me ? `You: ${state.me.name} (click to switch)` : "Set current user";
+  btn.onclick = (e) => {
+    openPop(e.currentTarget, (pop) => {
+      pop.innerHTML = `<div class="pop-title">You are</div>`;
+      for (const u of state.users) {
+        pop.appendChild(popOption({
+          selected: state.me && u._guid === state.me._guid,
+          html: `<span class="me-av"></span><span>${u.name}</span>`,
+          onPick: () => { closePop(); setMe(u); },
+        }));
+      }
+      pop.querySelectorAll(".me-av").forEach((ph, i) => ph.replaceWith(avatarEl(state.users[i])));
+    });
+  };
 }
 
 async function loadBoard() {
@@ -684,26 +827,109 @@ async function loadBoard() {
   // is intentionally non-indexed, so the bucket split lives in JS. With >1000
   // issues this would truncate (documented limitation).
   const order = state.sort === "priority" ? "desc" : "asc";
-  let q = `/objects/issue?include=assignee,comments&limit=1000&sort=${state.sort}&order=${order}`;
+  let q = `/objects/issue?include=assignee,comments.author&limit=1000&sort=${state.sort}&order=${order}`;
   if (state.team) q += `&team=${state.team._guid}`;
 
   const res = await api("GET", q);
   state.issues = res.objects;
+  // Self-heal any duplicate identifiers already in the store (the backend has no
+  // unique constraint — see limitations). Done once per session, before the first
+  // paint, so a deep link to a key is unambiguous.
+  if (!repairChecked) {
+    repairChecked = true;
+    try {
+      const fixed = await repairDuplicateIdentifiers();
+      if (fixed) showToast(`Repaired ${fixed} duplicate issue identifier${fixed > 1 ? "s" : ""}.`);
+    } catch (_) { /* repair is best-effort */ }
+  }
   renderBoard();
   if (state.openGuid) refreshDrawer();
+}
+
+/* Detect & repair duplicate issue identifiers in the loaded team set. MorphDB has
+   no uniqueness/sequence primitive, so two creates (two tabs/users) can mint the
+   same ENG-N. We keep the earliest issue in each colliding group and reassign the
+   rest to fresh, monotonic identifiers. Mitigation only — the real fix needs a
+   server-side unique/sequence primitive (see limitations). */
+let repairChecked = false;
+async function repairDuplicateIdentifiers() {
+  const byId = new Map();
+  for (const it of state.issues) {
+    if (!it.identifier) continue;
+    if (!byId.has(it.identifier)) byId.set(it.identifier, []);
+    byId.get(it.identifier).push(it);
+  }
+  const dupGroups = [...byId.values()].filter(g => g.length > 1);
+  if (!dupGroups.length) return 0;
+
+  let max = 0;
+  for (const it of state.issues) {
+    const m = /-(\d+)$/.exec(it.identifier || "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  const key = state.team?.key || "ENG";
+  let repaired = 0;
+  await serialize(async () => {
+    for (const g of dupGroups) {
+      // keep the earliest (lowest order, then lowest guid); renumber the others
+      const sorted = g.slice().sort((a, b) =>
+        (a.order || 0) - (b.order || 0) || String(a._guid).localeCompare(String(b._guid)));
+      for (let i = 1; i < sorted.length; i++) {
+        const it = sorted[i];
+        const newId = `${key}-${++max}`;
+        try { await api("PATCH", `/objects/issue/${it._guid}`, { identifier: newId }); it.identifier = newId; repaired++; }
+        catch (_) { /* skip on failure */ }
+      }
+    }
+  });
+  return repaired;
 }
 
 /* ---- rendering ---- */
 function renderAssigneeFilter() {
   const sel = $("filterAssignee");
   const cur = state.filterAssignee;
-  sel.innerHTML = `<option value="">All assignees</option><option value="none">Unassigned</option>`;
+  const meOpt = state.me ? `<option value="me">Assigned to me</option>` : "";
+  sel.innerHTML = `<option value="">All assignees</option>${meOpt}<option value="none">Unassigned</option>`;
   for (const u of state.users) {
     const o = document.createElement("option");
-    o.value = u._guid; o.textContent = u.name;
+    o.value = u._guid; o.textContent = u.name + (state.me && u._guid === state.me._guid ? " (you)" : "");
     sel.appendChild(o);
   }
   sel.value = cur;
+}
+
+/* ---- view preferences (persisted) ---- */
+function reflectSortUI() {
+  for (const x of $("sortSeg").children) x.classList.toggle("on", x.dataset.sort === state.sort);
+}
+function reflectArchivedUI() {
+  const b = $("archivedBtn");
+  const on = state.view === "archived";
+  b.classList.toggle("on", on);
+  b.setAttribute("aria-pressed", on ? "true" : "false");
+  b.title = on ? "Showing archived — click for active issues" : "Show archived issues";
+}
+function setSort(sort) {
+  if (sort !== "priority" && sort !== "order") return;
+  state.sort = sort; reflectSortUI(); savePrefs(); renderBoard();
+}
+function setView(view) {
+  state.view = view === "archived" ? "archived" : "active";
+  reflectArchivedUI(); savePrefs(); renderBoard();
+}
+function setFilterAssignee(v) {
+  state.filterAssignee = v; $("filterAssignee").value = v; savePrefs(); renderBoard();
+}
+function applyPrefs() {
+  const p = loadPrefs();
+  if (p.sort === "priority" || p.sort === "order") state.sort = p.sort;
+  if (p.view === "archived" || p.view === "active") state.view = p.view;
+  if (typeof p.filterAssignee === "string") {
+    state.filterAssignee = (p.filterAssignee === "me" && !state.me) ? "" : p.filterAssignee;
+  }
+  reflectSortUI(); reflectArchivedUI();
+  $("filterAssignee").value = state.filterAssignee;
 }
 
 function sortedFor(items) {
@@ -747,10 +973,17 @@ function renderBoard() {
     col.appendChild(body);
 
     // drop target — position-aware so Manual mode can reorder within a column.
+    // Only show an affordance where a drop will actually take effect: in Priority
+    // sort, dropping within the same column is a no-op (order is priority-driven),
+    // so suppress the highlight + insertion line there to avoid a false promise.
     col.addEventListener("dragover", (e) => {
       e.preventDefault();
+      const manual = state.sort === "order";
+      const crossCol = dragging && dragging.status !== s.id;
+      if (!manual && !crossCol) { col.classList.remove("drop-on"); clearDropLine(); return; }
       col.classList.add("drop-on");
-      showDropLine(body, e.clientY);
+      if (manual) showDropLine(body, e.clientY);   // insertion line only when reordering
+      else clearDropLine();
     });
     col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget)) { col.classList.remove("drop-on"); clearDropLine(); } });
     col.addEventListener("drop", (e) => {
@@ -766,6 +999,7 @@ function renderBoard() {
 }
 
 /* drop-position helpers */
+let dragging = null;   // { guid, status } of the card currently being dragged
 function cardsIn(body) { return [...body.querySelectorAll(".card")]; }
 function insertionIndex(body, clientY) {
   const cards = cardsIn(body);
@@ -853,9 +1087,10 @@ function cardEl(it) {
   card.addEventListener("dragstart", (e) => {
     e.dataTransfer.setData("text/plain", it._guid);
     e.dataTransfer.effectAllowed = "move";
+    dragging = { guid: it._guid, status: it.status };
     card.classList.add("dragging");
   });
-  card.addEventListener("dragend", () => { card.classList.remove("dragging"); clearDropLine(); });
+  card.addEventListener("dragend", () => { dragging = null; card.classList.remove("dragging"); clearDropLine(); });
 
   return card;
 }
@@ -884,7 +1119,9 @@ function keyboardReorder(it, dir) {
   // reorder within the same status column (visible order); writes 'order'.
   // Manual rank only applies in Manual sort (matches Linear's priority view).
   if (state.sort !== "order") {
-    showErr("Switch to Manual sort to reorder cards.");
+    showToast("Switch to Manual sort to reorder cards.", {
+      action: { label: "Switch", fn: () => setSort("order") },
+    });
     return;
   }
   const col = sortedFor(boardIssues().filter(x => x.status === it.status));
@@ -1067,9 +1304,20 @@ function openStatusPop(anchor, it) {
 }
 
 /* ---- comments ---- */
+// A comment's author may arrive as a hydrated object (include=comments.author) or
+// a bare guid (a freshly POSTed one); resolve either to a user object.
+function commentAuthor(cm) {
+  const a = cm && cm.author;
+  if (!a) return null;
+  if (typeof a === "object") return a._guid ? (state.usersById[a._guid] || a) : null;
+  return state.usersById[a] || null;
+}
 async function addComment(issueGuid, body) {
   const created = new Date().toISOString();
-  const c = await api("POST", "/objects/comment", { body, created, issue: issueGuid });
+  const payload = { body, created, issue: issueGuid };
+  if (state.me) payload.author = state.me._guid;     // attribute to the current user
+  const c = await api("POST", "/objects/comment", payload);
+  if (state.me && !c.author) c.author = state.me;     // hydrate for immediate render
   const it = state.issues.find(x => x._guid === issueGuid);
   if (it) { (it.comments = it.comments || []).push(c); }
   renderBoard();
@@ -1154,7 +1402,9 @@ function renderDrawer(keepScroll) {
   closeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round"/></svg>`;
   closeBtn.onclick = closeDetail;
 
-  head.append(statusBtn, ident, grow, archiveBtn, delBtn, closeBtn);
+  head.append(statusBtn, ident);
+  if (it.archived) head.append(Object.assign(document.createElement("span"), { className: "arch-tag", textContent: "Archived" }));
+  head.append(grow, archiveBtn, delBtn, closeBtn);
   drawer.appendChild(head);
 
   // body
@@ -1226,13 +1476,21 @@ function renderDrawer(keepScroll) {
   for (const cm of comments) {
     const wrap = document.createElement("div");
     wrap.className = "d-comment";
-    const meta = document.createElement("div");
-    meta.className = "cmeta";
-    meta.textContent = relTime(cm.created) || "";
+    const chead = document.createElement("div");
+    chead.className = "chead";
+    const au = commentAuthor(cm);
+    chead.appendChild(avatarEl(au));
+    const name = document.createElement("span");
+    name.className = "cname";
+    name.textContent = au ? au.name : "Unknown";
+    const time = document.createElement("span");
+    time.className = "ctime";
+    time.textContent = relTime(cm.created) || "";
+    chead.append(name, time);
     const cb = document.createElement("div");
     cb.className = "cbody";
     cb.textContent = cm.body || "";
-    wrap.append(meta, cb);
+    wrap.append(chead, cb);
     clist.appendChild(wrap);
   }
   body.appendChild(clist);
@@ -1240,6 +1498,13 @@ function renderDrawer(keepScroll) {
   // add comment
   const add = document.createElement("div");
   add.className = "d-addcomment";
+  const ahead = document.createElement("div");
+  ahead.className = "ahead";
+  ahead.appendChild(avatarEl(state.me));
+  ahead.appendChild(Object.assign(document.createElement("span"), {
+    textContent: state.me ? `Comment as ${state.me.name}` : "Add a comment",
+  }));
+  add.appendChild(ahead);
   const ta = document.createElement("textarea");
   ta.placeholder = "Leave a comment…  (⌘↵ to send)";
   ta.setAttribute("aria-label", "Add a comment");
@@ -1310,7 +1575,9 @@ function openPalette() {
 
   function compute() {
     const q = input.value.trim().toLowerCase();
-    const pool = state.issues.filter(it => !it.archived);
+    // Search the WHOLE loaded set, archived included — archived issues stay
+    // reachable from search (and carry an "Archived" tag), they're not a black hole.
+    const pool = state.issues;
     matches = !q ? pool.slice(0, 20) : pool.filter(it =>
       (it.identifier || "").toLowerCase().includes(q) ||
       (it.title || "").toLowerCase().includes(q) ||
@@ -1330,6 +1597,11 @@ function openPalette() {
       r.className = "res" + (i === active ? " active" : "");
       r.innerHTML = `${statusIcon(it.status, 14)}<span class="rid">${it.identifier || ""}</span><span class="rtitle"></span>`;
       r.querySelector(".rtitle").textContent = it.title;
+      if (it.archived) {
+        const tag = Object.assign(document.createElement("span"), { className: "arch-tag", textContent: "Archived" });
+        tag.style.marginLeft = "auto";
+        r.appendChild(tag);
+      }
       r.onmousemove = () => { if (active !== i) { active = i; draw(); } };
       r.onclick = () => pick(it);
       results.appendChild(r);
@@ -1408,7 +1680,8 @@ function openModal(presetStatus) {
 
   const mAss = scrim.querySelector("#m_assignee");
   mAss.appendChild(new Option("Unassigned", ""));
-  for (const u of state.users) mAss.appendChild(new Option(u.name, u._guid));
+  for (const u of state.users) mAss.appendChild(new Option(u.name + (state.me && u._guid === state.me._guid ? " (you)" : ""), u._guid));
+  mAss.value = state.me ? state.me._guid : "";   // default: assigned to me (Linear-style)
 
   const title = scrim.querySelector("#m_title");
   const createBtn = scrim.querySelector("#m_create");
@@ -1445,7 +1718,20 @@ function openModal(presetStatus) {
       });
       close();
       await loadBoard();
-      if (obj?._guid) openDetail(obj._guid);
+      // Use the hydrated copy from the reloaded board so the filter check sees the
+      // assignee as an object (the POST response carries it as a bare guid).
+      const fresh = (obj && obj._guid) ? (state.issues.find(x => x._guid === obj._guid) || obj) : null;
+      if (fresh) {
+        openDetail(fresh._guid);
+        const hidden = !passesAssigneeFilter(fresh) || (!!fresh.archived !== (state.view === "archived"));
+        if (hidden) {
+          showToast(`Created ${fresh.identifier} — hidden by the current view.`, {
+            action: { label: "Show it", fn: () => { setFilterAssignee(""); setView("active"); } },
+          });
+        } else {
+          showToast(`Created ${fresh.identifier}.`);
+        }
+      }
     } catch (e) {
       showErr(e.message);
       createBtn.disabled = false; createBtn.textContent = "Create issue";
@@ -1461,24 +1747,27 @@ async function syncFromHash() {
   let it = state.issues.find(x => x.identifier === h || x._guid === h);
   if (!it) {
     try {
-      const res = await api("GET", `/objects/issue?identifier=${encodeURIComponent(h)}&include=assignee,comments&limit=1`);
+      const res = await api("GET", `/objects/issue?identifier=${encodeURIComponent(h)}&include=assignee,comments.author&limit=1`);
       it = res.objects[0];
       if (it && !state.issues.find(x => x._guid === it._guid)) state.issues.push(it);
     } catch (_) {}
   }
-  if (it) openDetail(it._guid);
+  if (it) { openDetail(it._guid); return; }
+  // Bad permalink: tell the user and clear the stale hash (Linear shows a
+  // clear "not found" state rather than silently leaving the URL pointing nowhere).
+  showToast(`${h} not found.`);
+  if (state.openGuid) closeDetail();
+  else if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 
 /* ---- wiring ---- */
 $("newBtn").onclick = () => openModal(null);
 $("searchBtn").onclick = openPalette;
-$("filterAssignee").onchange = (e) => { state.filterAssignee = e.target.value; renderBoard(); };
+$("filterAssignee").onchange = (e) => setFilterAssignee(e.target.value);
 $("sortSeg").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-sort]"); if (!b) return;
-  state.sort = b.dataset.sort;
-  for (const x of $("sortSeg").children) x.classList.toggle("on", x === b);
-  renderBoard();
+  const b = e.target.closest("button[data-sort]"); if (b) setSort(b.dataset.sort);
 });
+$("archivedBtn").onclick = () => setView(state.view === "archived" ? "active" : "archived");
 window.addEventListener("keydown", (e) => {
   const typing = /input|textarea|select/i.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
   if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) { e.preventDefault(); openPalette(); return; }
@@ -1495,6 +1784,7 @@ window.addEventListener("hashchange", syncFromHash);
     await bootstrap();
     await seedIfEmpty();
     await loadMeta();
+    applyPrefs();          // restore persisted sort / filter / archived view
     await loadBoard();
     await syncFromHash();
   } catch (e) {
