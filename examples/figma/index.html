@@ -92,8 +92,12 @@
   .shape:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .shape.rect    { border-radius: 4px; box-shadow: 0 1px 2px #0000001f; cursor: move; }
   .shape.ellipse { border-radius: 50%; box-shadow: 0 1px 2px #0000001f; cursor: move; }
-  .shape.line    { background: transparent !important; cursor: move; }
+  /* the line's box is click-through; only the stroke itself is interactive (see
+     the wide transparent "hit" line in lineSvg) so a line's empty corners don't
+     swallow clicks meant for shapes painted behind it. */
+  .shape.line    { background: transparent !important; pointer-events: none; }
   .shape.line svg { width: 100%; height: 100%; display: block; overflow: visible; pointer-events: none; }
+  .shape.line svg .hit { pointer-events: stroke; cursor: move; }
   .shape.text {
     background: transparent; cursor: move; font-weight: 600; font-size: 22px;
     line-height: 1.2; padding: 2px 4px; white-space: pre-wrap; word-break: break-word;
@@ -446,10 +450,15 @@ const KIND_ICON = {
    line a constant 3px no matter the box size. The drag direction is stored per
    line (in its `text` field, which lines don't otherwise use): "/" = anti-diagonal
    (bottom-left → top-right), anything else = main diagonal (top-left → bottom-right).
-   This lets "/", "\\", horizontal and vertical lines all follow the gesture. */
+   This lets "/", "\\", horizontal and vertical lines all follow the gesture.
+   Two <line>s are drawn: a wide transparent "hit" line that carries pointer-events
+   (so the line is easy to click but its empty corners stay click-through to shapes
+   behind it) plus the thin visible stroke on top. */
 function lineSvg(color, dir) {
   const [x1, y1, x2, y2] = dir === "/" ? [0, 100, 100, 0] : [0, 0, 100, 100];
   return `<svg viewBox="0 0 100 100" preserveAspectRatio="none">`
+       + `<line class="hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" `
+       + `stroke-width="14" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`
        + `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${escapeHtml(color)}" `
        + `stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
@@ -649,11 +658,32 @@ function onHandleDown(e, sh, corner) {
 
   function move(ev) {
     const dx = (ev.clientX - sx) / view.scale, dy = (ev.clientY - sy) / view.scale;
-    let nx = x0, ny = y0, nw = w0, nh = h0;
-    if (movesLeft)   { const l = Math.min(x0 + dx, right - MIN_SIZE); nx = Math.round(l); nw = Math.round(right - l); }
-    if (movesRight)  { const r = Math.max(right + dx, x0 + MIN_SIZE); nw = Math.round(r - x0); }
-    if (movesTop)    { const t = Math.min(y0 + dy, bottom - MIN_SIZE); ny = Math.round(t); nh = Math.round(bottom - t); }
-    if (movesBottom) { const b = Math.max(bottom + dy, y0 + MIN_SIZE); nh = Math.round(b - y0); }
+    const center = ev.altKey;        // Alt: resize symmetrically about the shape's centre
+    const lock   = ev.shiftKey;      // Shift: keep the original aspect ratio
+    const k = center ? 2 : 1;        // centre mode moves both edges, so the box changes 2×
+    // 1) free size from the dragged corner (anchor = opposite corner, or centre w/ Alt)
+    let nw = w0, nh = h0;
+    if (movesRight) nw = w0 + dx * k;
+    if (movesLeft)  nw = w0 - dx * k;
+    if (movesBottom) nh = h0 + dy * k;
+    if (movesTop)    nh = h0 - dy * k;
+    // 2) constrain to the original aspect ratio — the axis the pointer moved most drives
+    if (lock && w0 && h0) {
+      const aspect = w0 / h0;
+      if (Math.abs(dx) >= Math.abs(dy)) nh = nw / aspect;
+      else                              nw = nh * aspect;
+    }
+    nw = Math.max(MIN_SIZE, Math.round(nw));
+    nh = Math.max(MIN_SIZE, Math.round(nh));
+    // 3) place the box so the correct anchor stays put
+    let nx, ny;
+    if (center) {
+      const cx = x0 + w0 / 2, cy = y0 + h0 / 2;
+      nx = Math.round(cx - nw / 2); ny = Math.round(cy - nh / 2);
+    } else {
+      nx = movesLeft ? Math.round(right - nw) : x0;
+      ny = movesTop  ? Math.round(bottom - nh) : y0;
+    }
     sh.x = nx; sh.y = ny; sh.w = nw; sh.h = nh;
     if (el) applyBox(el, sh);                         // line redraws corner-to-corner automatically
     if (f) {
@@ -1198,13 +1228,19 @@ function renderInspector() {
     </div>
     ${layersHtml()}`;
 
-  // wire position / size — clamp W/H to >= 1 so a shape can't collapse to 0px
+  // wire position / size — clamp W/H to >= 1 so a shape can't collapse to 0px.
+  // Commit IN PLACE (no inspector rebuild) so the focused field survives: Tab
+  // advances X→Y→W→H and Enter commits without focus dropping to <body>.
   for (const [id, key] of [["in-x","x"],["in-y","y"],["in-w","w"],["in-h","h"]]) {
     $(id).addEventListener("change", (e) => {
       let v = Math.round(Number(e.target.value));
       if (!Number.isFinite(v)) { e.target.value = Math.round(sh[key]); return; }
       if ((key === "w" || key === "h") && v < 1) { v = 1; e.target.value = 1; }
-      patchShape(sh._guid, { [key]: v });
+      sh[key] = v;
+      const el = sceneEl().querySelector(`.shape[data-id="${sh._guid}"]`);
+      if (el) applyBox(el, sh);          // move/resize the shape on canvas in place
+      updateFrames();                    // reposition the selection frame + handles
+      patchShape(sh._guid, { [key]: v }, false);   // persist one field, no re-render
     });
   }
   // wire fill swatches (clickable + keyboard)
