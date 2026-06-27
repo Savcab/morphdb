@@ -664,9 +664,32 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && expanded) setHashTask(null);
 });
 
+// Seed a few example tasks the first time this app is opened (when empty).
+async function seedIfEmpty() {
+  try {
+    const { total } = await api("GET", "/objects/todo?limit=1");
+    if (total > 0) return;
+    const t = new Date();
+    const iso = (d) => new Date(t.getFullYear(), t.getMonth(), t.getDate() + d).toISOString();
+    const rows = [
+      { title: "Welcome to MorphDB Todo \u{1F44B}", priority: 2,
+        notes: "Click a task to edit it, drag the handle to reorder, search above, and try the Today / Upcoming views." },
+      { title: "Add a task with a due date", priority: 1, due: iso(0) },
+      { title: "Drag me to reorder the list", priority: 2, due: iso(2) },
+      { title: "This one is overdue", priority: 3, due: iso(-1), notes: "Overdue dates show in red." },
+      { title: "Read the schema-fluid story", priority: 1, done: true },
+      { title: "Star MorphDB on GitHub \u2B50", priority: 2, done: true },
+    ];
+    let pos = 0;
+    for (const r of rows)
+      await api("POST", "/objects/todo", { done: false, position: pos++, ...r });
+  } catch (_) { /* seeding is best-effort */ }
+}
+
 (async () => {
   try { await ensureBackend(); }
   catch (e) { err("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")"); return; }
+  await seedIfEmpty();
   const m = location.hash.match(/^#task-(.+)$/);
   if (m) expanded = decodeURIComponent(m[1]);   // deep-link: open a task's detail
   await load();
