@@ -213,6 +213,12 @@
   .profile.clickable:hover { box-shadow: var(--shadow), 0 0 0 1px var(--brand); }
   .avatar.link { cursor: pointer; }
   .link { cursor: pointer; }
+  /* brief highlight when a post is opened from global search */
+  .post.flash { animation: postflash 1.8s ease; }
+  @keyframes postflash {
+    0%, 22% { box-shadow: var(--shadow), 0 0 0 2px var(--brand); }
+    100% { box-shadow: var(--shadow); }
+  }
   .post .head .meta b.link:hover, .prow .meta b.link:hover { text-decoration: underline; }
 
   /* ---- overlay / modal ---- */
@@ -477,7 +483,8 @@ const BASE = location.hostname
   ? `${location.protocol}//${location.hostname}:8787`
   : "http://127.0.0.1:8787";
 const APP = "linkedin-demo";          // this site's MorphDB app key (X-App-Key)
-const ME_NAME = "Alex Rivera";        // the one designated person who is "you"
+const ME_NAME = "Alex Rivera";        // seed person who is "you" — used ONCE to bootstrap the guid
+const ME_KEY = "linkedin-demo:me";    // localStorage: the STABLE _guid of "you" (survives renames)
 
 const $ = (id) => document.getElementById(id);
 let errTimer;
@@ -628,12 +635,34 @@ async function loadPeople() {
 }
 
 async function loadMe() {
-  const q = `/objects/person?name__eq=${encodeURIComponent(ME_NAME)}&include=connections,posts&limit=1`;
-  const { objects } = await api("GET", q);
-  ME = objects[0] || null;
+  ME = await fetchMe();
   renderProfile();
   renderConnections();
   renderPYMK();
+}
+
+/* Resolve "you" by a STABLE guid that we persist once — NOT by the mutable name.
+   Renaming yourself in Edit-profile keeps the same _guid, so identity survives it.
+   Fallbacks (in order) if the stored guid is gone: re-find the seed person by the
+   original name; else the first person — so the app never bricks. */
+async function fetchMe() {
+  const stored = localStorage.getItem(ME_KEY);
+  if (stored) {
+    try {
+      const me = await api("GET", `/objects/person/${stored}?include=connections,posts`);
+      if (me && me._guid) return me;       // stable guid still valid → use it
+    } catch (_) { localStorage.removeItem(ME_KEY); }   // deleted/missing → re-resolve
+  }
+  // Bootstrap (or recover) the guid from the original seed name, then persist it.
+  let { objects } = await api("GET",
+    `/objects/person?name__eq=${encodeURIComponent(ME_NAME)}&include=connections,posts&limit=1`);
+  let me = objects[0];
+  if (!me) {   // renamed before we ever stored a guid — keep the app usable
+    const r = await api("GET", "/objects/person?sort=name&order=asc&include=connections,posts&limit=1");
+    me = r.objects[0] || null;
+  }
+  if (me) localStorage.setItem(ME_KEY, me._guid);
+  return me;
 }
 
 function renderProfile() {
@@ -761,6 +790,7 @@ function renderFeed(posts) {
     const a = post.author || { name: "Unknown" };
     const isOn = liked.has(post._guid);
     const card = el("div", "card post");
+    card.dataset.postGuid = post._guid;      // lets global post-search scroll to it
 
     const head = el("div", "head");
     const av = avatar(a.name);
@@ -1345,11 +1375,28 @@ function renderSearch(qRaw) {
     for (const p of posts) {
       const a = p.author || { name: "Unknown" };
       const snip = p.body.length > 64 ? p.body.slice(0, 64) + "…" : p.body;
-      addItem(avatar(a.name), a.name, snip, () => { if (a._guid) openProfile(a._guid); });
+      // Open the POST in context (scroll+highlight it in the feed), not the author.
+      addItem(avatar(a.name), a.name, snip, () => openPostInFeed(p._guid, a._guid));
     }
   }
   if (!srItems.length) box.appendChild(el("div", "sr-empty", "No results found."));
   box.hidden = false; input.setAttribute("aria-expanded", "true");
+}
+
+/* Post search → reveal the post in the feed (scroll + brief highlight). If it's
+   not on the currently loaded feed page, fall back to the author's profile,
+   whose Activity section lists their posts. */
+function openPostInFeed(postGuid, authorGuid) {
+  const card = document.querySelector(`.post[data-post-guid="${CSS.escape(postGuid)}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.remove("flash");
+    void card.offsetWidth;                 // restart the animation if re-picked
+    card.classList.add("flash");
+    setTimeout(() => card.classList.remove("flash"), 1800);
+  } else if (authorGuid) {
+    openProfile(authorGuid);
+  }
 }
 
 function searchMove(delta) {

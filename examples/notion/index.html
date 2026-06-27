@@ -521,14 +521,27 @@ const state = {
   pages: [], byId: {}, childrenMap: {}, roots: [],
   expanded: new Set(), currentPageGuid: null, blocks: [], focusGuid: null,
   focusOffset: null,           // where to place the caret in the focused block ("end" | number)
-  collapsed: new Set(),        // toggle blocks whose children are folded away (session-local)
+  collapsed: new Set(),        // toggle blocks whose children are folded away
   selected: new Set(),         // multi-block selection (guids highlighted as a group)
 };
+// Toggle collapse state is a pure view preference, so we keep it client-side
+// (no schema field) but persist it across reloads in localStorage, keyed by block
+// guid. Guids are globally unique, so one flat set per app is enough.
+const COLLAPSE_KEY = "noted.collapsed." + APP;
+function loadCollapsed() {
+  try { state.collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]")); }
+  catch (_) { state.collapsed = new Set(); }
+}
+function saveCollapsed() {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...state.collapsed])); } catch (_) {}
+}
 const PH = {
   text: "Type '/' for commands", h1: "Heading 1", h2: "Heading 2",
   todo: "To-do", quote: "Empty quote", callout: "Type something…", divider: "",
   bullet: "List", numbered: "List", toggle: "Toggle", code: "Code", image: "",
 };
+// Bullet glyph cycles by nesting depth (Notion-style): filled, hollow, square.
+const BULLET_GLYPHS = ["•", "◦", "▪"];
 // "Turn into" handle menu. kind/icon/name. (kind is a free-form string — no schema change.)
 const KINDS = [
   ["text", "¶", "Text"], ["h1", "H₁", "Heading 1"], ["h2", "H₂", "Heading 2"],
@@ -906,10 +919,12 @@ function renderDoc() {
   };
 
   const blocks = document.createElement("div"); blocks.className = "blocks";
-  // Numbered lists count client-side (no aggregation endpoint): a run of
-  // consecutive "numbered" blocks restarts at 1 whenever the kind breaks.
+  // Numbered lists count client-side (no aggregation endpoint). Numbering is
+  // PER-DEPTH: counters[d] is the ordinal of consecutive "numbered" siblings at
+  // depth d. Stepping into a sub-list (deeper) restarts at 1; stepping back out
+  // resumes the parent's run; a non-numbered sibling at a depth breaks that run.
   // A collapsed toggle folds away every following deeper block (its children).
-  let n = 0;
+  const counters = [];
   let collapseDepth = null;
   for (let i = 0; i < state.blocks.length; i++) {
     const b = state.blocks[i];
@@ -918,10 +933,11 @@ function renderDoc() {
       if (depth > collapseDepth) continue;     // child of a folded toggle — hidden
       collapseDepth = null;                    // returned to/above the toggle's level
     }
-    n = b.kind === "numbered" ? n + 1 : 0;
+    counters.length = depth + 1;               // leaving deeper levels restarts them
+    counters[depth] = b.kind === "numbered" ? (counters[depth] || 0) + 1 : 0;
     const next = state.blocks[i + 1];
     const hasChildren = !!next && (next.depth || 0) > depth;
-    blocks.appendChild(blockEl(b, n, hasChildren));
+    blocks.appendChild(blockEl(b, counters[depth], hasChildren));
     if (b.kind === "toggle" && state.collapsed.has(b._guid)) collapseDepth = depth;
   }
   wireBlockSelection(blocks);
@@ -984,7 +1000,8 @@ function blockEl(b, num, hasChildren) {
     cb.onchange = () => toggleChecked(b._guid, cb.checked);
     content.append(cb, editable(b));
   } else if (b.kind === "bullet") {
-    const m = document.createElement("span"); m.className = "blk-marker"; m.textContent = "•";
+    const m = document.createElement("span"); m.className = "blk-marker";
+    m.textContent = BULLET_GLYPHS[(b.depth || 0) % BULLET_GLYPHS.length];   // glyph per depth
     content.append(m, editable(b));
   } else if (b.kind === "numbered") {
     const m = document.createElement("span"); m.className = "blk-marker"; m.textContent = (num || 1) + ".";
@@ -1002,6 +1019,7 @@ function blockEl(b, num, hasChildren) {
     car.onclick = (e) => {
       e.stopPropagation();
       if (state.collapsed.has(b._guid)) state.collapsed.delete(b._guid); else state.collapsed.add(b._guid);
+      saveCollapsed();
       renderDoc();
     };
     content.append(car, editable(b));
@@ -1075,12 +1093,15 @@ function editable(b) {
   return d;
 }
 
-// 1-based position of `b` within its run of consecutive numbered blocks.
+// 1-based ordinal of `b` within its per-depth run of consecutive numbered blocks
+// (matches renderDoc's per-depth counters so an in-place rebuild stays correct).
 function blockNumber(b) {
-  let n = 0;
+  const counters = [];
   for (const x of state.blocks) {
-    n = x.kind === "numbered" ? n + 1 : 0;
-    if (x === b) return n || 1;
+    const depth = x.depth || 0;
+    counters.length = depth + 1;
+    counters[depth] = x.kind === "numbered" ? (counters[depth] || 0) + 1 : 0;
+    if (x === b) return counters[depth] || 1;
   }
   return 1;
 }
@@ -1370,7 +1391,20 @@ function deleteBlock(guid, focusPrev) {
   return serialize(async () => {
     try {
       const i = state.blocks.findIndex((x) => x._guid === guid);
+      if (i < 0) return;
+      const myDepth = state.blocks[i].depth || 0;
       if (focusPrev && i > 0) { state.focusGuid = state.blocks[i - 1]._guid; state.focusOffset = "end"; }
+      // Don't orphan nested children: promote (outdent) the deleted block's
+      // descendants by one level so they reattach to its parent instead of
+      // dangling one indent too deep under a shallower sibling.
+      for (let j = i + 1; j < state.blocks.length; j++) {
+        const c = state.blocks[j];
+        if ((c.depth || 0) <= myDepth) break;     // past this block's subtree
+        const nd = (c.depth || 0) - 1;
+        c.depth = nd;
+        await api("PATCH", `/objects/block/${c._guid}`, { depth: nd });
+      }
+      if (state.collapsed.has(guid)) { state.collapsed.delete(guid); saveCollapsed(); }
       await api("DELETE", `/objects/block/${guid}`);
       await loadDoc(state.currentPageGuid);
     } catch (e) { showErr(e.message); }
@@ -1974,6 +2008,7 @@ function expandAncestors(guid) {
 }
 
 (async () => {
+  loadCollapsed();   // restore folded toggles from a previous session
   try {
     await ensureApp();
     await ensureSchema();

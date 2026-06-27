@@ -415,12 +415,22 @@
   ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
 
   /* ---- responsive ---- */
+  /* The brand + breadcrumbs + full toolbar stop fitting on one row well before
+     mobile widths. Between ~680 and ~1024px the toolbar would otherwise overflow
+     to the right and clip 'New issue' / 'Archived' / the user chip (body is
+     overflow:hidden, so the overflow is unreachable). At this intermediate band
+     drop the whole toolbar onto its own full-width row — right-aligned, and
+     allowed to wrap internally — while the first row keeps just the
+     brand/breadcrumbs, which always fit. */
+  @media (max-width: 1024px) {
+    header { flex-wrap: wrap; row-gap: 8px; }
+    .spacer { display: none; }
+    .toolbar { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; }
+  }
   @media (max-width: 680px) {
-    header { flex-wrap: wrap; gap: 8px 10px; padding: 9px 12px; }
+    header { gap: 8px 10px; padding: 9px 12px; }
     .crumb, .team-badge + .crumb { display: none; }
-    /* Wrap toolbar controls so the sort toggle / New issue button reflow onto a
-       second row instead of clipping and overlapping at narrow widths. */
-    .toolbar { width: 100%; flex-wrap: wrap; row-gap: 8px; }
+    .toolbar { justify-content: flex-start; }
     .toolbar .icon-search .kbd { display: none; }
     .board { padding: 10px 12px 14px; gap: 10px; }
     /* Keep one card-column ~viewport-wide on mobile (don't let it flex-shrink). */
@@ -1209,6 +1219,8 @@ async function deleteIssue(guid) {
 function mountOverlay(node, onClose) {
   const prevFocus = document.activeElement;
   function onKey(e) {
+    // A popover open over this overlay handles its own Esc/Tab first.
+    if (activePop && (e.key === "Escape" || e.key === "Tab")) return;
     if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
     if (e.key === "Tab") {
       const f = node.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])');
@@ -1227,10 +1239,36 @@ function mountOverlay(node, onClose) {
 
 /* ---- popovers ---- */
 let activePop = null;
-function closePop() { if (activePop) { activePop.remove(); activePop = null; document.removeEventListener("mousedown", onDocDown, true); } }
+let popPrevFocus = null;
+function popItems() { return activePop ? [...activePop.querySelectorAll('button[role^="menuitem"]')] : []; }
+function closePop() {
+  if (!activePop) return;
+  const focusInside = activePop.contains(document.activeElement);
+  activePop.remove(); activePop = null;
+  document.removeEventListener("mousedown", onDocDown, true);
+  document.removeEventListener("keydown", onPopKey, true);
+  // Return focus to the trigger only when the user was keyboard-navigating the
+  // popover (don't yank focus during ordinary mouse-driven flows).
+  if (focusInside && popPrevFocus && popPrevFocus.isConnected) { try { popPrevFocus.focus(); } catch (_) {} }
+  popPrevFocus = null;
+}
 function onDocDown(e) { if (activePop && !activePop.contains(e.target)) closePop(); }
+// Keyboard a11y for popovers: Esc closes, ↑/↓ (and Home/End) move between items;
+// Enter/Space activate the focused item natively (they're <button>s).
+function onPopKey(e) {
+  if (!activePop) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePop(); return; }
+  const items = popItems();
+  if (!items.length) return;
+  const cur = items.indexOf(document.activeElement);
+  if (e.key === "ArrowDown") { e.preventDefault(); items[(cur + 1 + items.length) % items.length].focus(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); items[(cur - 1 + items.length) % items.length].focus(); }
+  else if (e.key === "Home") { e.preventDefault(); items[0].focus(); }
+  else if (e.key === "End") { e.preventDefault(); items[items.length - 1].focus(); }
+}
 function openPop(anchor, build) {
   closePop();
+  popPrevFocus = anchor || document.activeElement;
   const pop = document.createElement("div");
   pop.className = "pop";
   pop.setAttribute("role", "menu");
@@ -1244,6 +1282,10 @@ function openPop(anchor, build) {
   pop.style.left = Math.max(8, left) + "px";
   pop.style.top = top + "px";
   activePop = pop;
+  document.addEventListener("keydown", onPopKey, true);
+  // Focus the selected item (or the first) so the menu is immediately keyboard-navigable.
+  const sel = pop.querySelector('button[aria-checked="true"]') || popItems()[0];
+  if (sel) setTimeout(() => { try { sel.focus(); } catch (_) {} }, 0);
   setTimeout(() => document.addEventListener("mousedown", onDocDown, true), 0);
 }
 // a11y: each option is a menuitemradio with aria-checked; the ✓ glyph (and the
@@ -1311,6 +1353,19 @@ function commentAuthor(cm) {
   if (!a) return null;
   if (typeof a === "object") return a._guid ? (state.usersById[a._guid] || a) : null;
   return state.usersById[a] || null;
+}
+// A neutral, intentional fallback avatar for comments whose author can't be
+// resolved (e.g. legacy seed data created before comments carried an author) — a
+// solid neutral circle (not the dashed "unassigned" glyph, which means something
+// else), paired with the "Unknown" name below it.
+function authorAvatarEl(user) {
+  if (user) return avatarEl(user);
+  const el = document.createElement("span");
+  el.className = "avatar";
+  el.style.background = "var(--faint)";
+  el.textContent = "?";
+  el.title = "Unknown author";
+  return el;
 }
 async function addComment(issueGuid, body) {
   const created = new Date().toISOString();
@@ -1479,7 +1534,7 @@ function renderDrawer(keepScroll) {
     const chead = document.createElement("div");
     chead.className = "chead";
     const au = commentAuthor(cm);
-    chead.appendChild(avatarEl(au));
+    chead.appendChild(authorAvatarEl(au));
     const name = document.createElement("span");
     name.className = "cname";
     name.textContent = au ? au.name : "Unknown";
