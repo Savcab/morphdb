@@ -48,6 +48,18 @@ List responses expose a flat `total` for the filter, but no grouped counts (e.g.
 *Surfaced by: Figma (undo of a delete).*
 The server assigns every `_guid` on create; a client can't create an object with a known id, and there's no soft-delete/restore. So "undo a delete" can't bring the *same* object back — re-creating yields a **new** `_guid`, and any references to the old guid must be remapped client-side (the Figma undo stack does exactly this across its history snapshots + selection). A client-supplied id (idempotent create) or a soft-delete/restore (trash + undelete) primitive would make undo/redo and offline replay correct instead of approximate.
 
+## 10. No cascade delete / bulk-delete-by-filter
+*Surfaced by: Notion (delete a page + its subtree).*
+Deleting a type's objects is one-at-a-time. Deleting a Notion page must walk the subtree client-side and issue a `DELETE` per descendant page **and** per block (the app does exactly this). It's non-atomic — a mid-way failure orphans blocks/pages — and O(N) round-trips. (App-level delete *does* cascade its own schema/objects, but there's no object-level `ON DELETE CASCADE` for a relation, and no "delete all objects matching this filter" endpoint.)
+
+## 11. No uniqueness constraint and no sequence / auto-increment
+*Surfaced by: Linear (duplicate `ENG-11` minted).*
+There's no unique index and no atomic sequence allocator. An issue tracker needs unique, monotonic identifiers (ENG-1, ENG-2, …); with no `UNIQUE` constraint the store happily accepted **two** issues with `identifier: "ENG-11"` (confirmed: ENG-11 ×2 among 17 issues), and with no `next_val()` the client computes `max(N)+1` over the rows it has loaded — which is racy under concurrency and simply wrong when a filter is active (it maxes over the filtered subset). A unique-field constraint + a server-side sequence/auto-increment would fix both the duplication and the ordering.
+
+## 12. No collation control on sort (byte-order only)
+*Surfaced by: Todo (sort by title).*
+`sort=<field>` orders by the raw stored value — for strings that's byte/ASCII order, so `"Zebra"` sorts before `"apple"` (uppercase before lowercase) and there's no locale/case-insensitive option. The Todo app has to re-sort the fetched page client-side with `localeCompare` to get a natural A–Z. A per-sort collation flag (case-insensitive / locale-aware) would let the server return the right order (and keep it correct across pagination, which the client-side re-sort cannot).
+
 ---
 
 # Architectural gaps for a production rebuild (LinkedIn / Notion / Figma)

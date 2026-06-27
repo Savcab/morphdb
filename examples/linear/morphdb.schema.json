@@ -25,7 +25,8 @@
         "status": { "type": "string", "index": true, "default": "backlog" },
         "priority": { "type": "number", "index": true, "default": 0 },
         "identifier": { "type": "string", "index": true },
-        "order": { "type": "number", "index": true, "default": 0 }
+        "order": { "type": "number", "index": true, "default": 0 },
+        "archived": { "type": "boolean", "default": false }
       },
       "relations": {
         "team": { "to": "team", "cardinality": "many_to_one", "inverse": "issues" },

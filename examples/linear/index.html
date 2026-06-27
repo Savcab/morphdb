@@ -100,7 +100,9 @@
     padding: 6px 26px 6px 10px;
     cursor: pointer;
   }
-  select:focus, input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -1px; }
+  select:focus, input:focus, textarea:focus, button:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: -1px;
+  }
   .seg {
     display: inline-flex; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; background: var(--card);
   }
@@ -116,8 +118,22 @@
     padding: 6px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
   }
   button.btn:hover { background: var(--card-hover); }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
   button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
   button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+  button.primary:disabled { background: var(--accent); }
+  button.danger { color: #d93b3b; border-color: color-mix(in srgb, #d93b3b 40%, var(--border-strong)); }
+  button.danger:hover { background: color-mix(in srgb, #d93b3b 10%, var(--card)); }
+
+  .icon-search {
+    display: inline-flex; align-items: center; gap: 7px; color: var(--muted);
+  }
+  .icon-search .kbd { font-size: 11px; }
+  .kbd {
+    border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px;
+    padding: 0 5px; font-size: 11px; color: var(--muted); background: var(--bg);
+    font-family: ui-monospace, Menlo, monospace; line-height: 1.6;
+  }
 
   /* ---- board ---- */
   .board {
@@ -156,6 +172,7 @@
   }
   .col.drop-on { outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: -2px; }
   .col.drop-on .col-body { background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 8px; }
+  .drop-line { height: 2px; background: var(--accent); border-radius: 2px; margin: 1px 2px; }
 
   .empty-col {
     color: var(--faint); font-size: 12.5px; text-align: center; padding: 18px 8px;
@@ -174,12 +191,16 @@
     transition: border-color .12s, box-shadow .12s, transform .04s;
   }
   .card:hover { border-color: var(--border-strong); background: var(--card-hover); }
+  .card:focus-visible { border-color: var(--accent); }
   .card:active { cursor: grabbing; }
   .card.dragging { opacity: .45; }
   .card .row1 { display: flex; align-items: center; gap: 8px; }
   .card .ident { font-size: 12px; color: var(--faint); font-weight: 500; font-variant-numeric: tabular-nums; }
   .card .row1 .grow { flex: 1; }
-  .card .title { font-size: 13.5px; line-height: 1.35; color: var(--text); }
+  .card .title {
+    font-size: 13.5px; line-height: 1.35; color: var(--text);
+    overflow-wrap: anywhere; word-break: break-word;
+  }
   .card .row3 { display: flex; align-items: center; gap: 8px; margin-top: 1px; }
   .card .row3 .grow { flex: 1; }
   .meta { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
@@ -207,7 +228,7 @@
 
   /* ---- popover ---- */
   .pop {
-    position: fixed; z-index: 50;
+    position: fixed; z-index: 90;
     background: var(--card); border: 1px solid var(--border-strong);
     border-radius: 9px; box-shadow: var(--shadow-lg);
     padding: 4px; min-width: 188px; max-height: 60vh; overflow-y: auto;
@@ -218,9 +239,8 @@
     border: 0; background: transparent; padding: 7px 9px; border-radius: 6px; cursor: pointer; color: var(--text);
     font-size: 13px;
   }
-  .pop button:hover { background: var(--card-hover); }
-  .pop button .chk { margin-left: auto; color: var(--accent); opacity: 0; }
-  .pop button.sel .chk { opacity: 1; }
+  .pop button:hover, .pop button:focus-visible { background: var(--card-hover); }
+  .pop button .chk { margin-left: auto; color: var(--accent); }
 
   /* ---- modal ---- */
   .scrim {
@@ -252,6 +272,81 @@
   }
   .modal .mfoot .grow { flex: 1; }
 
+  /* ---- detail drawer ---- */
+  .drawer-scrim {
+    position: fixed; inset: 0; background: rgba(8,9,12,.42);
+    z-index: 60; display: flex; justify-content: flex-end;
+    backdrop-filter: blur(2px);
+  }
+  .drawer {
+    width: min(720px, 100%); height: 100%; background: var(--bg);
+    border-left: 1px solid var(--border-strong); box-shadow: var(--shadow-lg);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .drawer .dhead {
+    display: flex; align-items: center; gap: 8px; padding: 11px 16px;
+    border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0;
+  }
+  .drawer .dhead .ident { color: var(--faint); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .drawer .dhead .grow { flex: 1; }
+  .drawer .dbody { padding: 18px 22px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 14px; }
+  .drawer textarea.d-title {
+    border: 0; background: transparent; font-size: 21px; font-weight: 600; line-height: 1.3;
+    width: 100%; resize: none; overflow: hidden; padding: 2px 0; color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .drawer textarea.d-desc {
+    border: 1px solid transparent; background: transparent; width: 100%; resize: vertical;
+    min-height: 80px; color: var(--text); font-size: 14px; line-height: 1.55; padding: 8px;
+    border-radius: 8px; margin: 0 -8px; overflow-wrap: anywhere;
+  }
+  .drawer textarea.d-desc:hover { border-color: var(--border); }
+  .drawer textarea.d-desc:focus { border-color: var(--border-strong); background: var(--card); }
+  .drawer textarea.d-desc::placeholder { color: var(--faint); }
+  .d-props { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .d-prop {
+    display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border-strong);
+    border-radius: 7px; padding: 5px 10px; cursor: pointer; background: var(--card); font-size: 13px;
+  }
+  .d-prop:hover { background: var(--card-hover); }
+  .d-prop .lbl { color: var(--muted); }
+  .d-section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); font-weight: 600; margin-top: 4px; }
+  .d-comments { display: flex; flex-direction: column; gap: 12px; }
+  .d-comment { display: flex; flex-direction: column; gap: 3px; }
+  .d-comment .cmeta { font-size: 12px; color: var(--faint); }
+  .d-comment .cbody { font-size: 13.5px; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .d-addcomment { display: flex; flex-direction: column; gap: 8px; }
+  .d-addcomment textarea {
+    border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 10px; width: 100%;
+    resize: vertical; min-height: 52px; background: var(--card); color: var(--text); font-size: 13.5px;
+  }
+  .d-addcomment .row { display: flex; justify-content: flex-end; }
+  .d-divider { height: 1px; background: var(--border); margin: 2px 0; }
+
+  /* ---- command palette / search ---- */
+  .pal-scrim {
+    position: fixed; inset: 0; background: rgba(8,9,12,.45);
+    display: grid; place-items: start center; padding-top: 12vh; z-index: 75;
+    backdrop-filter: blur(2px);
+  }
+  .palette {
+    width: min(560px, 94vw); background: var(--card); border: 1px solid var(--border-strong);
+    border-radius: 12px; box-shadow: var(--shadow-lg); overflow: hidden;
+  }
+  .palette input {
+    width: 100%; border: 0; border-bottom: 1px solid var(--border); background: transparent;
+    padding: 14px 16px; font-size: 15px; color: var(--text);
+  }
+  .palette .results { max-height: 46vh; overflow-y: auto; padding: 6px; }
+  .palette .res {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  }
+  .palette .res.active, .palette .res:hover { background: var(--card-hover); }
+  .palette .res .rid { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 56px; }
+  .palette .res .rtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .palette .empty { padding: 18px 16px; color: var(--faint); font-size: 13px; text-align: center; }
+  .palette .phint { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--faint); font-size: 11.5px; background: var(--panel); }
+
   /* ---- banners ---- */
   #err {
     color: #fff; background: #d93b3b; font-size: 13px; padding: 0 18px;
@@ -268,6 +363,18 @@
   .footnote { color: var(--faint); font-size: 11.5px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+
+  /* ---- responsive ---- */
+  @media (max-width: 680px) {
+    header { flex-wrap: wrap; gap: 8px 10px; padding: 9px 12px; }
+    .crumb, .team-badge + .crumb { display: none; }
+    .toolbar { width: 100%; }
+    .toolbar .icon-search .kbd { display: none; }
+    .board { padding: 10px 12px 14px; gap: 10px; }
+    .col { width: 84vw; min-width: 84vw; }
+    .drawer { width: 100%; }
+    .drawer .dbody { padding: 14px 16px; }
+  }
 </style>
 </head>
 <body>
@@ -293,11 +400,16 @@
     <div class="spacer"></div>
 
     <div class="toolbar">
-      <label class="field">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6" cy="6" r="4"/><path d="M11 11l3 3" stroke-linecap="round"/></svg>
-        <select id="filterAssignee" title="Filter by assignee"><option value="">All assignees</option></select>
+      <button class="btn icon-search" id="searchBtn" title="Search issues" aria-label="Search issues">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4 4" stroke-linecap="round"/></svg>
+        <span>Search</span>
+        <span class="kbd">⌘K</span>
+      </button>
+      <label class="field" title="Filter by assignee">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5" r="3"/><path d="M2.5 14a5.5 5.5 0 0 1 11 0" stroke-linecap="round"/></svg>
+        <select id="filterAssignee" aria-label="Filter by assignee"><option value="">All assignees</option></select>
       </label>
-      <div class="seg" id="sortSeg" title="Order issues within each column">
+      <div class="seg" id="sortSeg" title="Order issues within each column" role="group" aria-label="Sort">
         <button data-sort="priority" class="on">Priority</button>
         <button data-sort="order">Manual</button>
       </div>
@@ -313,9 +425,9 @@
   <div class="board" id="board"></div>
 
 <script>
-const BASE = location.hostname
-  ? `${location.protocol}//${location.hostname}:8787`
-  : "http://127.0.0.1:8787";
+const BASE = (typeof window !== "undefined" && window.MORPHDB_HOST)
+  ? window.MORPHDB_HOST
+  : (location.hostname ? `${location.protocol}//${location.hostname}:8787` : "http://127.0.0.1:8787");
 const APP = "linear-demo";   // this site's MorphDB app key (sent as X-App-Key)
 
 const $ = (id) => document.getElementById(id);
@@ -353,16 +465,38 @@ async function api(method, path, body) {
   return data;
 }
 
+/* ---- serialize local writes ---------------------------------------------------
+   MorphDB has no uniqueness/sequence primitive, so identifiers and ranks are
+   computed client-side. Funnelling our own writes through one chain makes the
+   read-then-write for a new identifier atomic *within this tab* (no two local
+   creates racing). Cross-tab / cross-user collisions remain possible — see the
+   limitations note — but this removes the common single-user duplication. */
+let writeChain = Promise.resolve();
+function serialize(fn) {
+  const run = writeChain.then(fn, fn);
+  writeChain = run.then(() => {}, () => {});
+  return run;
+}
+
 /* ---- self-bootstrap: the in-browser equivalent of `morphdb init` ---- */
 async function bootstrap() {
-  // 1) register this site's app (409 = already there, which is fine)
+  // 1) register this site's app — but PROBE first so a normal load doesn't log a
+  //    409 (Conflict) to the console every time. GET /schema is 200 if the app
+  //    exists, 404 if it doesn't; we only POST /app when it's genuinely missing.
+  let exists = false;
   try {
-    await fetch(BASE + "/app", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: APP }),
-    });
-  } catch (_) { /* surfaced on the first real call */ }
+    const probe = await fetch(BASE + "/schema", { headers: { "X-App-Key": APP } });
+    exists = probe.ok;                       // 200 -> already registered
+  } catch (_) { /* network error surfaced on the first real call */ }
+  if (!exists) {
+    try {
+      await fetch(BASE + "/app", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: APP }),
+      });
+    } catch (_) { /* surfaced on the first real call */ }
+  }
 
   // 2) apply the shipped schema file, exactly like `morphdb init`:
   //    every type's fields first, THEN relations (so relation targets exist).
@@ -393,10 +527,12 @@ const STATUSES = [
   { id: "canceled",    label: "Canceled",    color: "#8a8f98" },
 ];
 const STATUS_BY_ID = Object.fromEntries(STATUSES.map(s => [s.id, s]));
+const STATUS_INDEX = Object.fromEntries(STATUSES.map((s, i) => [s.id, i]));
 
 function statusIcon(id, size = 14) {
   const c = "currentColor";
-  const wrap = (inner) => `<svg width="${size}" height="${size}" viewBox="0 0 16 16" style="color:${STATUS_BY_ID[id].color}">${inner}</svg>`;
+  const def = STATUS_BY_ID[id] || STATUS_BY_ID.backlog;
+  const wrap = (inner) => `<svg width="${size}" height="${size}" viewBox="0 0 16 16" style="color:${def.color}">${inner}</svg>`;
   switch (id) {
     case "backlog":
       return wrap(`<circle cx="8" cy="8" r="6" fill="none" stroke="${c}" stroke-width="1.6" stroke-dasharray="2 2"/>`);
@@ -408,6 +544,8 @@ function statusIcon(id, size = 14) {
       return wrap(`<circle cx="8" cy="8" r="7" fill="${c}"/><path d="M5 8.2l2 2 4-4.2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`);
     case "canceled":
       return wrap(`<circle cx="8" cy="8" r="7" fill="${c}"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>`);
+    default:
+      return wrap(`<circle cx="8" cy="8" r="6" fill="none" stroke="${c}" stroke-width="1.6"/>`);
   }
 }
 
@@ -446,15 +584,40 @@ function avatarEl(user) {
   return el;
 }
 
+function relTime(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "";
+  const s = (Date.now() - t) / 1000;
+  if (s < 45) return "just now";
+  const m = s / 60; if (m < 60) return `${Math.floor(m)}m ago`;
+  const h = m / 60; if (h < 24) return `${Math.floor(h)}h ago`;
+  const d = h / 24; if (d < 30) return `${Math.floor(d)}d ago`;
+  return new Date(t).toLocaleDateString();
+}
+
 /* ---- app state ---- */
 const state = {
   team: null,
   users: [],
   usersById: {},
-  issues: [],
-  filterAssignee: "",   // "", "none", or a user guid
-  sort: "priority",     // "priority" | "order"
+  issues: [],          // full team set (active + archived), as fetched
+  filterAssignee: "",  // "", "none", or a user guid
+  sort: "priority",    // "priority" | "order"
+  openGuid: null,      // currently open issue in the drawer
 };
+
+// Issues visible on the board: the active (non-archived) set after the
+// assignee filter. Archived issues are kept in state.issues (so identifier
+// allocation still sees them) but hidden here — MorphDB can't filter a
+// non-indexed boolean server-side, so we filter client-side.
+function boardIssues() {
+  return state.issues.filter(it => {
+    if (it.archived) return false;
+    if (state.filterAssignee === "none") return !it.assignee;
+    if (state.filterAssignee) return it.assignee && it.assignee._guid === state.filterAssignee;
+    return true;
+  });
+}
 
 /* ---- seeding (only when empty) ---- */
 async function seedIfEmpty() {
@@ -487,7 +650,7 @@ async function seedIfEmpty() {
     i++;
     const body = {
       title, description: "", status, priority,
-      identifier: `${team.key}-${i}`, order: i,
+      identifier: `${team.key}-${i}`, order: i, archived: false,
       team: team._guid,
       assignee: ai === null ? null : users[ai]._guid,
     };
@@ -515,17 +678,19 @@ async function loadMeta() {
 }
 
 async function loadBoard() {
-  // sort + filter happen on INDEXED fields / a relation — the morphable backend's
-  // generic endpoints, never changed as the schema grows.
+  // Fetch the whole team set (active + archived) on an INDEXED sort field via the
+  // generic endpoint. The assignee filter and the archived/hidden split are then
+  // applied client-side (see boardIssues): MorphDB has no group-by, and 'archived'
+  // is intentionally non-indexed, so the bucket split lives in JS. With >1000
+  // issues this would truncate (documented limitation).
   const order = state.sort === "priority" ? "desc" : "asc";
-  let q = `/objects/issue?include=assignee,comments&limit=300&sort=${state.sort}&order=${order}`;
+  let q = `/objects/issue?include=assignee,comments&limit=1000&sort=${state.sort}&order=${order}`;
   if (state.team) q += `&team=${state.team._guid}`;
-  if (state.filterAssignee === "none") q += `&assignee__exists=false`;
-  else if (state.filterAssignee) q += `&assignee=${state.filterAssignee}`;
 
   const res = await api("GET", q);
   state.issues = res.objects;
   renderBoard();
+  if (state.openGuid) refreshDrawer();
 }
 
 /* ---- rendering ---- */
@@ -541,14 +706,21 @@ function renderAssigneeFilter() {
   sel.value = cur;
 }
 
+function sortedFor(items) {
+  const arr = items.slice();
+  if (state.sort === "order") arr.sort((a, b) => (a.order || 0) - (b.order || 0) || (a.identifier || "").localeCompare(b.identifier || ""));
+  else arr.sort((a, b) => (b.priority || 0) - (a.priority || 0) || (a.order || 0) - (b.order || 0));
+  return arr;
+}
+
 function renderBoard() {
   const board = $("board");
   board.innerHTML = "";
   const buckets = Object.fromEntries(STATUSES.map(s => [s.id, []]));
-  for (const it of state.issues) (buckets[it.status] || (buckets[it.status] = [])).push(it);
+  for (const it of boardIssues()) (buckets[it.status] || (buckets[it.status] = [])).push(it);
 
   for (const s of STATUSES) {
-    const items = buckets[s.id] || [];
+    const items = sortedFor(buckets[s.id] || []);
     const col = document.createElement("section");
     col.className = "col";
     col.dataset.status = s.id;
@@ -556,13 +728,14 @@ function renderBoard() {
     const head = document.createElement("div");
     head.className = "col-head";
     head.innerHTML = `${statusIcon(s.id)}<span>${s.label}</span><span class="count">${items.length}</span>
-      <button class="add" title="New issue in ${s.label}">
+      <button class="add" title="New issue in ${s.label}" aria-label="New issue in ${s.label}">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg></button>`;
     head.querySelector(".add").onclick = () => openModal(s.id);
     col.appendChild(head);
 
     const body = document.createElement("div");
     body.className = "col-body";
+    body.dataset.status = s.id;
     if (!items.length) {
       const e = document.createElement("div");
       e.className = "empty-col";
@@ -573,24 +746,65 @@ function renderBoard() {
     }
     col.appendChild(body);
 
-    // drop target
-    col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("drop-on"); });
-    col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove("drop-on"); });
+    // drop target — position-aware so Manual mode can reorder within a column.
+    col.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      col.classList.add("drop-on");
+      showDropLine(body, e.clientY);
+    });
+    col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget)) { col.classList.remove("drop-on"); clearDropLine(); } });
     col.addEventListener("drop", (e) => {
       e.preventDefault(); col.classList.remove("drop-on");
       const guid = e.dataTransfer.getData("text/plain");
-      moveIssue(guid, s.id);
+      const beforeGuid = dropBeforeGuid(body, e.clientY, guid);
+      clearDropLine();
+      dropIssue(guid, s.id, beforeGuid);
     });
 
     board.appendChild(col);
   }
 }
 
+/* drop-position helpers */
+function cardsIn(body) { return [...body.querySelectorAll(".card")]; }
+function insertionIndex(body, clientY) {
+  const cards = cardsIn(body);
+  for (let i = 0; i < cards.length; i++) {
+    const r = cards[i].getBoundingClientRect();
+    if (clientY < r.top + r.height / 2) return i;
+  }
+  return cards.length;
+}
+function showDropLine(body, clientY) {
+  clearDropLine();
+  const cards = cardsIn(body);
+  const idx = insertionIndex(body, clientY);
+  const line = document.createElement("div");
+  line.className = "drop-line";
+  if (idx >= cards.length) body.appendChild(line);
+  else body.insertBefore(line, cards[idx]);
+}
+function clearDropLine() { document.querySelectorAll(".drop-line").forEach(n => n.remove()); }
+function dropBeforeGuid(body, clientY, draggingGuid) {
+  const cards = cardsIn(body).filter(c => c.dataset.guid !== draggingGuid);
+  const idx = (() => {
+    for (let i = 0; i < cards.length; i++) {
+      const r = cards[i].getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
+    }
+    return cards.length;
+  })();
+  return idx < cards.length ? cards[idx].dataset.guid : null;
+}
+
 function cardEl(it) {
   const card = document.createElement("article");
   card.className = "card";
   card.draggable = true;
+  card.tabIndex = 0;
   card.dataset.guid = it._guid;
+  card.setAttribute("role", "button");
+  card.setAttribute("aria-label", `${it.identifier || ""} ${it.title}`);
 
   const row1 = document.createElement("div");
   row1.className = "row1";
@@ -598,7 +812,8 @@ function cardEl(it) {
   prioBtn.className = "iconbtn";
   prioBtn.innerHTML = priorityIcon(it.priority);
   prioBtn.title = `Priority: ${PRIO[it.priority]?.label || "—"} (click to change)`;
-  prioBtn.onclick = (e) => openPriorityPop(e.currentTarget, it);
+  prioBtn.setAttribute("aria-label", prioBtn.title);
+  prioBtn.onclick = (e) => { e.stopPropagation(); openPriorityPop(e.currentTarget, it); };
   const ident = document.createElement("span");
   ident.className = "ident";
   ident.textContent = it.identifier || "";
@@ -626,46 +841,151 @@ function cardEl(it) {
   avBtn.className = "iconbtn";
   avBtn.appendChild(av);
   avBtn.title = (it.assignee ? it.assignee.name : "Unassigned") + " (click to reassign)";
-  avBtn.onclick = (e) => openAssigneePop(e.currentTarget, it);
+  avBtn.setAttribute("aria-label", avBtn.title);
+  avBtn.onclick = (e) => { e.stopPropagation(); openAssigneePop(e.currentTarget, it); };
   row3.appendChild(avBtn);
   card.appendChild(row3);
+
+  // open detail
+  card.addEventListener("click", () => openDetail(it._guid));
+  card.addEventListener("keydown", (e) => onCardKey(e, it));
 
   card.addEventListener("dragstart", (e) => {
     e.dataTransfer.setData("text/plain", it._guid);
     e.dataTransfer.effectAllowed = "move";
     card.classList.add("dragging");
   });
-  card.addEventListener("dragend", () => card.classList.remove("dragging"));
+  card.addEventListener("dragend", () => { card.classList.remove("dragging"); clearDropLine(); });
 
   return card;
 }
 
+/* keyboard board operation:
+   Enter/Space open; ←/→ move across status columns; ↑/↓ reorder within column. */
+function onCardKey(e, it) {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(it._guid); return; }
+  const live = state.issues.find(x => x._guid === it._guid);
+  if (!live) return;
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    e.preventDefault();
+    const i = STATUS_INDEX[live.status] ?? 0;
+    const ni = Math.min(STATUSES.length - 1, Math.max(0, i + (e.key === "ArrowRight" ? 1 : -1)));
+    if (ni !== i) { setStatus(live._guid, STATUSES[ni].id).then(() => refocusCard(live._guid)); }
+  } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    keyboardReorder(live, e.key === "ArrowUp" ? -1 : 1);
+  }
+}
+function refocusCard(guid) {
+  const el = document.querySelector(`.card[data-guid="${guid}"]`);
+  if (el) el.focus();
+}
+function keyboardReorder(it, dir) {
+  // reorder within the same status column (visible order); writes 'order'.
+  // Manual rank only applies in Manual sort (matches Linear's priority view).
+  if (state.sort !== "order") {
+    showErr("Switch to Manual sort to reorder cards.");
+    return;
+  }
+  const col = sortedFor(boardIssues().filter(x => x.status === it.status));
+  const idx = col.findIndex(x => x._guid === it._guid);
+  const tgt = idx + dir;
+  if (tgt < 0 || tgt >= col.length) return;
+  // neighbours after removing self, then the order between them at the new slot
+  const without = col.filter(x => x._guid !== it._guid);
+  const ord = midOrder(without[tgt - 1], without[tgt]);
+  setOrder(it._guid, ord).then(() => refocusCard(it._guid));
+}
+function midOrder(prev, next) {
+  const a = prev ? (prev.order || 0) : null;
+  const b = next ? (next.order || 0) : null;
+  if (a != null && b != null) return (a + b) / 2;
+  if (a != null) return a + 1;
+  if (b != null) return b - 1;
+  return 1;
+}
+
 /* ---- mutations ---- */
-async function moveIssue(guid, status) {
+async function patchIssue(guid, patch, optimistic) {
   const it = state.issues.find(x => x._guid === guid);
-  if (!it || it.status === status) return;
-  it.status = status;                 // optimistic
+  if (it && optimistic) optimistic(it);
   renderBoard();
-  try { await api("PATCH", `/objects/issue/${guid}`, { status }); }
+  if (state.openGuid === guid) refreshDrawer();
+  try { await api("PATCH", `/objects/issue/${guid}`, patch); }
   catch (e) { showErr(e.message); loadBoard().catch(() => {}); }
 }
 
-async function setPriority(guid, priority) {
+function setStatus(guid, status) {
+  return patchIssue(guid, { status }, (it) => { it.status = status; });
+}
+function setPriority(guid, priority) {
+  return patchIssue(guid, { priority }, (it) => { it.priority = priority; });
+}
+function setOrder(guid, order) {
+  return patchIssue(guid, { order }, (it) => { it.order = order; });
+}
+function setAssignee(guid, userGuid) {
+  return patchIssue(guid, { assignee: userGuid }, (it) => { it.assignee = userGuid ? state.usersById[userGuid] : null; });
+}
+
+/* drag-drop: change status and, in Manual mode, rank within the column. */
+async function dropIssue(guid, status, beforeGuid) {
   const it = state.issues.find(x => x._guid === guid);
-  if (it) it.priority = priority;     // optimistic
+  if (!it) return;
+  const patch = {};
+  const opt = (x) => {};
+
+  if (state.sort === "order") {
+    // rank: place between the neighbours at the drop slot in the target column
+    const col = sortedFor(boardIssues().filter(x => x.status === status && x._guid !== guid));
+    let idx = col.length;
+    if (beforeGuid) { const j = col.findIndex(x => x._guid === beforeGuid); if (j >= 0) idx = j; }
+    const ord = midOrder(col[idx - 1], col[idx]);
+    patch.order = ord;
+    if (it.status !== status) patch.status = status;
+    it.order = ord; it.status = status;
+  } else {
+    if (it.status === status) return;       // priority mode: only status changes matter
+    patch.status = status;
+    it.status = status;
+  }
   renderBoard();
-  try { await api("PATCH", `/objects/issue/${guid}`, { priority }); }
+  if (state.openGuid === guid) refreshDrawer();
+  try { await api("PATCH", `/objects/issue/${guid}`, patch); }
   catch (e) { showErr(e.message); loadBoard().catch(() => {}); }
 }
 
-async function setAssignee(guid, userGuid) {
-  const it = state.issues.find(x => x._guid === guid);
-  if (it) it.assignee = userGuid ? state.usersById[userGuid] : null;   // optimistic
-  // if a filter is active a reassign may move the card out of view — reload
-  if (state.filterAssignee) { try { await api("PATCH", `/objects/issue/${guid}`, { assignee: userGuid }); await loadBoard(); } catch (e) { showErr(e.message); } return; }
-  renderBoard();
-  try { await api("PATCH", `/objects/issue/${guid}`, { assignee: userGuid }); }
-  catch (e) { showErr(e.message); loadBoard().catch(() => {}); }
+async function setArchived(guid, archived) {
+  return patchIssue(guid, { archived }, (it) => { it.archived = archived; });
+}
+
+async function deleteIssue(guid) {
+  try {
+    await api("DELETE", `/objects/issue/${guid}`);
+    state.issues = state.issues.filter(x => x._guid !== guid);
+    if (state.openGuid === guid) closeDetail();
+    renderBoard();
+  } catch (e) { showErr(e.message); }
+}
+
+/* ---- overlay helpers: Escape + focus trap, robust to where focus is ---- */
+function mountOverlay(node, onClose) {
+  const prevFocus = document.activeElement;
+  function onKey(e) {
+    if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+    if (e.key === "Tab") {
+      const f = node.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])');
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
+  document.addEventListener("keydown", onKey, true);
+  return function unmount() {
+    document.removeEventListener("keydown", onKey, true);
+    if (prevFocus && prevFocus.focus) try { prevFocus.focus(); } catch (_) {}
+  };
 }
 
 /* ---- popovers ---- */
@@ -676,6 +996,7 @@ function openPop(anchor, build) {
   closePop();
   const pop = document.createElement("div");
   pop.className = "pop";
+  pop.setAttribute("role", "menu");
   build(pop);
   document.body.appendChild(pop);
   const r = anchor.getBoundingClientRect();
@@ -688,64 +1009,376 @@ function openPop(anchor, build) {
   activePop = pop;
   setTimeout(() => document.addEventListener("mousedown", onDocDown, true), 0);
 }
+// a11y: each option is a menuitemradio with aria-checked; the ✓ glyph (and the
+// only "checkmark" a screen reader hears) is rendered for the selected one only.
+function popOption({ selected, html, onPick }) {
+  const b = document.createElement("button");
+  b.setAttribute("role", "menuitemradio");
+  b.setAttribute("aria-checked", selected ? "true" : "false");
+  if (selected) b.classList.add("sel");
+  b.innerHTML = html + (selected ? `<span class="chk" aria-hidden="true">✓</span>` : "");
+  b.onclick = onPick;
+  return b;
+}
 function openPriorityPop(anchor, it) {
   openPop(anchor, (pop) => {
     pop.innerHTML = `<div class="pop-title">Priority</div>`;
     for (const p of [...PRIO].reverse()) {
-      const b = document.createElement("button");
-      if (p.n === it.priority) b.classList.add("sel");
-      b.innerHTML = `${priorityIcon(p.n, 16)}<span>${p.label}</span><span class="chk">✓</span>`;
-      b.onclick = () => { closePop(); setPriority(it._guid, p.n); };
-      pop.appendChild(b);
+      pop.appendChild(popOption({
+        selected: p.n === it.priority,
+        html: `${priorityIcon(p.n, 16)}<span>${p.label}</span>`,
+        onPick: () => { closePop(); setPriority(it._guid, p.n); },
+      }));
     }
   });
 }
 function openAssigneePop(anchor, it) {
   openPop(anchor, (pop) => {
     pop.innerHTML = `<div class="pop-title">Assignee</div>`;
+    const cur = it.assignee ? it.assignee._guid : null;
     const mk = (user) => {
-      const b = document.createElement("button");
-      const cur = it.assignee ? it.assignee._guid : null;
-      if ((user?._guid || null) === cur) b.classList.add("sel");
-      b.appendChild(avatarEl(user));
+      const b = popOption({
+        selected: (user?._guid || null) === cur,
+        html: "",
+        onPick: () => { closePop(); setAssignee(it._guid, user ? user._guid : null); },
+      });
+      b.prepend(document.createElement("span"));   // placeholder; replace below
+      b.firstChild.replaceWith(avatarEl(user));
       const span = document.createElement("span");
       span.textContent = user ? user.name : "Unassigned";
-      b.appendChild(span);
-      const chk = document.createElement("span"); chk.className = "chk"; chk.textContent = "✓"; b.appendChild(chk);
-      b.onclick = () => { closePop(); setAssignee(it._guid, user ? user._guid : null); };
+      b.insertBefore(span, b.querySelector(".chk"));
       pop.appendChild(b);
     };
     mk(null);
     for (const u of state.users) mk(u);
   });
 }
+function openStatusPop(anchor, it) {
+  openPop(anchor, (pop) => {
+    pop.innerHTML = `<div class="pop-title">Status</div>`;
+    for (const s of STATUSES) {
+      pop.appendChild(popOption({
+        selected: s.id === it.status,
+        html: `${statusIcon(s.id, 16)}<span>${s.label}</span>`,
+        onPick: () => { closePop(); setStatus(it._guid, s.id); },
+      }));
+    }
+  });
+}
+
+/* ---- comments ---- */
+async function addComment(issueGuid, body) {
+  const created = new Date().toISOString();
+  const c = await api("POST", "/objects/comment", { body, created, issue: issueGuid });
+  const it = state.issues.find(x => x._guid === issueGuid);
+  if (it) { (it.comments = it.comments || []).push(c); }
+  renderBoard();
+  if (state.openGuid === issueGuid) refreshDrawer();
+  return c;
+}
+
+/* ---- issue detail drawer ---- */
+let drawerUnmount = null;
+function currentIssue() { return state.issues.find(x => x._guid === state.openGuid); }
+
+function openDetail(guid) {
+  closePop();
+  const it = state.issues.find(x => x._guid === guid);
+  if (!it) return;
+  state.openGuid = guid;
+  if (it.identifier) {
+    const want = "#" + encodeURIComponent(it.identifier);
+    if (location.hash !== want) history.replaceState(null, "", want);
+  }
+  renderDrawer();
+}
+
+function closeDetail() {
+  state.openGuid = null;
+  const ex = document.querySelector(".drawer-scrim");
+  if (ex) ex.remove();
+  if (drawerUnmount) { drawerUnmount(); drawerUnmount = null; }
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+}
+
+function refreshDrawer() { if (state.openGuid && document.querySelector(".drawer-scrim")) renderDrawer(true); }
+
+function renderDrawer(keepScroll) {
+  const it = currentIssue();
+  if (!it) { closeDetail(); return; }
+  const existing = document.querySelector(".drawer-scrim");
+  let prevScroll = 0, activeId = document.activeElement?.dataset?.field;
+  if (existing) { prevScroll = existing.querySelector(".dbody")?.scrollTop || 0; }
+
+  const scrim = existing || document.createElement("div");
+  if (!existing) {
+    scrim.className = "drawer-scrim";
+    scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) closeDetail(); });
+    document.body.appendChild(scrim);
+  }
+  scrim.innerHTML = "";
+
+  const drawer = document.createElement("div");
+  drawer.className = "drawer";
+  drawer.setAttribute("role", "dialog");
+  drawer.setAttribute("aria-modal", "true");
+  drawer.setAttribute("aria-label", `${it.identifier || "Issue"} details`);
+
+  // head
+  const head = document.createElement("div");
+  head.className = "dhead";
+  const statusBtn = document.createElement("button");
+  statusBtn.className = "iconbtn";
+  statusBtn.innerHTML = statusIcon(it.status, 17);
+  statusBtn.title = `Status: ${STATUS_BY_ID[it.status]?.label || it.status}`;
+  statusBtn.onclick = (e) => openStatusPop(e.currentTarget, it);
+  const ident = document.createElement("span");
+  ident.className = "ident";
+  ident.textContent = it.identifier || "";
+  const grow = Object.assign(document.createElement("span"), { className: "grow" });
+
+  const archiveBtn = document.createElement("button");
+  archiveBtn.className = "btn";
+  archiveBtn.textContent = it.archived ? "Unarchive" : "Archive";
+  archiveBtn.onclick = () => setArchived(it._guid, !it.archived);
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "btn danger";
+  delBtn.textContent = "Delete";
+  delBtn.onclick = () => { if (confirm(`Delete ${it.identifier}? This can't be undone.`)) deleteIssue(it._guid); };
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "iconbtn";
+  closeBtn.title = "Close";
+  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round"/></svg>`;
+  closeBtn.onclick = closeDetail;
+
+  head.append(statusBtn, ident, grow, archiveBtn, delBtn, closeBtn);
+  drawer.appendChild(head);
+
+  // body
+  const body = document.createElement("div");
+  body.className = "dbody";
+
+  const titleEl = document.createElement("textarea");
+  titleEl.className = "d-title";
+  titleEl.rows = 1;
+  titleEl.value = it.title;
+  titleEl.dataset.field = "title";
+  titleEl.setAttribute("aria-label", "Issue title");
+  const autoGrow = () => { titleEl.style.height = "auto"; titleEl.style.height = titleEl.scrollHeight + "px"; };
+  titleEl.addEventListener("input", autoGrow);
+  titleEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); titleEl.blur(); } });
+  titleEl.addEventListener("blur", () => {
+    const v = titleEl.value.trim();
+    if (!v) { titleEl.value = it.title; return; }
+    if (v !== it.title) patchIssue(it._guid, { title: v }, (x) => { x.title = v; });
+  });
+  body.appendChild(titleEl);
+  setTimeout(autoGrow, 0);
+
+  const descEl = document.createElement("textarea");
+  descEl.className = "d-desc";
+  descEl.placeholder = "Add a description…";
+  descEl.value = it.description || "";
+  descEl.dataset.field = "description";
+  descEl.setAttribute("aria-label", "Description");
+  descEl.addEventListener("blur", () => {
+    const v = descEl.value;
+    if (v !== (it.description || "")) patchIssue(it._guid, { description: v }, (x) => { x.description = v; });
+  });
+  body.appendChild(descEl);
+
+  // properties row
+  const props = document.createElement("div");
+  props.className = "d-props";
+  const statusProp = document.createElement("button");
+  statusProp.className = "d-prop";
+  statusProp.innerHTML = `${statusIcon(it.status, 15)}<span>${STATUS_BY_ID[it.status]?.label || it.status}</span>`;
+  statusProp.onclick = (e) => openStatusPop(e.currentTarget, it);
+  const prioProp = document.createElement("button");
+  prioProp.className = "d-prop";
+  prioProp.innerHTML = `${priorityIcon(it.priority, 15)}<span>${PRIO[it.priority]?.label || "—"}</span>`;
+  prioProp.onclick = (e) => openPriorityPop(e.currentTarget, it);
+  const assProp = document.createElement("button");
+  assProp.className = "d-prop";
+  assProp.appendChild(avatarEl(it.assignee));
+  assProp.appendChild(Object.assign(document.createElement("span"), { textContent: it.assignee ? it.assignee.name : "Unassigned" }));
+  assProp.onclick = (e) => openAssigneePop(e.currentTarget, it);
+  props.append(statusProp, prioProp, assProp);
+  body.appendChild(props);
+
+  body.appendChild(Object.assign(document.createElement("div"), { className: "d-divider" }));
+
+  // comments
+  const cTitle = document.createElement("div");
+  cTitle.className = "d-section-title";
+  const comments = (it.comments || []).slice().sort((a, b) => Date.parse(a.created || 0) - Date.parse(b.created || 0));
+  cTitle.textContent = `Comments · ${comments.length}`;
+  body.appendChild(cTitle);
+
+  const clist = document.createElement("div");
+  clist.className = "d-comments";
+  if (!comments.length) {
+    clist.appendChild(Object.assign(document.createElement("div"), { className: "footnote", textContent: "No comments yet." }));
+  }
+  for (const cm of comments) {
+    const wrap = document.createElement("div");
+    wrap.className = "d-comment";
+    const meta = document.createElement("div");
+    meta.className = "cmeta";
+    meta.textContent = relTime(cm.created) || "";
+    const cb = document.createElement("div");
+    cb.className = "cbody";
+    cb.textContent = cm.body || "";
+    wrap.append(meta, cb);
+    clist.appendChild(wrap);
+  }
+  body.appendChild(clist);
+
+  // add comment
+  const add = document.createElement("div");
+  add.className = "d-addcomment";
+  const ta = document.createElement("textarea");
+  ta.placeholder = "Leave a comment…  (⌘↵ to send)";
+  ta.setAttribute("aria-label", "Add a comment");
+  const row = document.createElement("div");
+  row.className = "row";
+  const send = document.createElement("button");
+  send.className = "btn primary";
+  send.textContent = "Comment";
+  send.disabled = true;
+  ta.addEventListener("input", () => { send.disabled = !ta.value.trim(); });
+  const doSend = async () => {
+    const v = ta.value.trim(); if (!v) return;
+    send.disabled = true; ta.disabled = true;
+    try { await addComment(it._guid, v); ta.value = ""; }
+    catch (e) { showErr(e.message); }
+    finally { ta.disabled = false; }
+  };
+  send.onclick = doSend;
+  ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSend(); } });
+  row.appendChild(send);
+  add.append(ta, row);
+  body.appendChild(add);
+
+  drawer.appendChild(body);
+  scrim.appendChild(drawer);
+
+  // restore scroll/focus on in-place re-render
+  body.scrollTop = prevScroll;
+  if (!existing) {
+    if (drawerUnmount) drawerUnmount();
+    drawerUnmount = mountOverlay(drawer, closeDetail);
+    setTimeout(() => titleEl.focus({ preventScroll: true }), 0);
+  } else if (activeId) {
+    const restore = drawer.querySelector(`[data-field="${activeId}"]`);
+    if (restore && !keepScroll) restore.focus({ preventScroll: true });
+  }
+}
+
+/* ---- command palette (client-side search) -------------------------------------
+   MorphDB has no full-text/multi-field/ranked search (title & description aren't
+   indexed), so this searches the issues already loaded for this team, by
+   identifier + title + description. Documented limitation. */
+function openPalette() {
+  closePop();
+  if (document.querySelector(".pal-scrim")) return;
+  const scrim = document.createElement("div");
+  scrim.className = "pal-scrim";
+  scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) close(); });
+
+  const pal = document.createElement("div");
+  pal.className = "palette";
+  pal.setAttribute("role", "dialog");
+  pal.setAttribute("aria-label", "Search issues");
+  const input = document.createElement("input");
+  input.placeholder = "Search issues by id, title, or description…";
+  input.setAttribute("aria-label", "Search issues");
+  const results = document.createElement("div");
+  results.className = "results";
+  const hint = document.createElement("div");
+  hint.className = "phint";
+  hint.innerHTML = `<span class="kbd">↑</span> <span class="kbd">↓</span> to navigate · <span class="kbd">↵</span> to open · <span class="kbd">esc</span> to close`;
+  pal.append(input, results, hint);
+  scrim.appendChild(pal);
+  document.body.appendChild(scrim);
+
+  const unmount = mountOverlay(pal, close);
+  let active = 0, matches = [];
+
+  function compute() {
+    const q = input.value.trim().toLowerCase();
+    const pool = state.issues.filter(it => !it.archived);
+    matches = !q ? pool.slice(0, 20) : pool.filter(it =>
+      (it.identifier || "").toLowerCase().includes(q) ||
+      (it.title || "").toLowerCase().includes(q) ||
+      (it.description || "").toLowerCase().includes(q)
+    ).slice(0, 30);
+    active = 0;
+    draw();
+  }
+  function draw() {
+    results.innerHTML = "";
+    if (!matches.length) {
+      results.appendChild(Object.assign(document.createElement("div"), { className: "empty", textContent: "No matching issues" }));
+      return;
+    }
+    matches.forEach((it, i) => {
+      const r = document.createElement("div");
+      r.className = "res" + (i === active ? " active" : "");
+      r.innerHTML = `${statusIcon(it.status, 14)}<span class="rid">${it.identifier || ""}</span><span class="rtitle"></span>`;
+      r.querySelector(".rtitle").textContent = it.title;
+      r.onmousemove = () => { if (active !== i) { active = i; draw(); } };
+      r.onclick = () => pick(it);
+      results.appendChild(r);
+    });
+  }
+  function pick(it) { close(); openDetail(it._guid); }
+  function close() { unmount(); scrim.remove(); }
+
+  input.addEventListener("input", compute);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (matches.length) { active = (active + 1) % matches.length; draw(); } }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (matches.length) { active = (active - 1 + matches.length) % matches.length; draw(); } }
+    else if (e.key === "Enter") { e.preventDefault(); if (matches[active]) pick(matches[active]); }
+  });
+  compute();
+  setTimeout(() => input.focus(), 0);
+}
 
 /* ---- new-issue modal ---- */
-function nextIdentifier() {
+async function maxIdentifierNumber() {
+  // Compute the next ENG-N over ALL issues for this team, NOT the filtered/board
+  // set — re-read from the server right before allocating so a filter being
+  // active can't mint a duplicate. (No backend uniqueness/sequence; see notes.)
   const key = state.team?.key || "ENG";
-  let max = 0;
-  for (const it of state.issues) {
+  let q = "/objects/issue?limit=1000";
+  if (state.team) q += `&team=${state.team._guid}`;
+  let rows = [];
+  try { rows = (await api("GET", q)).objects; }
+  catch (_) { rows = state.issues; }            // fall back to what we have
+  let max = 0, maxOrder = 0;
+  for (const it of rows) {
     const m = /-(\d+)$/.exec(it.identifier || "");
     if (m) max = Math.max(max, parseInt(m[1], 10));
+    maxOrder = Math.max(maxOrder, it.order || 0);
   }
-  return `${key}-${max + 1}`;
-}
-function nextOrder() {
-  let max = 0; for (const it of state.issues) max = Math.max(max, it.order || 0);
-  return max + 1;
+  return { key, num: max + 1, order: maxOrder + 1 };
 }
 
 function openModal(presetStatus) {
   closePop();
-  const nextId = nextIdentifier();
+  const previewKey = state.team?.key || "ENG";
   const scrim = document.createElement("div");
   scrim.className = "scrim";
   scrim.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="mhead"><span class="ic">${state.team?.key || "ENG"} ·</span><span class="ic" id="m_id">${nextId}</span></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="New issue">
+      <div class="mhead"><span class="ic">${previewKey} ·</span><span class="ic" id="m_id">new issue</span></div>
       <div class="mbody">
-        <input class="t" id="m_title" placeholder="Issue title" autocomplete="off" />
-        <textarea id="m_desc" placeholder="Add a description…"></textarea>
+        <input class="t" id="m_title" placeholder="Issue title" autocomplete="off" aria-label="Issue title" />
+        <textarea id="m_desc" placeholder="Add a description…" aria-label="Description"></textarea>
         <div class="mchips">
           <label class="field">Status
             <select id="m_status"></select></label>
@@ -759,10 +1392,11 @@ function openModal(presetStatus) {
         <span class="footnote">Stored via MorphDB's generic <code style="font-size:11px">/objects/issue</code> endpoint.</span>
         <span class="grow"></span>
         <button class="btn" id="m_cancel">Cancel</button>
-        <button class="btn primary" id="m_create">Create issue</button>
+        <button class="btn primary" id="m_create" disabled>Create issue</button>
       </div>
     </div>`;
   document.body.appendChild(scrim);
+  const modal = scrim.querySelector(".modal");
 
   const mStatus = scrim.querySelector("#m_status");
   for (const s of STATUSES) mStatus.appendChild(new Option(s.label, s.id));
@@ -777,52 +1411,83 @@ function openModal(presetStatus) {
   for (const u of state.users) mAss.appendChild(new Option(u.name, u._guid));
 
   const title = scrim.querySelector("#m_title");
+  const createBtn = scrim.querySelector("#m_create");
+  title.addEventListener("input", () => { createBtn.disabled = !title.value.trim(); });
   setTimeout(() => title.focus(), 30);
 
-  const close = () => scrim.remove();
+  const unmount = mountOverlay(modal, close);
+  function close() { unmount(); scrim.remove(); }
   scrim.querySelector("#m_cancel").onclick = close;
   scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) close(); });
-  scrim.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") close();
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
+  modal.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); create(); }
   });
 
   async function create() {
     const t = title.value.trim();
     if (!t) { title.focus(); return; }
-    const body = {
-      title: t,
-      description: scrim.querySelector("#m_desc").value.trim(),
-      status: mStatus.value,
-      priority: Number(mPrio.value),
-      identifier: nextIdentifier(),
-      order: nextOrder(),
-      assignee: mAss.value || null,
-    };
-    if (state.team) body.team = state.team._guid;
-    const btn = scrim.querySelector("#m_create");
-    btn.disabled = true; btn.textContent = "Creating…";
-    try { await api("POST", "/objects/issue", body); close(); await loadBoard(); }
-    catch (e) { showErr(e.message); btn.disabled = false; btn.textContent = "Create issue"; }
+    createBtn.disabled = true; createBtn.textContent = "Creating…";
+    try {
+      // serialize + re-read so concurrent local creates don't reuse an id/rank
+      const obj = await serialize(async () => {
+        const { key, num, order } = await maxIdentifierNumber();
+        const body = {
+          title: t,
+          description: scrim.querySelector("#m_desc").value.trim(),
+          status: mStatus.value,
+          priority: Number(mPrio.value),
+          identifier: `${key}-${num}`,
+          order, archived: false,
+          assignee: mAss.value || null,
+        };
+        if (state.team) body.team = state.team._guid;
+        return api("POST", "/objects/issue", body);
+      });
+      close();
+      await loadBoard();
+      if (obj?._guid) openDetail(obj._guid);
+    } catch (e) {
+      showErr(e.message);
+      createBtn.disabled = false; createBtn.textContent = "Create issue";
+    }
   }
-  scrim.querySelector("#m_create").onclick = create;
+  createBtn.onclick = create;
+}
+
+/* ---- deep link via URL hash ---- */
+async function syncFromHash() {
+  const h = decodeURIComponent((location.hash || "").replace(/^#/, "")).trim();
+  if (!h) { if (state.openGuid) closeDetail(); return; }
+  let it = state.issues.find(x => x.identifier === h || x._guid === h);
+  if (!it) {
+    try {
+      const res = await api("GET", `/objects/issue?identifier=${encodeURIComponent(h)}&include=assignee,comments&limit=1`);
+      it = res.objects[0];
+      if (it && !state.issues.find(x => x._guid === it._guid)) state.issues.push(it);
+    } catch (_) {}
+  }
+  if (it) openDetail(it._guid);
 }
 
 /* ---- wiring ---- */
 $("newBtn").onclick = () => openModal(null);
-$("filterAssignee").onchange = (e) => { state.filterAssignee = e.target.value; loadBoard().catch(err => showErr(err.message)); };
+$("searchBtn").onclick = openPalette;
+$("filterAssignee").onchange = (e) => { state.filterAssignee = e.target.value; renderBoard(); };
 $("sortSeg").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-sort]"); if (!b) return;
   state.sort = b.dataset.sort;
   for (const x of $("sortSeg").children) x.classList.toggle("on", x === b);
-  loadBoard().catch(err => showErr(err.message));
+  renderBoard();
 });
 window.addEventListener("keydown", (e) => {
-  if (e.key === "c" && !/input|textarea|select/i.test(document.activeElement.tagName) && !activePop) {
-    e.preventDefault(); openModal(null);
-  }
+  const typing = /input|textarea|select/i.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
+  if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) { e.preventDefault(); openPalette(); return; }
+  if (typing || activePop) return;
+  if (e.key === "c" && !document.querySelector(".scrim,.drawer-scrim,.pal-scrim")) { e.preventDefault(); openModal(null); }
+  if (e.key === "/" ) { e.preventDefault(); openPalette(); }
 });
 window.addEventListener("resize", closePop);
+window.addEventListener("hashchange", syncFromHash);
 
 /* ---- go ---- */
 (async () => {
@@ -831,6 +1496,7 @@ window.addEventListener("resize", closePop);
     await seedIfEmpty();
     await loadMeta();
     await loadBoard();
+    await syncFromHash();
   } catch (e) {
     showErr("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")");
   }

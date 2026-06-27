@@ -5,26 +5,78 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MorphDB Todo — example</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light dark; --accent: #3b82f6; }
   * { box-sizing: border-box; }
   body {
     font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    max-width: 640px; margin: 40px auto; padding: 0 16px;
+    max-width: 680px; margin: 40px auto; padding: 0 16px 80px;
+    overflow-wrap: anywhere;
   }
   h1 { font-size: 1.5rem; margin-bottom: 0; }
   .sub { color: #888; margin-top: 4px; }
-  .bar { display: flex; gap: 8px; margin: 20px 0; }
-  input[type=text] { flex: 1; padding: 10px 12px; border: 1px solid #8884; border-radius: 8px; font: inherit; }
-  select, button { padding: 10px 12px; border: 1px solid #8884; border-radius: 8px; font: inherit; background: #8881; cursor: pointer; }
-  button.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
-  ul { list-style: none; padding: 0; }
-  li { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #8883; border-radius: 8px; margin-bottom: 8px; }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 12px; }
+  input[type=text], input[type=search], input[type=date] {
+    padding: 10px 12px; border: 1px solid #8884; border-radius: 8px; font: inherit;
+    background: #fff1; min-width: 0;
+  }
+  #title { flex: 1 1 180px; }
+  #due { flex: 0 0 auto; }
+  select, button { padding: 10px 12px; border: 1px solid #8884; border-radius: 8px;
+    font: inherit; background: #8881; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button[disabled] { opacity: .5; cursor: default; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
+  #search { flex: 1 1 160px; }
+  .toolbar label { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+
+  .progress { display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; color: #888; font-size: 13px; }
+  .progress .track { flex: 1; height: 6px; border-radius: 999px; background: #8883; overflow: hidden; }
+  .progress .fill { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { display: flex; align-items: flex-start; gap: 10px; padding: 10px;
+    border: 1px solid #8883; border-radius: 8px; margin-bottom: 8px; background: #8880; }
+  li.dragging { opacity: .4; }
+  li.dragover { border-color: var(--accent); }
   li.done .title { text-decoration: line-through; color: #999; }
-  .title { flex: 1; }
-  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #8882; }
-  .del { color: #ef4444; border-color: #ef444466; }
-  .filters { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
-  .err { color: #ef4444; min-height: 1.4em; font-size: 13px; }
+  .handle { padding: 2px 4px; border: none; background: none; color: #999;
+    cursor: grab; font-size: 16px; line-height: 1.2; touch-action: none; }
+  li input[type=checkbox] { margin-top: 4px; flex: 0 0 auto; width: 18px; height: 18px; }
+  .main { flex: 1; min-width: 0; }
+  .row1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; cursor: pointer; }
+  .title { flex: 1; min-width: 0; }
+  .note-dot { color: #888; font-size: 12px; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #8882;
+    flex: 0 0 auto; }
+  .pill.p1 { background: #6b72801f; color: #6b7280; }
+  .pill.p2 { background: #f59e0b22; color: #b45309; }
+  .pill.p3 { background: #ef444422; color: #dc2626; }
+  .due { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: #8882; flex: 0 0 auto; }
+  .due.today { background: #3b82f622; color: #2563eb; }
+  .due.overdue { background: #ef444422; color: #dc2626; }
+  .del { color: #ef4444; border-color: #ef444466; flex: 0 0 auto; padding: 4px 9px; }
+
+  .detail { margin-top: 10px; display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid #8882; }
+  .detail label { display: grid; gap: 3px; font-size: 12px; color: #888; }
+  .detail input, .detail select, .detail textarea {
+    padding: 8px 10px; border: 1px solid #8884; border-radius: 6px; font: inherit; background: #fff1; }
+  .detail textarea { min-height: 56px; resize: vertical; }
+  .detail .danger { justify-self: start; color: #ef4444; border-color: #ef444466; }
+
+  .empty { justify-content: center; color: #999; }
+  .err { color: #ef4444; min-height: 1.4em; font-size: 13px; margin-top: 8px; }
+
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    background: #222; color: #fff; padding: 10px 14px; border-radius: 8px;
+    display: none; gap: 14px; align-items: center; box-shadow: 0 4px 16px #0006; z-index: 9; }
+  #toast button { background: none; border: none; color: #6db3ff; cursor: pointer; padding: 0; font: inherit; }
+
+  @media (max-width: 480px) {
+    body { margin: 20px auto; }
+    .row1 { gap: 6px; }
+  }
 </style>
 </head>
 <body>
@@ -32,8 +84,10 @@
   <div class="sub">A vibe-coded frontend with a real, morphable backend. No build step.</div>
 
   <div class="bar">
-    <input id="title" type="text" placeholder="What needs doing?" autofocus />
-    <select id="priority">
+    <input id="title" type="text" placeholder="What needs doing?" autofocus
+           aria-label="New task title" />
+    <input id="due" type="date" aria-label="Due date (optional)" title="Due date (optional)" />
+    <select id="priority" aria-label="Priority">
       <option value="1">Low</option>
       <option value="2" selected>Med</option>
       <option value="3">High</option>
@@ -41,18 +95,33 @@
     <button class="primary" id="add">Add</button>
   </div>
 
-  <div class="filters">
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="Search tasks…" aria-label="Search tasks" />
+    <select id="view" aria-label="View">
+      <option value="all">All</option>
+      <option value="today">Today</option>
+      <option value="upcoming">Upcoming</option>
+    </select>
     <label><input type="checkbox" id="hideDone" /> hide done</label>
-    <span style="flex:1"></span>
-    <select id="sort">
+    <select id="sort" aria-label="Sort">
+      <option value="manual">manual</option>
       <option value="_created_at">newest</option>
       <option value="priority">priority</option>
       <option value="title">title</option>
+      <option value="due">due date</option>
     </select>
   </div>
 
-  <div class="err" id="err"></div>
-  <ul id="list"></ul>
+  <div class="progress">
+    <span id="count">0 to do</span>
+    <span class="track"><span class="fill" id="fill"></span></span>
+    <span id="donecount">0 done</span>
+  </div>
+
+  <ul id="list" aria-label="Tasks"></ul>
+  <div class="err" id="err" role="alert"></div>
+
+  <div id="toast"><span id="toastmsg"></span><button id="undo">Undo</button></div>
 
 <script>
 const BASE = location.hostname
@@ -74,101 +143,330 @@ async function api(method, path, body) {
   return data;
 }
 
-// Self-bootstrapping: register this site's app, then ensure its schema exists.
-// Registering an app that already exists returns 409, which we ignore. This is
-// the recommended pattern — the site sets up its own backend on first load.
-async function ensureApp() {
+// Self-bootstrapping. We *probe* for the app's schema first (GET /schema/todo);
+// only if it's missing (404) do we POST /app — so a normal load never logs the
+// 409 "already registered" error. The schema PUT is an idempotent merge, so it
+// also rolls forward new fields (due, position, notes) on an existing app.
+async function ensureBackend() {
+  let exists = false;
   try {
+    const res = await fetch(BASE + "/schema/todo", { headers: { "X-App-Key": APP } });
+    exists = res.ok;
+  } catch (_) { /* surfaced by the schema PUT below */ }
+  if (!exists) {
     await fetch(BASE + "/app", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: APP }),
-    });             // 409 (already registered) is fine — we don't inspect it
-  } catch (_) { /* connection errors surface on the first real call below */ }
-}
-
-async function ensureSchema() {
-  // index the fields we sort/filter on (done, priority, title) — an un-indexed
-  // field is storage-only and a sort/filter on it is a 400. This is the same
-  // schema shipped as ./morphdb.schema.json (so `morphdb init` stands it up too).
+    }).catch(() => {});
+  }
   await api("PUT", "/schema/todo", {
     merge: true,
     fields: {
-      title:    { type: "string",  index: true },
-      done:     { type: "boolean", index: true },
-      priority: { type: "number",  index: true },
+      title:    { type: "string",   index: true },
+      done:     { type: "boolean",  index: true },
+      priority: { type: "number",   index: true },
+      due:      { type: "datetime", index: true },  // scheduling / Today / Upcoming / sort
+      position: { type: "number",   index: true },  // manual drag-reorder
+      notes:    { type: "string" },                 // free-form notes (un-indexed)
     },
   });
 }
 
+// ---- date helpers (compare by calendar date, timezone-agnostic) -------------
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const dueDate = (it) => (it.due ? String(it.due).slice(0, 10) : "");   // "YYYY-MM-DD" or ""
+const fmtDue = (s) => {
+  const t = todayStr();
+  if (s === t) return { text: "Today", cls: "today" };
+  if (s < t)   return { text: s.slice(5), cls: "overdue" };           // MM-DD
+  return { text: s.slice(5), cls: "" };
+};
+
+// ---- state ------------------------------------------------------------------
+let items = [];                 // current server result (search + sort applied)
+let expanded = null;            // guid of the open detail panel
+let adding = false;             // re-entry guard for Add
+let lastDeleted = null;         // snapshot for Undo
+let searchTimer = null;
+
+// ---- load / render ----------------------------------------------------------
 async function load() {
   err("");
   try {
     const sort = $("sort").value;
-    const order = sort === "priority" ? "desc" : (sort === "title" ? "asc" : "desc");
-    let q = `/objects/todo?sort=${sort}&order=${order}&limit=200`;
-    if ($("hideDone").checked) q += "&done=false";
+    let key = sort, order = "desc";
+    if (sort === "manual")      { key = "position";    order = "asc"; }
+    else if (sort === "title")  { key = "title";       order = "asc"; }
+    else if (sort === "due")    { key = "due";         order = "asc"; }
+    else if (sort === "priority"){ key = "priority";   order = "desc"; }
+    else                         { key = "_created_at"; order = "desc"; }
+
+    let q = `/objects/todo?sort=${key}&order=${order}&limit=200`;
+    const term = $("search").value.trim();
+    // Server-side, case-insensitive substring search (LIKE/ILIKE) on the indexed
+    // title — so "find" runs in the backend, not just in the browser.
+    if (term) q += `&title__contains=${encodeURIComponent(term)}`;
     const { objects } = await api("GET", q);
-    render(objects);
+    // `title` sort is byte-order server-side (case-sensitive); re-sort the page
+    // case-insensitively here so "apple pie" precedes "Zebra crossing".
+    if (sort === "title") objects.sort((a, b) =>
+      (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
+    items = objects;
+    render();
   } catch (e) { err(e.message); }
 }
 
-function render(items) {
+function visible() {
+  const view = $("view").value;
+  const t = todayStr();
+  return items.filter((it) => {
+    if ($("hideDone").checked && it.done) return false;
+    if (view === "all") return true;
+    const d = dueDate(it);
+    if (view === "today")    return d && d <= t;      // overdue + due today
+    if (view === "upcoming") return d && d > t;
+    return true;
+  });
+}
+
+function render() {
   const list = $("list");
   list.innerHTML = "";
-  if (!items.length) {
-    list.innerHTML = '<li style="justify-content:center;color:#999">Nothing yet. Add something above.</li>';
+
+  const active = items.filter((i) => !i.done).length;
+  const done = items.length - active;
+  $("count").textContent = `${active} to do`;
+  $("donecount").textContent = `${done} done`;
+  $("fill").style.width = items.length ? `${Math.round((done / items.length) * 100)}%` : "0";
+
+  const rows = visible();
+  if (!rows.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = items.length ? "No matching tasks." : "Nothing yet. Add something above.";
+    list.appendChild(li);
     return;
   }
-  const labels = { 1: "low", 2: "med", 3: "high" };
-  for (const it of items) {
+
+  const labels = { 1: "Low", 2: "Med", 3: "High" };
+  const dragOk = $("sort").value === "manual" && !$("search").value.trim();
+
+  for (const it of rows) {
     const li = document.createElement("li");
+    li.dataset.guid = it._guid;
     if (it.done) li.classList.add("done");
+
+    const handle = dragOk
+      ? `<button class="handle" aria-label="Drag to reorder" title="Drag to reorder">⠿</button>` : "";
+    const due = dueDate(it);
+    const db = due ? fmtDue(due) : null;
     li.innerHTML = `
+      ${handle}
       <input type="checkbox" ${it.done ? "checked" : ""} />
-      <span class="title"></span>
-      <span class="pill"></span>
-      <button class="del">✕</button>`;
+      <div class="main">
+        <div class="row1">
+          <span class="title"></span>
+          ${db ? `<span class="due ${db.cls}"></span>` : ""}
+          ${it.notes ? `<span class="note-dot" title="Has notes">🗒</span>` : ""}
+          <span class="pill p${it.priority || 2}"></span>
+        </div>
+      </div>
+      <button class="del" aria-label="Delete task">✕</button>`;
+
     li.querySelector(".title").textContent = it.title;
-    li.querySelector(".pill").textContent = labels[it.priority] || "med";
-    li.querySelector("input").onchange = (e) =>
-      update(it._guid, { done: e.target.checked });
-    li.querySelector(".del").onclick = () => remove(it._guid);
+    if (db) li.querySelector(".due").textContent = db.text;
+    li.querySelector(".pill").textContent = labels[it.priority] || "Med";
+    const cb = li.querySelector('input[type=checkbox]');
+    cb.setAttribute("aria-label", (it.done ? "Mark incomplete: " : "Mark complete: ") + it.title);
+    cb.onchange = (e) => mutate(it._guid, { done: e.target.checked });
+    li.querySelector(".del").setAttribute("aria-label", "Delete: " + it.title);
+    li.querySelector(".del").onclick = (e) => { e.stopPropagation(); remove(it); };
+    li.querySelector(".row1").onclick = (e) => {
+      if (e.target.closest(".handle")) return;
+      toggleDetail(it._guid);
+    };
+
+    if (expanded === it._guid) li.querySelector(".main").appendChild(buildDetail(it));
+    if (dragOk) wireDrag(li, it);
     list.appendChild(li);
   }
 }
 
+function buildDetail(it) {
+  const wrap = document.createElement("div");
+  wrap.className = "detail";
+  wrap.innerHTML = `
+    <label>Title
+      <input class="e-title" type="text" />
+    </label>
+    <label>Priority
+      <select class="e-prio">
+        <option value="1">Low</option><option value="2">Med</option><option value="3">High</option>
+      </select>
+    </label>
+    <label>Due date
+      <input class="e-due" type="date" />
+    </label>
+    <label>Notes
+      <textarea class="e-notes" placeholder="Add notes…"></textarea>
+    </label>
+    <button class="danger e-del">Delete task</button>`;
+
+  const tIn = wrap.querySelector(".e-title");
+  tIn.value = it.title || "";
+  wrap.querySelector(".e-prio").value = String(it.priority || 2);
+  wrap.querySelector(".e-due").value = dueDate(it);
+  wrap.querySelector(".e-notes").value = it.notes || "";
+
+  const saveTitle = () => {
+    const v = tIn.value.trim();
+    if (v && v !== it.title) mutate(it._guid, { title: v }); else tIn.value = it.title || "";
+  };
+  tIn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); tIn.blur(); }
+    if (e.key === "Escape") { tIn.value = it.title || ""; tIn.blur(); }
+  });
+  tIn.addEventListener("blur", saveTitle);
+  wrap.querySelector(".e-prio").onchange = (e) => mutate(it._guid, { priority: Number(e.target.value) });
+  wrap.querySelector(".e-due").onchange = (e) => mutate(it._guid, { due: e.target.value || null });
+  wrap.querySelector(".e-notes").addEventListener("blur", (e) => {
+    const v = e.target.value.trim();
+    if (v !== (it.notes || "")) mutate(it._guid, { notes: v || null });
+  });
+  wrap.querySelector(".e-del").onclick = () => remove(it);
+
+  // stop a click inside the panel from bubbling to the row's collapse handler
+  wrap.addEventListener("click", (e) => e.stopPropagation());
+  return wrap;
+}
+
+function toggleDetail(guid) {
+  expanded = expanded === guid ? null : guid;
+  location.hash = expanded ? `task-${guid}` : "";
+  render();
+  if (expanded) {
+    const el = $("list").querySelector(`li[data-guid="${guid}"] .e-title`);
+    if (el) el.focus();
+  }
+}
+
+// ---- drag-to-reorder (manual order via a fractional `position` field) -------
+let dragGuid = null;
+function wireDrag(li, it) {
+  li.draggable = true;
+  li.addEventListener("dragstart", (e) => {
+    dragGuid = it._guid; li.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+  });
+  li.addEventListener("dragend", () => { li.classList.remove("dragging"); dragGuid = null;
+    $("list").querySelectorAll(".dragover").forEach((n) => n.classList.remove("dragover")); });
+  li.addEventListener("dragover", (e) => { e.preventDefault(); li.classList.add("dragover"); });
+  li.addEventListener("dragleave", () => li.classList.remove("dragover"));
+  li.addEventListener("drop", (e) => {
+    e.preventDefault(); li.classList.remove("dragover");
+    if (dragGuid && dragGuid !== it._guid) dropBefore(dragGuid, it._guid);
+  });
+}
+
+// Place `movedGuid` immediately before `targetGuid` by giving it a position
+// midway between the target and its predecessor (fractional indexing — no full
+// renumber, one PATCH). Positions are global, so this is correct even when the
+// list is filtered/paginated. Not atomic: a concurrent reorder could collide
+// (see morphdb_limitations); we re-read the freshly ordered list afterward.
+function dropBefore(movedGuid, targetGuid) {
+  const ordered = [...items].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  const ti = ordered.findIndex((o) => o._guid === targetGuid);
+  if (ti < 0) return;
+  const target = ordered[ti];
+  const prev = ordered[ti - 1];
+  const before = prev ? (prev.position ?? 0) : (target.position ?? 0) - 2000;
+  const after = target.position ?? 0;
+  const pos = (before + after) / 2;
+  mutate(movedGuid, { position: pos });
+}
+
+// ---- mutations (serialized: each write is followed by a re-read) ------------
+let writing = Promise.resolve();
+function mutate(guid, patch) {
+  writing = writing.then(async () => {
+    try { await api("PATCH", `/objects/todo/${guid}`, patch); await load(); }
+    catch (e) { err(e.message); }
+  });
+  return writing;
+}
+
 async function add() {
+  if (adding) return;                       // re-entry guard against double-submit
   const title = $("title").value.trim();
   if (!title) return;
+  adding = true; $("add").disabled = true;
   try {
+    const maxPos = items.reduce((m, i) => Math.max(m, i.position ?? 0), 0);
+    const due = $("due").value || null;
     await api("POST", "/objects/todo", {
       title, done: false, priority: Number($("priority").value),
+      due, position: maxPos + 1000,
     });
     $("title").value = "";
-    load();
+    $("due").value = "";
+    $("priority").value = "2";              // reset to default (don't stick to last)
+    await load();
+    $("title").focus();
+  } catch (e) { err(e.message); }
+  finally { adding = false; $("add").disabled = false; }
+}
+
+async function remove(it) {
+  try {
+    await api("DELETE", `/objects/todo/${it._guid}`);
+    lastDeleted = { title: it.title, done: !!it.done, priority: it.priority ?? 2,
+      due: it.due ? dueDate(it) : null, notes: it.notes || null, position: it.position ?? 0 };
+    showToast(`Deleted "${it.title}"`);
+    if (expanded === it._guid) { expanded = null; location.hash = ""; }
+    await load();
   } catch (e) { err(e.message); }
 }
 
-async function update(guid, patch) {
-  try { await api("PATCH", `/objects/todo/${guid}`, patch); load(); }
-  catch (e) { err(e.message); }
+// ---- undo (re-creates the task — a *new* _guid; see morphdb_limitations) ----
+let toastTimer = null;
+function showToast(msg) {
+  $("toastmsg").textContent = msg;
+  $("toast").style.display = "flex";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $("toast").style.display = "none"; lastDeleted = null; }, 7000);
 }
-
-async function remove(guid) {
-  try { await api("DELETE", `/objects/todo/${guid}`); load(); }
+$("undo").onclick = async () => {
+  if (!lastDeleted) return;
+  const snap = lastDeleted; lastDeleted = null;
+  $("toast").style.display = "none";
+  try { await api("POST", "/objects/todo", snap); await load(); }
   catch (e) { err(e.message); }
-}
+};
 
+// ---- wiring -----------------------------------------------------------------
 $("add").onclick = add;
 $("title").addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
-$("hideDone").onchange = load;
+$("due").addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+$("hideDone").onchange = render;
+$("view").onchange = render;
 $("sort").onchange = load;
+$("search").addEventListener("input", () => {
+  clearTimeout(searchTimer); searchTimer = setTimeout(load, 200);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && expanded) { expanded = null; location.hash = ""; render(); }
+});
 
 (async () => {
-  try { await ensureApp(); await ensureSchema(); }
+  try { await ensureBackend(); }
   catch (e) { err("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")"); return; }
-  load();
+  const m = location.hash.match(/^#task-(.+)$/);
+  if (m) expanded = m[1];                   // deep-link: open a task's detail
+  await load();
 })();
 </script>
 </body>

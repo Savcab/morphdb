@@ -7,7 +7,10 @@
       "fields": {
         "title": { "type": "string", "index": true },
         "done": { "type": "boolean", "index": true },
-        "priority": { "type": "number", "index": true }
+        "priority": { "type": "number", "index": true },
+        "due": { "type": "datetime", "index": true },
+        "position": { "type": "number", "index": true },
+        "notes": { "type": "string" }
       },
       "relations": {}
     }

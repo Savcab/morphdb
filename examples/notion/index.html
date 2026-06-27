@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MorphDB · Noted — a Notion-style example</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='20'%3E%F0%9F%93%93%3C/text%3E%3C/svg%3E" />
 <style>
   :root {
     color-scheme: light dark;
@@ -236,6 +237,76 @@
     box-shadow: 0 6px 20px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 80; max-width: 80vw;
   }
   .toast.show { opacity: 1; }
+  .toast.info { background: #2f2f2c; }
+  .toast .toast-undo { margin-left: 12px; background: rgba(255,255,255,.2); border: none; color: #fff;
+    padding: 3px 10px; border-radius: 6px; cursor: pointer; pointer-events: auto; font-size: 12.5px; }
+
+  /* ---------- Inline formatting (stored as markdown in the block text) ---------- */
+  .ce code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em;
+    background: var(--callout-bg); border: 1px solid var(--callout-border); border-radius: 4px; padding: .5px 5px; }
+  .ce strong { font-weight: 650; }
+  .ce s { color: var(--muted); }
+
+  /* ---------- Extra block types ---------- */
+  .kind-bullet .content, .kind-numbered .content { display: flex; align-items: flex-start; gap: 8px; }
+  .blk-marker { flex: 0 0 auto; color: var(--text); user-select: none; padding-top: 3px; min-width: 18px;
+    text-align: right; font-variant-numeric: tabular-nums; }
+  .kind-bullet .blk-marker { font-size: 20px; line-height: 1; padding-top: 4px; }
+  .kind-bullet .ce, .kind-numbered .ce { flex: 1; min-width: 0; }
+  .kind-code .content { padding: 3px 0; }
+  .ce.code, .code-pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13.5px;
+    background: var(--callout-bg); border: 1px solid var(--callout-border); border-radius: 8px;
+    padding: 12px 14px; white-space: pre-wrap; line-height: 1.45; tab-size: 2;
+  }
+  .kind-image .content { padding: 4px 0; }
+  .kind-image img { max-width: 100%; border-radius: 8px; display: block; }
+  .img-empty { color: var(--faint); border: 1px dashed var(--border); border-radius: 8px; padding: 14px;
+    cursor: pointer; text-align: center; font-size: 13.5px; }
+  /* Toggle: a caret + summary; the body lives in following indented sibling blocks is not modeled,
+     so a toggle hides/shows its own folded note text on the same block. */
+  .kind-toggle .content { display: flex; align-items: flex-start; gap: 6px; }
+  .toggle-caret { flex: 0 0 18px; width: 18px; height: 22px; border: none; background: none; cursor: pointer;
+    color: var(--muted); display: grid; place-items: center; padding: 0; }
+  .toggle-caret svg { width: 12px; height: 12px; transition: transform .12s; }
+  .toggle-caret.open svg { transform: rotate(90deg); }
+  .kind-toggle .ce { flex: 1; min-width: 0; }
+
+  /* ---------- Drag-to-reorder ---------- */
+  .block.dragging { opacity: .4; }
+  .block.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+  .block.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+  .gbtn.handle { cursor: grab; }
+
+  /* ---------- Mobile sidebar toggle ---------- */
+  .menu-btn { display: none; border: none; background: none; padding: 5px 8px; border-radius: 6px;
+    cursor: pointer; color: var(--muted); }
+  .menu-btn svg { width: 20px; height: 20px; }
+  .menu-btn:hover { background: var(--hover); color: var(--text); }
+  .scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 40; }
+
+  /* ---------- Emoji picker search ---------- */
+  .emoji-search { width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 8px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+  .emoji-remove { width: 100%; text-align: left; margin-top: 4px; }
+
+  @media (max-width: 760px) {
+    .menu-btn { display: grid; place-items: center; }
+    .sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0; z-index: 50; width: 84vw; max-width: 300px;
+      transform: translateX(-102%); transition: transform .18s ease; box-shadow: 0 0 40px rgba(0,0,0,.25);
+    }
+    .app.nav-open .sidebar { transform: translateX(0); }
+    .app.nav-open .scrim { display: block; }
+    .doc { padding: 8px 18px 40vh; }
+    .doc-title { font-size: 30px; min-height: 36px; }
+    .doc-icon { font-size: 52px; }
+    .block { grid-template-columns: 0 1fr; }
+    .gutter { display: none; }
+    .addblock { margin-left: 0; }
+    .crumb { max-width: 130px; }
+  }
+  .doc-title, .ce, .rtitle, .crumb { overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -264,6 +335,7 @@
     <div id="doc" class="doc"></div>
   </main>
 </div>
+<div class="scrim" id="scrim"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -288,9 +360,20 @@ async function api(method, path, body) {
 let toastTimer;
 function showErr(msg) {
   if (/unknown app|no such app/i.test(msg || "")) { showBanner(); return; }
-  const t = $("toast"); t.textContent = msg || "Something went wrong";
+  const t = $("toast"); t.className = "toast"; t.textContent = msg || "Something went wrong";
   t.classList.add("show"); clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 3800);
+}
+// Notion-style "Deleted — Undo" affordance (no native confirm, restorable).
+function showUndo(msg, onUndo) {
+  const t = $("toast"); t.className = "toast info show";
+  t.textContent = msg + " ";
+  const btn = document.createElement("button");
+  btn.className = "toast-undo"; btn.textContent = "Undo";
+  btn.onclick = () => { t.classList.remove("show"); clearTimeout(toastTimer); onUndo(); };
+  t.appendChild(btn);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 7000);
 }
 function showBanner() {
   const b = $("banner");
@@ -301,12 +384,18 @@ function showBanner() {
 
 /* ---------- Self-bootstrap (in-browser `morphdb init`) ---------- */
 async function ensureApp() {
+  // Probe first so a normal load (app already registered) makes NO failing call:
+  // GET /schema returns 404 only when the app is unknown. We POST /app solely in
+  // that case, so the console stays clean (no red 409 on every visit).
   try {
+    const probe = await fetch(BASE + "/schema", { headers: { "X-App-Key": APP } });
+    if (probe.ok) return;                       // app exists — nothing to do
+    if (probe.status !== 404) return;           // 400/5xx: surfaced by the first real call
     await fetch(BASE + "/app", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: APP }),
-    }); // 409 (already registered) is fine — we don't inspect it
+    });
   } catch (_) { /* connection errors surface on the first real call */ }
 }
 async function ensureSchema() {
@@ -374,28 +463,57 @@ async function seedIfEmpty() {
 const state = {
   pages: [], byId: {}, childrenMap: {}, roots: [],
   expanded: new Set(), currentPageGuid: null, blocks: [], focusGuid: null,
+  focusOffset: null,           // where to place the caret in the focused block ("end" | number)
+  toggles: new Set(),          // open/closed state of toggle blocks (session-local)
 };
 const PH = {
   text: "Type '/' for commands", h1: "Heading 1", h2: "Heading 2",
   todo: "To-do", quote: "Empty quote", callout: "Type something…", divider: "",
+  bullet: "List", numbered: "List", toggle: "Toggle", code: "Code", image: "",
 };
 // "Turn into" handle menu. kind/icon/name. (kind is a free-form string — no schema change.)
 const KINDS = [
   ["text", "¶", "Text"], ["h1", "H₁", "Heading 1"], ["h2", "H₂", "Heading 2"],
-  ["todo", "☑", "To-do list"], ["quote", "❝", "Quote"], ["callout", "💡", "Callout"],
-  ["divider", "—", "Divider"],
+  ["bullet", "•", "Bulleted list"], ["numbered", "1.", "Numbered list"],
+  ["todo", "☑", "To-do list"], ["toggle", "▸", "Toggle list"],
+  ["quote", "❝", "Quote"], ["callout", "💡", "Callout"],
+  ["code", "‹›", "Code"], ["divider", "—", "Divider"],
 ];
 // Slash menu: kind/icon/name/description/keywords (extra search terms).
 const SLASH = [
   ["text", "¶", "Text", "Just start writing with plain text.", "plain paragraph body"],
   ["h1", "H₁", "Heading 1", "Big section heading.", "h1 title large"],
   ["h2", "H₂", "Heading 2", "Medium section heading.", "h2 subtitle"],
+  ["bullet", "•", "Bulleted list", "Create a simple bulleted list.", "bullet unordered ul dot"],
+  ["numbered", "1.", "Numbered list", "Create a list with numbering.", "number ordered ol"],
   ["todo", "☑", "To-do list", "Track tasks with a checkbox.", "todo checkbox task check"],
+  ["toggle", "▸", "Toggle list", "Collapsible toggle to hide content.", "toggle collapse fold details"],
   ["quote", "❝", "Quote", "Capture a quote.", "blockquote"],
   ["callout", "💡", "Callout", "Make writing stand out in a box.", "callout note info tip"],
+  ["code", "‹›", "Code", "Capture a code snippet.", "code snippet monospace pre"],
+  ["image", "🖼", "Image", "Embed an image by URL.", "image picture photo img embed"],
   ["divider", "—", "Divider", "Visually divide blocks.", "divider hr line separator rule"],
 ];
-const EMOJIS = "📄 📝 📓 📔 📕 📗 📘 📙 🗒️ 📋 ✅ 🚀 🎯 💡 🔥 ⭐ 🌱 🧩 🛠️ 🧠 📊 📈 💬 📌 🗂️ 🔖 🏷️ 🧪 🎨 🎵 ☕ 🌍 🏆 ❤️ ⚡ 🔭".split(" ");
+const EMOJIS = ("📄 📝 📓 📔 📕 📗 📘 📙 🗒️ 📋 ✅ 🚀 🎯 💡 🔥 ⭐ 🌱 🧩 🛠️ 🧠 📊 📈 💬 📌 🗂️ 🔖 🏷️ " +
+  "🧪 🎨 🎵 ☕ 🌍 🏆 ❤️ ⚡ 🔭 🐛 🔧 📦 🗓️ ⏰ 🔔 🎉 🌟 💼 🏠 🧭 🪐 🌈 🍀 🐱 🐶 🦊 🐢 " +
+  "🍎 🍕 🥑 ⚽ 🎸 ✏️ 📚 💻 🖥️ ⌨️ 🔑 🔒 ✨ 💎").split(" ").filter(Boolean);
+// Searchable names so the picker has more than a fixed unlabeled grid.
+const EMOJI_NAMES = {
+  "📄":"page document file","📝":"memo note write","📓":"notebook","📔":"journal","📕":"book red",
+  "📗":"book green","📘":"book blue","📙":"book orange","🗒️":"notepad list","📋":"clipboard",
+  "✅":"check done complete","🚀":"rocket launch ship","🎯":"target goal dart","💡":"idea bulb tip light",
+  "🔥":"fire hot","⭐":"star","🌱":"seedling growth plant","🧩":"puzzle piece","🛠️":"tools build",
+  "🧠":"brain mind","📊":"chart bar stats","📈":"chart up growth","💬":"chat comment talk",
+  "📌":"pin","🗂️":"folders organize","🔖":"bookmark tag","🏷️":"label tag","🧪":"experiment test lab",
+  "🎨":"art design paint","🎵":"music note","☕":"coffee tea","🌍":"earth world globe","🏆":"trophy win",
+  "❤️":"heart love","⚡":"lightning bolt fast","🔭":"telescope explore","🐛":"bug issue","🔧":"wrench fix",
+  "📦":"package box ship","🗓️":"calendar date","⏰":"clock alarm time","🔔":"bell notify","🎉":"party celebrate",
+  "🌟":"sparkle star","💼":"briefcase work","🏠":"home house","🧭":"compass navigate","🪐":"planet space",
+  "🌈":"rainbow","🍀":"clover luck","🐱":"cat","🐶":"dog","🦊":"fox","🐢":"turtle","🍎":"apple food",
+  "🍕":"pizza food","🥑":"avocado food","⚽":"soccer ball sport","🎸":"guitar music","✏️":"pencil edit write",
+  "📚":"books library","💻":"laptop code","🖥️":"desktop computer","⌨️":"keyboard","🔑":"key access",
+  "🔒":"lock secure private","✨":"sparkles","💎":"gem diamond",
+};
 
 const ICONS = {
   caretR: '<svg viewBox="0 0 12 12" fill="currentColor"><path d="M4 2.5l4 3.5-4 3.5z"/></svg>',
@@ -403,7 +521,83 @@ const ICONS = {
   grip: '<svg viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></svg>',
   trash: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5h10M6.5 4V3h3v1M5 4.5l.6 8h4.8l.6-8"/></svg>',
   plus: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
+  menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
 };
+
+/* ---------- Serialized writes ----------
+   MorphDB has no atomic reorder / insert-at-position primitive, so every insert
+   or move is a read-modify-write the client performs. Running them concurrently
+   raced (rapid Enter once produced five blocks sharing order=2). We fix it two
+   ways: (1) ALL ordering mutations go through this promise queue so they apply
+   one-at-a-time against fresh in-memory state, and (2) we order blocks by a
+   FRACTIONAL index (midpoint between neighbours) so an insert never has to
+   renumber siblings — it writes exactly one new `order`. */
+let writeChain = Promise.resolve();
+function serialize(fn) {
+  const run = writeChain.then(fn, fn);
+  writeChain = run.catch(() => {});
+  return run;
+}
+// A spread-out order so there's always room to insert a midpoint between two.
+const ORDER_STEP = 1000;
+function orderBetween(prev, next) {
+  if (prev == null && next == null) return 0;
+  if (prev == null) return next - ORDER_STEP;
+  if (next == null) return prev + ORDER_STEP;
+  return (prev + next) / 2;
+}
+
+/* ---------- Inline markdown (survives reload) ----------
+   contentEditable shows rendered rich text; we persist it as lightweight
+   markdown in the block's `text` field. Cmd+B/I/E therefore round-trips instead
+   of silently vanishing on save. */
+function escHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function mdToHtml(md) {
+  if (!md) return "";
+  const codes = [];
+  let s = escHtml(md);
+  s = s.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return `${codes.length - 1}`; });
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/~~([^~\n]+)~~/g, "<s>$1</s>");
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  s = s.replace(/(\d+)/g, (m, i) => `<code>${codes[+i]}</code>`);
+  s = s.replace(/\n/g, "<br>");
+  return s;
+}
+function htmlToMd(node) {
+  let out = "";
+  node.childNodes.forEach((n) => {
+    if (n.nodeType === 3) { out += n.nodeValue; return; }
+    if (n.nodeType !== 1) return;
+    const tag = n.tagName, inner = htmlToMd(n);
+    if (tag === "BR") out += "\n";
+    else if (tag === "STRONG" || tag === "B") out += inner ? "**" + inner + "**" : "";
+    else if (tag === "EM" || tag === "I") out += inner ? "*" + inner + "*" : "";
+    else if (tag === "CODE") out += inner ? "`" + inner + "`" : "";
+    else if (tag === "S" || tag === "STRIKE" || tag === "DEL") out += inner ? "~~" + inner + "~~" : "";
+    else if (tag === "DIV" || tag === "P") { if (out && !out.endsWith("\n")) out += "\n"; out += inner; }
+    else out += inner;
+  });
+  return out;
+}
+// Plain text that keeps line breaks (<br>/<div> -> "\n") for code blocks.
+function textWithBreaks(node) {
+  let out = "";
+  node.childNodes.forEach((n) => {
+    if (n.nodeType === 3) { out += n.nodeValue; return; }
+    if (n.nodeType !== 1) return;
+    if (n.tagName === "BR") { out += "\n"; return; }
+    if (n.tagName === "DIV" && out && !out.endsWith("\n")) out += "\n";
+    out += textWithBreaks(n);
+  });
+  return out;
+}
+// The block text as stored: markdown for rich blocks, raw text for code blocks.
+function readEditable(b, d) {
+  return b.kind === "code" ? textWithBreaks(d) : htmlToMd(d);
+}
 
 /* ---------- Tree / sidebar ---------- */
 async function loadTree() {
@@ -473,10 +667,21 @@ function toggleExpand(guid) {
 async function selectPage(guid, focusTitle) {
   closeMenu();
   state.currentPageGuid = guid;
+  // Deep-link the open page in the URL hash so reload / share restores it.
+  if (guid && location.hash.slice(1) !== guid) {
+    suppressHash = true; location.hash = guid;
+  }
+  document.querySelector(".app").classList.remove("nav-open");  // close mobile drawer
   renderSidebar();
   await loadDoc(guid);
   if (focusTitle) { const t = document.querySelector(".doc-title"); if (t) placeCaretEnd(t); }
 }
+let suppressHash = false;
+window.addEventListener("hashchange", () => {
+  if (suppressHash) { suppressHash = false; return; }
+  const g = location.hash.slice(1);
+  if (g && state.byId[g] && g !== state.currentPageGuid) selectPage(g);
+});
 
 async function loadDoc(guid) {
   try {
@@ -496,8 +701,16 @@ function crumbsFor(guid) {
   return arr;
 }
 
+function menuButton() {
+  const mb = document.createElement("button");
+  mb.className = "menu-btn"; mb.title = "Menu"; mb.innerHTML = ICONS.menu;
+  mb.onclick = (e) => { e.stopPropagation(); document.querySelector(".app").classList.toggle("nav-open"); };
+  return mb;
+}
+
 function renderTopbar() {
   const bar = $("topbar"); bar.innerHTML = "";
+  bar.appendChild(menuButton());
   if (!state.currentPageGuid) return;
   const crumbs = document.createElement("div"); crumbs.className = "crumbs";
   const chain = crumbsFor(state.currentPageGuid);
@@ -545,7 +758,13 @@ function renderDoc() {
   };
 
   const blocks = document.createElement("div"); blocks.className = "blocks";
-  for (const b of state.blocks) blocks.appendChild(blockEl(b));
+  // Numbered lists count client-side (no aggregation endpoint): a run of
+  // consecutive "numbered" blocks restarts at 1 whenever the kind breaks.
+  let n = 0;
+  for (const b of state.blocks) {
+    n = b.kind === "numbered" ? n + 1 : 0;
+    blocks.appendChild(blockEl(b, n));
+  }
 
   const add = document.createElement("div");
   add.className = "addblock";
@@ -556,7 +775,7 @@ function renderDoc() {
 }
 
 function renderEmptyDoc() {
-  $("topbar").innerHTML = "";
+  const bar = $("topbar"); bar.innerHTML = ""; bar.appendChild(menuButton());
   $("doc").innerHTML =
     `<div class="doc-empty"><div class="big">🗂️</div>` +
     `<div>No page selected.</div>` +
@@ -566,7 +785,7 @@ function renderEmptyDoc() {
 }
 
 /* ---------- Block element ---------- */
-function blockEl(b) {
+function blockEl(b, num) {
   const wrap = document.createElement("div");
   wrap.className = "block kind-" + b.kind + (b.kind === "todo" && b.checked ? " checked" : "");
   wrap.dataset.guid = b._guid;
@@ -574,20 +793,48 @@ function blockEl(b) {
   const gutter = document.createElement("div"); gutter.className = "gutter";
   const plus = document.createElement("button");
   plus.className = "gbtn plus"; plus.textContent = "+"; plus.title = "Add block below";
+  plus.tabIndex = -1;                              // keep Tab in the editor, not on the gutter
   plus.onclick = (e) => { e.stopPropagation(); addBlockAfter(b._guid); };
   const handle = document.createElement("button");
-  handle.className = "gbtn handle"; handle.innerHTML = ICONS.grip; handle.title = "Options";
+  handle.className = "gbtn handle"; handle.innerHTML = ICONS.grip; handle.title = "Drag to move · click for options";
+  handle.tabIndex = -1;
   handle.onclick = (e) => { e.stopPropagation(); openBlockMenu(b, handle); };
+  wireDrag(handle, wrap, b);
   gutter.append(plus, handle);
 
   const content = document.createElement("div"); content.className = "content";
   if (b.kind === "divider") {
     content.appendChild(document.createElement("hr"));
+  } else if (b.kind === "image") {
+    if (b.text) {
+      const img = document.createElement("img");
+      img.src = b.text; img.alt = ""; img.onerror = () => { img.replaceWith(imgPlaceholder(b)); };
+      content.appendChild(img);
+    } else {
+      content.appendChild(imgPlaceholder(b));
+    }
   } else if (b.kind === "todo") {
     const cb = document.createElement("input");
-    cb.type = "checkbox"; cb.className = "todobox"; cb.checked = !!b.checked;
+    cb.type = "checkbox"; cb.className = "todobox"; cb.checked = !!b.checked; cb.tabIndex = -1;
     cb.onchange = () => toggleChecked(b._guid, cb.checked);
     content.append(cb, editable(b));
+  } else if (b.kind === "bullet") {
+    const m = document.createElement("span"); m.className = "blk-marker"; m.textContent = "•";
+    content.append(m, editable(b));
+  } else if (b.kind === "numbered") {
+    const m = document.createElement("span"); m.className = "blk-marker"; m.textContent = (num || 1) + ".";
+    content.append(m, editable(b));
+  } else if (b.kind === "toggle") {
+    const car = document.createElement("button"); car.className = "toggle-caret"; car.tabIndex = -1;
+    car.innerHTML = ICONS.caretR;
+    const open = state.toggles.has(b._guid);
+    car.classList.toggle("open", open);
+    car.onclick = (e) => {
+      e.stopPropagation();
+      if (state.toggles.has(b._guid)) state.toggles.delete(b._guid); else state.toggles.add(b._guid);
+      renderDoc();
+    };
+    content.append(car, editable(b));
   } else if (b.kind === "callout") {
     const box = document.createElement("div"); box.className = "callout-box";
     const em = document.createElement("span"); em.className = "callout-emoji"; em.textContent = "💡";
@@ -600,75 +847,209 @@ function blockEl(b) {
   return wrap;
 }
 
+function imgPlaceholder(b) {
+  const ph = document.createElement("div"); ph.className = "img-empty";
+  ph.textContent = "🖼  Add an image — click to paste a URL";
+  ph.onclick = () => {
+    const url = prompt("Image URL:", b.text || "");
+    if (url == null) return;
+    b.text = url.trim();
+    serialize(async () => { await patchBlock(b._guid, { text: b.text }); await loadDoc(state.currentPageGuid); });
+  };
+  return ph;
+}
+
 function editable(b) {
   const d = document.createElement("div");
   d.className = "ce " + b.kind; d.contentEditable = "true"; d.spellcheck = false;
   d.dataset.ph = PH[b.kind] || "";
-  d.textContent = b.text || "";
+  if (b.kind === "code") d.textContent = b.text || "";
+  else d.innerHTML = mdToHtml(b.text || "");
   d.onblur = () => {
-    const t = d.textContent;
+    const t = readEditable(b, d);
     if (t !== (b.text || "")) { b.text = t; patchBlock(b._guid, { text: t }); }
   };
-  d.oninput = () => detectSlash(b, d);
+  d.oninput = () => { if (b.kind === "code") return; detectMarkdown(b, d); detectSlash(b, d); };
   d.onkeydown = (e) => onBlockKey(e, b, d);
   if (state.focusGuid === b._guid) {
     state.focusGuid = null;
-    requestAnimationFrame(() => placeCaretEnd(d));
+    const off = state.focusOffset; state.focusOffset = null;
+    requestAnimationFrame(() => {
+      if (off == null || off === "end") placeCaretEnd(d);
+      else placeCaretAt(d, off);
+    });
   }
   return d;
 }
 
 // kinds whose Enter continues the same kind (list-like). Everything else → text.
-const LIST_KINDS = new Set(["todo"]);
+const LIST_KINDS = new Set(["todo", "bullet", "numbered"]);
 
 function onBlockKey(e, b, d) {
   // When the slash menu is open on this block, let it own the nav keys.
   if (slashState && slashState.guid === b._guid && handleSlashKey(e)) return;
 
+  // Inline formatting — round-trips as markdown, so it survives reload.
+  if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (b.kind === "code") return;                  // code blocks are literal
+    if (k === "b") { e.preventDefault(); applyFormat(d, b, "bold"); return; }
+    if (k === "i") { e.preventDefault(); applyFormat(d, b, "italic"); return; }
+    if (k === "e") { e.preventDefault(); applyFormat(d, b, "code"); return; }
+    if (k === "s" && e.shiftKey) { e.preventDefault(); applyFormat(d, b, "strike"); return; }
+  }
+
   if (e.key === "Enter" && !e.shiftKey) {
+    // In a code block, Enter inserts a newline (it's literal text), not a new block.
+    if (b.kind === "code") return;
     e.preventDefault();
-    const t = d.textContent;
+    const atEnd = caretAtEnd(d);
     (async () => {
       try {
+        const cur = readEditable(b, d);
         // Enter on an EMPTY list item exits the list: turn it into a plain text block.
-        if (LIST_KINDS.has(b.kind) && t === "") { await changeKind(b._guid, "text"); return; }
-        if (t !== (b.text || "")) { b.text = t; await api("PATCH", `/objects/block/${b._guid}`, { text: t }); }
-        // New block inherits the kind for list-like blocks; otherwise plain text.
-        await addBlockAfter(b._guid, LIST_KINDS.has(b.kind) ? b.kind : "text");
+        if (LIST_KINDS.has(b.kind) && cur === "") { b.text = ""; await changeKind(b._guid, "text"); return; }
+        const contKind = LIST_KINDS.has(b.kind) ? b.kind : "text";
+        if (atEnd) {
+          if (cur !== (b.text || "")) { b.text = cur; await patchBlock(b._guid, { text: cur }); }
+          await addBlockAfter(b._guid, contKind);
+        } else {
+          const [head, tail] = splitEditable(d, b);  // split block at the caret
+          b.text = head;
+          await patchBlock(b._guid, { text: head });
+          await addBlockAfter(b._guid, contKind, tail);
+        }
       } catch (err) { showErr(err.message); }
     })();
-  } else if (e.key === "Backspace" && d.textContent === "" && caretAtStart()) {
-    e.preventDefault();
-    deleteBlock(b._guid, true);
+    return;
   }
+
+  if (e.key === "Backspace" && caretAtStart()) {
+    const cur = readEditable(b, d);
+    if (cur === "") { e.preventDefault(); deleteBlock(b._guid, true); return; }
+    // Backspace at the START of a non-empty block merges it into the previous block.
+    const i = state.blocks.findIndex((x) => x._guid === b._guid);
+    if (i > 0) {
+      const prev = state.blocks[i - 1];
+      if (prev.kind === "divider" || prev.kind === "image") return;  // nothing to merge text into
+      e.preventDefault();
+      mergeIntoPrev(b, prev, cur);
+    }
+    return;
+  }
+
+  if (e.key === "ArrowUp" && caretAtStart()) { if (focusSibling(b, -1)) e.preventDefault(); return; }
+  if (e.key === "ArrowDown" && caretAtEnd(d)) { if (focusSibling(b, +1)) e.preventDefault(); return; }
+  // Tab moves between blocks instead of leaving the editor / hitting gutter buttons.
+  if (e.key === "Tab") { e.preventDefault(); focusSibling(b, e.shiftKey ? -1 : +1); return; }
+}
+
+/* ---------- Inline formatting ---------- */
+function applyFormat(d, b, which) {
+  const sel = getSelection();
+  if (!sel.rangeCount) return;
+  if (which === "code") { wrapSelection(d, "code"); }
+  else {
+    try { document.execCommand("styleWithCSS", false, false); } catch (_) {}
+    document.execCommand(which === "bold" ? "bold" : which === "italic" ? "italic" : "strikeThrough");
+  }
+  const t = readEditable(b, d);
+  if (t !== (b.text || "")) { b.text = t; patchBlock(b._guid, { text: t }); }
+}
+function wrapSelection(d, tag) {
+  const sel = getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return;
+  const r = sel.getRangeAt(0);
+  if (!d.contains(r.commonAncestorContainer)) return;
+  const el = document.createElement(tag);
+  el.textContent = r.toString();
+  r.deleteContents(); r.insertNode(el);
+  sel.removeAllRanges();
+  const nr = document.createRange(); nr.setStartAfter(el); nr.collapse(true); sel.addRange(nr);
+}
+
+// Split the editable at the caret into [headMd, tailMd], preserving inline marks.
+function splitEditable(d, b) {
+  const sel = getSelection();
+  const r = sel.getRangeAt(0);
+  const before = document.createRange(); before.selectNodeContents(d); before.setEnd(r.endContainer, r.endOffset);
+  const after = document.createRange(); after.selectNodeContents(d); after.setStart(r.endContainer, r.endOffset);
+  const h = document.createElement("div"); h.appendChild(before.cloneContents());
+  const t = document.createElement("div"); t.appendChild(after.cloneContents());
+  if (b.kind === "code") return [textWithBreaks(h), textWithBreaks(t)];
+  return [htmlToMd(h), htmlToMd(t)];
+}
+
+async function mergeIntoPrev(b, prev, cur) {
+  serialize(async () => {
+    try {
+      const sep = prev.kind === "code" ? "\n" : "";
+      const merged = (prev.text || "") + sep + cur;
+      // Caret goes at the join, measured in VISIBLE chars (markdown markup is hidden).
+      let caretAt;
+      if (prev.kind === "code") caretAt = (prev.text || "").length + sep.length;
+      else { const tmp = document.createElement("div"); tmp.innerHTML = mdToHtml(prev.text || ""); caretAt = tmp.textContent.length; }
+      prev.text = merged;
+      await patchBlock(prev._guid, { text: merged });
+      await api("DELETE", `/objects/block/${b._guid}`);
+      state.focusGuid = prev._guid;
+      state.focusOffset = caretAt;
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
+}
+
+/* ---------- Block-to-block caret navigation ---------- */
+function focusSibling(b, dir) {
+  const i = state.blocks.findIndex((x) => x._guid === b._guid);
+  const j = i + dir;
+  if (j < 0 || j >= state.blocks.length) return false;
+  const ne = document.querySelector(`.block[data-guid="${state.blocks[j]._guid}"] .ce`);
+  if (!ne) return false;
+  dir < 0 ? placeCaretEnd(ne) : placeCaretStart(ne);
+  return true;
 }
 
 /* ---------- Block mutations ---------- */
-async function addBlockAfter(afterGuid, kind = "text") {
-  try {
-    const blocks = state.blocks;
-    let newOrder;
-    if (afterGuid) {
-      const i = blocks.findIndex((x) => x._guid === afterGuid);
-      newOrder = blocks[i].order + 1;
-      for (const x of blocks)                       // make room: shift the tail down
-        if (x.order >= newOrder) await api("PATCH", `/objects/block/${x._guid}`, { order: x.order + 1 });
-    } else {
-      newOrder = blocks.length ? Math.max(...blocks.map((x) => x.order)) + 1 : 0;
-    }
-    const created = await api("POST", "/objects/block",
-      { kind, text: "", checked: false, order: newOrder, page: state.currentPageGuid });
-    state.focusGuid = created._guid;
-    await loadDoc(state.currentPageGuid);
-  } catch (e) { showErr(e.message); }
+// Serialized so concurrent inserts never collide; fractional order so an insert
+// writes ONE new `order` (no sibling renumbering, no race).
+function addBlockAfter(afterGuid, kind = "text", text = "") {
+  return serialize(async () => {
+    try {
+      const blocks = state.blocks;
+      let prev, next;
+      if (afterGuid) {
+        const i = blocks.findIndex((x) => x._guid === afterGuid);
+        prev = blocks[i] ? blocks[i].order : null;
+        next = blocks[i + 1] ? blocks[i + 1].order : null;
+      } else {
+        prev = blocks.length ? blocks[blocks.length - 1].order : null;
+        next = null;
+      }
+      const newOrder = orderBetween(prev, next);
+      const created = await api("POST", "/objects/block",
+        { kind, text, checked: false, order: newOrder, page: state.currentPageGuid });
+      // Notion: a divider has no caret — drop a fresh text block under it to type in.
+      if (kind === "divider") {
+        const trail = await api("POST", "/objects/block",
+          { kind: "text", text: "", checked: false, order: orderBetween(newOrder, next), page: state.currentPageGuid });
+        state.focusGuid = trail._guid;
+      } else {
+        state.focusGuid = created._guid;
+      }
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
 }
 
-async function changeKind(guid, kind) {
-  try {
-    await api("PATCH", `/objects/block/${guid}`, { kind });
-    state.focusGuid = kind === "divider" ? null : guid;
-    await loadDoc(state.currentPageGuid);
-  } catch (e) { showErr(e.message); }
+function changeKind(guid, kind) {
+  return serialize(async () => {
+    try {
+      await api("PATCH", `/objects/block/${guid}`, { kind });
+      state.focusGuid = kind === "divider" ? null : guid;
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
 }
 
 async function toggleChecked(guid, val) {
@@ -680,25 +1061,85 @@ async function toggleChecked(guid, val) {
   } catch (e) { showErr(e.message); }
 }
 
-async function moveBlock(guid, dir) {
-  try {
-    const i = state.blocks.findIndex((x) => x._guid === guid);
-    const j = i + dir;
-    if (j < 0 || j >= state.blocks.length) return;
-    const a = state.blocks[i], b = state.blocks[j];
-    await api("PATCH", `/objects/block/${a._guid}`, { order: b.order });
-    await api("PATCH", `/objects/block/${b._guid}`, { order: a.order });
-    await loadDoc(state.currentPageGuid);
-  } catch (e) { showErr(e.message); }
+function moveBlock(guid, dir) {
+  return serialize(async () => {
+    try {
+      const i = state.blocks.findIndex((x) => x._guid === guid);
+      const j = i + dir;
+      if (j < 0 || j >= state.blocks.length) return;
+      const a = state.blocks[i], b = state.blocks[j];
+      await api("PATCH", `/objects/block/${a._guid}`, { order: b.order });
+      await api("PATCH", `/objects/block/${b._guid}`, { order: a.order });
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
 }
 
-async function deleteBlock(guid, focusPrev) {
-  try {
-    const i = state.blocks.findIndex((x) => x._guid === guid);
-    if (focusPrev && i > 0) state.focusGuid = state.blocks[i - 1]._guid;
-    await api("DELETE", `/objects/block/${guid}`);
-    await loadDoc(state.currentPageGuid);
-  } catch (e) { showErr(e.message); }
+// Drag-to-reorder: drop `guid` just before the block at target index `to`
+// (computed from where the drop landed). One fractional write, serialized.
+function reorderTo(guid, to) {
+  return serialize(async () => {
+    try {
+      const cur = state.blocks.slice();
+      const from = cur.findIndex((x) => x._guid === guid);
+      if (from < 0 || to < 0 || to > cur.length) return;
+      if (to === from || to === from + 1) return;     // no-op
+      const moving = cur[from];
+      const rest = cur.filter((x) => x._guid !== guid);
+      const insertAt = to > from ? to - 1 : to;
+      const prev = rest[insertAt - 1] ? rest[insertAt - 1].order : null;
+      const next = rest[insertAt] ? rest[insertAt].order : null;
+      await api("PATCH", `/objects/block/${moving._guid}`, { order: orderBetween(prev, next) });
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
+}
+
+function deleteBlock(guid, focusPrev) {
+  return serialize(async () => {
+    try {
+      const i = state.blocks.findIndex((x) => x._guid === guid);
+      if (focusPrev && i > 0) { state.focusGuid = state.blocks[i - 1]._guid; state.focusOffset = "end"; }
+      await api("DELETE", `/objects/block/${guid}`);
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
+}
+
+/* ---------- Drag wiring (HTML5 drag from the grip handle) ---------- */
+let dragGuid = null;
+function clearDropMarks() {
+  document.querySelectorAll(".block.drop-before,.block.drop-after,.block.dragging")
+    .forEach((el) => el.classList.remove("drop-before", "drop-after", "dragging"));
+}
+function wireDrag(handle, wrap, b) {
+  handle.setAttribute("draggable", "true");
+  handle.addEventListener("dragstart", (e) => {
+    dragGuid = b._guid; wrap.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", b._guid); } catch (_) {}
+    try { e.dataTransfer.setDragImage(wrap, 10, 10); } catch (_) {}
+  });
+  handle.addEventListener("dragend", () => { dragGuid = null; clearDropMarks(); });
+  wrap.addEventListener("dragover", (e) => {
+    if (!dragGuid || dragGuid === b._guid) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = "move";
+    const r = wrap.getBoundingClientRect();
+    const below = e.clientY > r.top + r.height / 2;
+    wrap.classList.toggle("drop-after", below);
+    wrap.classList.toggle("drop-before", !below);
+  });
+  wrap.addEventListener("dragleave", () => wrap.classList.remove("drop-before", "drop-after"));
+  wrap.addEventListener("drop", (e) => {
+    if (!dragGuid || dragGuid === b._guid) return;
+    e.preventDefault();
+    const r = wrap.getBoundingClientRect();
+    const below = e.clientY > r.top + r.height / 2;
+    const idx = state.blocks.findIndex((x) => x._guid === b._guid);
+    const to = below ? idx + 1 : idx;
+    const g = dragGuid; clearDropMarks(); dragGuid = null;
+    reorderTo(g, to);
+  });
 }
 
 async function patchBlock(guid, patch) {
@@ -739,11 +1180,24 @@ function collectSubtree(guid) {
   return out;
 }
 
+// No native confirm and no irreversible loss: snapshot the subtree, hard-delete
+// (the backend has no cascade), then offer Undo that re-creates it.
+// LIMITATION: delete + restore are multi-call and non-atomic (see notes); a
+// mid-way failure can leave a partial subtree. We serialize the work and restore
+// from a full in-memory snapshot to make that as safe as the API allows.
 async function deletePage(guid) {
   const p = state.byId[guid];
-  if (!confirm(`Delete “${p?.title || "Untitled"}” and everything inside it?`)) return;
+  const ids = collectSubtree(guid);
+  let snap;
   try {
-    const ids = collectSubtree(guid);
+    snap = [];
+    for (const id of ids) {
+      const pg = state.byId[id] || await api("GET", `/objects/page/${id}`);
+      const { objects } = await api("GET", `/objects/block?page=${id}&sort=order&order=asc&limit=500`);
+      snap.push({ oldGuid: id, oldParent: pg.parent || null,
+        page: { title: pg.title || "", icon: pg.icon || "📄", order: pg.order || 0 },
+        blocks: objects.map((b) => ({ kind: b.kind, text: b.text || "", checked: !!b.checked, order: b.order })) });
+    }
     for (const id of ids) {
       const { objects } = await api("GET", `/objects/block?page=${id}&limit=500`);
       for (const b of objects) await api("DELETE", `/objects/block/${b._guid}`);
@@ -753,8 +1207,29 @@ async function deletePage(guid) {
     await loadTree();
     if (wipedCurrent) {
       const next = state.roots[0];
-      if (next) selectPage(next._guid); else { state.currentPageGuid = null; renderDoc(); }
+      if (next) selectPage(next._guid);
+      else { state.currentPageGuid = null; suppressHash = true; location.hash = ""; renderDoc(); }
     }
+    showUndo(`Deleted “${p?.title || "Untitled"}”`, () => restorePages(snap));
+  } catch (e) { showErr(e.message); }
+}
+
+// Re-create a snapshot (pages parent-first, then their blocks). New guids.
+async function restorePages(snap) {
+  try {
+    const map = {};   // oldGuid -> newGuid
+    for (const s of snap) {
+      const body = { ...s.page };
+      const parent = map[s.oldParent] || (state.byId[s.oldParent] ? s.oldParent : null);
+      if (parent) body.parent = parent;
+      const np = await api("POST", "/objects/page", body);
+      map[s.oldGuid] = np._guid;
+      for (const b of s.blocks)
+        await api("POST", "/objects/block", { ...b, page: np._guid });
+    }
+    await loadTree();
+    const first = snap[0] && map[snap[0].oldGuid];
+    if (first) selectPage(first);
   } catch (e) { showErr(e.message); }
 }
 
@@ -799,13 +1274,26 @@ function openBlockMenu(b, anchor) {
 function openEmojiPicker(anchor) {
   const guid = state.currentPageGuid;
   openMenu(anchor, (m) => {
+    const search = document.createElement("input");
+    search.className = "emoji-search"; search.placeholder = "Search emoji…"; search.spellcheck = false;
     const grid = document.createElement("div"); grid.className = "emoji-grid";
-    for (const e of EMOJIS) {
-      const btn = document.createElement("button"); btn.textContent = e;
-      btn.onclick = () => { closeMenu(); patchPage(guid, { icon: e }); };
-      grid.appendChild(btn);
-    }
-    m.appendChild(grid);
+    const draw = (q) => {
+      grid.innerHTML = "";
+      const ql = q.trim().toLowerCase();
+      const list = EMOJIS.filter((e) => !ql || e === ql || (EMOJI_NAMES[e] || "").includes(ql));
+      for (const e of list) {
+        const btn = document.createElement("button"); btn.textContent = e; btn.title = EMOJI_NAMES[e] || "";
+        btn.onclick = () => { closeMenu(); patchPage(guid, { icon: e }); };
+        grid.appendChild(btn);
+      }
+      if (!list.length) { const n = document.createElement("div"); n.className = "mnone"; n.style.padding = "8px 4px"; n.style.color = "var(--faint)"; n.textContent = "No emoji"; grid.appendChild(n); }
+    };
+    search.oninput = () => draw(search.value);
+    draw("");
+    const rm = mitem("⌫", "Remove icon", () => { closeMenu(); patchPage(guid, { icon: "📄" }); });
+    rm.classList.add("emoji-remove");
+    m.append(search, grid, sep(), rm);
+    requestAnimationFrame(() => search.focus());
   });
 }
 
@@ -839,6 +1327,42 @@ function caretOffset(el) {
   pre.selectNodeContents(el);
   pre.setEnd(r.endContainer, r.endOffset);
   return pre.toString().length;
+}
+
+/* ---------- Markdown shortcuts ----------
+   Notion-style: at the START of a block, a shorthand + space converts the block.
+   We only fire when the block holds nothing but the trigger. */
+const MD_RULES = [
+  [/^# $/, "h1"], [/^## $/, "h2"], [/^### $/, "h2"],
+  [/^[-*+] $/, "bullet"], [/^1\. $/, "numbered"],
+  [/^\[\] $/, "todo"], [/^\[\s\] $/, "todo"],
+  [/^> $/, "quote"], [/^" $/, "quote"],
+  [/^```$/, "code"], [/^---$/, "divider"], [/^\*\*\*$/, "divider"],
+];
+function detectMarkdown(b, d) {
+  if (slashState) return;
+  const txt = d.textContent;
+  for (const [re, kind] of MD_RULES) {
+    if (!re.test(txt)) continue;
+    if (kind === b.kind) return;
+    serialize(async () => {
+      try {
+        await api("PATCH", `/objects/block/${b._guid}`, { text: "", kind });
+        b.text = "";
+        if (kind === "divider") {                 // dividers can't hold a caret → add one below
+          const i = state.blocks.findIndex((x) => x._guid === b._guid);
+          const next = state.blocks[i + 1] ? state.blocks[i + 1].order : null;
+          const trail = await api("POST", "/objects/block",
+            { kind: "text", text: "", checked: false, order: orderBetween(b.order, next), page: state.currentPageGuid });
+          state.focusGuid = trail._guid;
+        } else {
+          state.focusGuid = b._guid;
+        }
+        await loadDoc(state.currentPageGuid);
+      } catch (e) { showErr(e.message); }
+    });
+    return;
+  }
 }
 
 // Run on every input: open/refresh the menu when a "/command" is being typed.
@@ -916,18 +1440,33 @@ function handleSlashKey(e) {
   return false;
 }
 
-async function chooseSlash(kind) {
+function chooseSlash(kind) {
   const st = slashState; if (!st) return;
   const b = st.block, d = st.el;
   const text = d.textContent;
-  const stripped = text.slice(0, st.slashStart) + text.slice(st.slashStart + 1 + st.query.length);
+  let stripped = text.slice(0, st.slashStart) + text.slice(st.slashStart + 1 + st.query.length);
   closeSlash();
-  try {
-    b.text = stripped;
-    await api("PATCH", `/objects/block/${b._guid}`, { text: stripped, kind });
-    state.focusGuid = kind === "divider" ? null : b._guid;
-    await loadDoc(state.currentPageGuid);
-  } catch (e) { showErr(e.message); }
+  // Image asks for a URL up front (stored in the block's text field).
+  if (kind === "image") {
+    const url = prompt("Image URL:", "");
+    stripped = url ? url.trim() : "";
+  }
+  serialize(async () => {
+    try {
+      b.text = stripped;
+      await api("PATCH", `/objects/block/${b._guid}`, { text: stripped, kind });
+      if (kind === "divider") {                   // divider has no caret → trailing text block
+        const i = state.blocks.findIndex((x) => x._guid === b._guid);
+        const next = state.blocks[i + 1] ? state.blocks[i + 1].order : null;
+        const trail = await api("POST", "/objects/block",
+          { kind: "text", text: "", checked: false, order: orderBetween(b.order, next), page: state.currentPageGuid });
+        state.focusGuid = trail._guid;
+      } else {
+        state.focusGuid = (kind === "image" && stripped) ? null : b._guid;
+      }
+      await loadDoc(state.currentPageGuid);
+    } catch (e) { showErr(e.message); }
+  });
 }
 
 function closeSlash() { if (slashState) { slashState.menu.remove(); slashState = null; } }
@@ -942,15 +1481,60 @@ function placeCaretEnd(el) {
   const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
   const s = getSelection(); s.removeAllRanges(); s.addRange(r);
 }
+function placeCaretStart(el) {
+  if (!el) return;
+  el.focus();
+  const r = document.createRange(); r.selectNodeContents(el); r.collapse(true);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+}
+// Place the caret after `off` visible characters (walks text nodes).
+function placeCaretAt(el, off) {
+  el.focus();
+  let remain = off, target = el, toff = 0;
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let node, placed = false;
+  while ((node = walk.nextNode())) {
+    const len = node.nodeValue.length;
+    if (remain <= len) { target = node; toff = remain; placed = true; break; }
+    remain -= len;
+  }
+  const s = getSelection(); const r = document.createRange();
+  if (placed) { r.setStart(target, toff); r.collapse(true); }
+  else { r.selectNodeContents(el); r.collapse(false); }
+  s.removeAllRanges(); s.addRange(r);
+}
+// Caret-at-start / -at-end of the editable, robust to nested formatting nodes.
 function caretAtStart() {
   const s = getSelection();
   if (!s.rangeCount) return false;
   const r = s.getRangeAt(0);
-  return r.collapsed && r.startOffset === 0;
+  if (!r.collapsed) return false;
+  const test = document.createRange();
+  const ce = (r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement).closest(".ce");
+  if (!ce) return r.startOffset === 0;
+  test.selectNodeContents(ce); test.setEnd(r.startContainer, r.startOffset);
+  return test.toString().length === 0;
+}
+function caretAtEnd(el) {
+  const s = getSelection();
+  if (!s.rangeCount) return false;
+  const r = s.getRangeAt(0);
+  if (!r.collapsed) return false;
+  if (el && !el.contains(r.endContainer)) return false;
+  const test = document.createRange();
+  test.selectNodeContents(el); test.setStart(r.endContainer, r.endOffset);
+  return test.toString().length === 0;
 }
 
 /* ---------- Wire up + boot ---------- */
 $("newRoot").onclick = () => newPage(null);
+$("scrim").onclick = () => document.querySelector(".app").classList.remove("nav-open");
+
+// Expand the chain of ancestors so a deep-linked page is visible in the tree.
+function expandAncestors(guid) {
+  let g = state.byId[guid]?.parent;
+  while (g && state.byId[g]) { state.expanded.add(g); g = state.byId[g].parent; }
+}
 
 (async () => {
   try {
@@ -963,12 +1547,14 @@ $("newRoot").onclick = () => newPage(null);
   }
   try {
     await loadTree();
-    // First load: expand every page that has children, then open the first page.
+    // First load: expand every page that has children, then open a page.
     for (const p of state.pages)
       if ((state.childrenMap[p._guid] || []).length) state.expanded.add(p._guid);
-    renderSidebar();
-    if (state.roots[0]) selectPage(state.roots[0]._guid);
-    else renderEmptyDoc();
+    // Restore the deep-linked page from the URL hash, else open the first page.
+    const hashGuid = location.hash.slice(1);
+    const start = (hashGuid && state.byId[hashGuid]) ? hashGuid : state.roots[0]?._guid;
+    if (start) { expandAncestors(start); renderSidebar(); selectPage(start); }
+    else { renderSidebar(); renderEmptyDoc(); }
   } catch (e) { showErr(e.message); }
 })();
 </script>
