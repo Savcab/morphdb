@@ -88,18 +88,14 @@ def create_object(app, object_type, data):
     fields = schema["fields"]
     guid = new_guid(object_type)
     ts = now_iso()
-    with db.transaction() as c:
-        field_part, rel_part = _split_body(app, object_type, data or {}, fields, c)
+    with db.storage_transaction() as s:
+        field_part, rel_part = _split_body(app, object_type, data or {}, fields, s)
         clean = validate_against_schema(field_part, fields, partial=False)
-        c.execute(
-            "INSERT INTO objects (guid, app, object_type, data, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (guid, app, object_type, json.dumps(clean), ts, ts),
-        )
-        fieldindex.apply_index_writes(c, app, object_type, guid, clean, fields)
+        s.insert_object(guid, app, object_type, json.dumps(clean), ts, ts)
+        fieldindex.apply_index_writes(s, app, object_type, guid, clean, fields)
         if rel_part:
-            assoc.apply_relation_writes(c, app, guid, object_type, rel_part)
-        row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
+            assoc.apply_relation_writes(s, app, guid, object_type, rel_part)
+        row = s.get_object(app, guid)
     return _project_full(app, row, fields, object_type)
 
 
@@ -114,10 +110,8 @@ def upsert_object(app, object_type, guid, data, partial=True):
     schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     ts = now_iso()
-    with db.transaction() as c:
-        existing = c.execute(
-            "SELECT * FROM objects WHERE guid = ?", (guid,)
-        ).fetchone()
+    with db.storage_transaction() as s:
+        existing = s.get_object_by_guid_any_app(guid)
         if existing is not None and existing["app"] != app:
             # The guid is owned by another app; from here it simply doesn't exist.
             raise not_found(f"No object with guid '{guid}'.")
@@ -127,48 +121,34 @@ def upsert_object(app, object_type, guid, data, partial=True):
                 f"'{existing['object_type']}', not '{object_type}'."
             )
 
-        field_part, rel_part = _split_body(app, object_type, data or {}, fields, c)
+        field_part, rel_part = _split_body(app, object_type, data or {}, fields, s)
         clean = validate_against_schema(field_part, fields, partial=partial)
 
         if existing is None:
-            c.execute(
-                "INSERT INTO objects (guid, app, object_type, data, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (guid, app, object_type, json.dumps(clean), ts, ts),
-            )
+            s.insert_object(guid, app, object_type, json.dumps(clean), ts, ts)
             stored = clean
         else:
             blob = json.loads(existing["data"]) if partial else {}
             blob.update(clean)
-            c.execute(
-                "UPDATE objects SET data = ?, updated_at = ? WHERE guid = ?",
-                (json.dumps(blob), ts, guid),
-            )
+            s.update_object(guid, json.dumps(blob), ts)
             stored = blob
         # Rebuild this object's index rows from its full stored blob, in the same
         # transaction as the blob write (delete-then-insert inside apply_index_writes).
-        fieldindex.apply_index_writes(c, app, object_type, guid, stored, fields)
+        fieldindex.apply_index_writes(s, app, object_type, guid, stored, fields)
         if rel_part:
-            assoc.apply_relation_writes(c, app, guid, object_type, rel_part)
-        row = c.execute("SELECT * FROM objects WHERE guid = ?", (guid,)).fetchone()
+            assoc.apply_relation_writes(s, app, guid, object_type, rel_part)
+        row = s.get_object(app, guid)
     return _project_full(app, row, fields, object_type)
 
 
 def delete_object(app, guid):
-    with db.transaction() as c:
-        row = c.execute(
-            "SELECT * FROM objects WHERE app = ? AND guid = ?", (app, guid)
-        ).fetchone()
+    with db.storage_transaction() as s:
+        row = s.get_object(app, guid)
         if row is None:
             raise not_found(f"No object with guid '{guid}'.")
-        c.execute("DELETE FROM objects WHERE app = ? AND guid = ?", (app, guid))
-        # field_index rows for this object are removed automatically by the
-        # ON DELETE CASCADE foreign key (field_index.object_id -> objects.guid).
-        # Remove this object's edges only; neighbor objects are left intact.
-        c.execute(
-            "DELETE FROM associations WHERE app = ? AND (from_guid = ? OR to_guid = ?)",
-            (app, guid, guid),
-        )
+        s.delete_field_index_for_object(guid)
+        s.delete_edges_touching_object(app, guid)
+        s.delete_object(app, guid)
     return {"deleted": guid}
 
 
@@ -176,9 +156,7 @@ def delete_object(app, guid):
 
 
 def get_object(app, guid, object_type=None, include=None):
-    row = db.conn().execute(
-        "SELECT * FROM objects WHERE app = ? AND guid = ?", (app, guid)
-    ).fetchone()
+    row = db.storage().get_object(app, guid)
     if row is None:
         raise not_found(f"No object with guid '{guid}'.")
     if object_type is not None and row["object_type"] != object_type:
@@ -475,8 +453,175 @@ def _build_where(app, object_type, filters, fields, rel_views):
     return clauses, params
 
 
+def _filter_specs(app, object_type, filters, fields, rel_views):
+    specs = []
+    for key, raw in filters.items():
+        field, op, kind, view = _classify_filter_key(key, fields, rel_views)
+        if kind == "relation":
+            if op not in _REL_OPS:
+                raise bad_request(
+                    f"Operator '{op}' is not supported on relation '{view['key']}'. "
+                    f"Relations support {sorted(_REL_OPS)} — filter by a neighbor guid; "
+                    "comparisons like gt/lt/contains are field-only."
+                )
+            val = _coerce_relation_filter_value(view["key"], op, raw)
+            specs.append(("relation", field, op, val))
+            continue
+
+        fdef = fields[field]
+        ftype = fdef["type"]
+        if ftype == "json":
+            raise bad_request(
+                f"Field '{field}' is json and can't be filtered (json values "
+                "aren't indexable). Filter on a scalar, indexed field instead.")
+        if not fdef.get("index"):
+            raise bad_request(
+                f"Field '{field}' is not indexed, so it can't be filtered. Add "
+                f"\"index\": true to '{field}' in its schema to filter or sort on it.")
+        specs.append(("field", field, op, _coerce_filter_value(field, op, raw, ftype)))
+    return specs
+
+
+def _coerce_relation_filter_value(field, op, raw):
+    from .fieldtypes import coerce_value
+
+    if op == "exists":
+        return coerce_value(field, raw, "boolean")
+    if op == "in":
+        return [str(g) for g in (raw.split(",") if isinstance(raw, str) else list(raw))]
+    return str(raw)
+
+
+def _relation_values(value):
+    if value is None:
+        return set()
+    if isinstance(value, list):
+        return set(value)
+    return {value}
+
+
+def _matches_value(current, op, expected):
+    if op == "eq":
+        return current == expected
+    if op == "ne":
+        return current != expected
+    if op == "exists":
+        return (current is not None) if expected else (current is None)
+    if op == "in":
+        return current is not None and current in expected
+    if op == "contains":
+        return current is not None and _like_contains(current, expected)
+    if current is None:
+        return False
+    try:
+        if op == "gt":
+            return current > expected
+        if op == "gte":
+            return current >= expected
+        if op == "lt":
+            return current < expected
+        if op == "lte":
+            return current <= expected
+    except TypeError:
+        return False
+    return False
+
+
+def _matches_relation(value, op, expected):
+    vals = _relation_values(value)
+    if op == "exists":
+        return bool(vals) if expected else not vals
+    if op == "eq":
+        return expected in vals
+    if op == "ne":
+        return expected not in vals
+    if op == "in":
+        return bool(vals.intersection(expected))
+    return False
+
+
+def _list_objects_storage(app, object_type, filters, limit, offset, sort, order, include):
+    schema = get_object_schema(app, object_type, required=True)
+    fields = schema["fields"]
+    filters = filters or {}
+    rel_views = {v["key"]: v for v in assoc.relation_views(app, object_type)}
+    specs = _filter_specs(app, object_type, filters, fields, rel_views)
+
+    order_l = str(order).lower()
+    if order_l not in ("asc", "desc"):
+        raise bad_request(f"Invalid order '{order}'. Use 'asc' or 'desc'.")
+
+    try:
+        limit = int(limit)
+        offset = int(offset)
+    except (TypeError, ValueError):
+        raise bad_request("limit and offset must be integers.")
+    if limit < 0 or offset < 0:
+        raise bad_request("limit and offset must be non-negative.")
+    if offset > _INT64_MAX:
+        raise bad_request("offset is too large.")
+    limit = min(limit, MAX_LIMIT)
+
+    if sort and sort not in ("_created_at", "_updated_at", "_guid"):
+        if sort not in fields:
+            raise bad_request(
+                f"Cannot sort on '{sort}'. Sort by a declared field, "
+                "_created_at, _updated_at, or _guid. (Relations and json fields "
+                "aren't sortable; filter relations instead, e.g. ?rel=<guid>.)")
+        fsort = fields[sort]
+        if fsort["type"] == "json":
+            raise bad_request(f"Cannot sort on json field '{sort}'.")
+        if not fsort.get("index"):
+            raise bad_request(
+                f"Field '{sort}' is not indexed, so it can't be sorted on. Add "
+                f"\"index\": true to '{sort}' in its schema to sort on it.")
+
+    rows = db.storage().list_objects(app, object_type)
+    projected = [_project_fields(r, fields) for r in rows]
+    relmap = assoc.project_relations(app, [r["guid"] for r in rows], object_type)
+    for p in projected:
+        p.update(relmap[p["_guid"]])
+
+    filtered = []
+    for p in projected:
+        ok = True
+        for kind, name, op, expected in specs:
+            if kind == "field":
+                ok = _matches_value(p.get(name), op, expected)
+            else:
+                ok = _matches_relation(p.get(name), op, expected)
+            if not ok:
+                break
+        if ok:
+            filtered.append(p)
+
+    def primary_key(p):
+        if sort == "_created_at" or sort is None:
+            v = p["_created_at"]
+        elif sort == "_updated_at":
+            v = p["_updated_at"]
+        elif sort == "_guid":
+            v = p["_guid"]
+        else:
+            v = p.get(sort)
+        return (v is not None, v)
+
+    filtered.sort(key=lambda p: p["_guid"])
+    filtered.sort(key=primary_key, reverse=(order_l == "desc"))
+
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
+    if include:
+        _resolve_includes(app, object_type, page, _parse_include(include))
+    return {"objects": page, "total": total, "limit": limit, "offset": offset}
+
+
 def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
                  sort=None, order="asc", include=None):
+    if db.backend() is not None and db.backend().name == "dynamodb":
+        return _list_objects_storage(
+            app, object_type, filters, limit, offset, sort, order, include)
+
     schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     filters = filters or {}
@@ -614,6 +759,21 @@ def _fetch_projected(app, object_type, guids):
     if not seen:
         return {}
     fields = get_object_schema(app, object_type, required=True)["fields"]
+    if db.backend() is not None and db.backend().name == "dynamodb":
+        rows = []
+        s = db.storage()
+        for guid in seen:
+            row = s.get_object(app, guid)
+            if row is not None and row["object_type"] == object_type:
+                rows.append(row)
+        projected = [_project_fields(r, fields) for r in rows]
+        relmap = assoc.project_relations(app, [r["guid"] for r in rows], object_type)
+        out = {}
+        for p in projected:
+            p.update(relmap[p["_guid"]])
+            out[p["_guid"]] = p
+        return out
+
     rows = []
     c = db.conn()
     CHUNK = 400

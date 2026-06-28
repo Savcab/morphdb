@@ -133,34 +133,13 @@ def upsert_relation(c, app, from_type, key, raw):
     """
     d = normalize_relation_def(from_type, key, raw)
     # The neighbor type must exist (in this app) so traversal/validation works.
-    if c.execute("SELECT 1 FROM object_schemas WHERE app=? AND name=?",
-                 (app, d["to_type"])).fetchone() is None:
+    if c.get_object_schema(app, d["to_type"]) is None:
         raise bad_request(
             f"Relation '{key}' points to unknown type '{d['to_type']}'. Define it first."
         )
     ts = now_iso()
-    exists = c.execute(
-        "SELECT 1 FROM association_schemas WHERE app=? AND name=?", (app, d["name"])
-    ).fetchone()
-    if exists:
-        c.execute(
-            "UPDATE association_schemas SET from_type=?, to_type=?, forward_name=?, "
-            "inverse_name=?, cardinality=?, \"symmetric\"=?, forward_description=?, "
-            "inverse_description=?, updated_at=? WHERE app=? AND name=?",
-            (d["from_type"], d["to_type"], d["forward_name"], d["inverse_name"],
-             d["cardinality"], int(d["symmetric"]), d["forward_description"],
-             d["inverse_description"], ts, app, d["name"]),
-        )
-    else:
-        c.execute(
-            "INSERT INTO association_schemas (app, name, from_type, to_type, "
-            "forward_name, inverse_name, cardinality, \"symmetric\", "
-            "forward_description, inverse_description, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (app, d["name"], d["from_type"], d["to_type"], d["forward_name"],
-             d["inverse_name"], d["cardinality"], int(d["symmetric"]),
-             d["forward_description"], d["inverse_description"], ts, ts),
-        )
+    exists = c.get_association_schema(app, d["name"]) is not None
+    c.put_association_schema(app, d, ts, exists)
     if d["symmetric"]:
         _canonicalize_symmetric_edges(c, app, d["name"])
     return d
@@ -171,16 +150,11 @@ def prune_forward_relations(c, app, from_type, keep_keys):
     are no longer listed — along with their edges. Inverse relations (authored on
     the other type) are never touched here.
     """
-    rows = c.execute(
-        "SELECT name, forward_name FROM association_schemas WHERE app=? AND from_type=?",
-        (app, from_type),
-    ).fetchall()
+    rows = c.list_association_schemas_from_type(app, from_type)
     for r in rows:
         if r["forward_name"] not in keep_keys:
-            c.execute("DELETE FROM associations WHERE app=? AND assoc_name=?",
-                      (app, r["name"]))
-            c.execute("DELETE FROM association_schemas WHERE app=? AND name=?",
-                      (app, r["name"]))
+            c.delete_edges_for_assoc(app, r["name"])
+            c.delete_association_schema(app, r["name"])
 
 
 def delete_relations_touching_type(c, app, type_name):
@@ -188,48 +162,33 @@ def delete_relations_touching_type(c, app, type_name):
     is an endpoint. Used when a whole object type is deleted. Neighbor objects on
     the other side are NOT removed by this — only the relationship metadata + edges.
     """
-    rows = c.execute(
-        "SELECT name FROM association_schemas WHERE app=? AND (from_type=? OR to_type=?)",
-        (app, type_name, type_name),
-    ).fetchall()
+    rows = c.list_association_schemas_touching_type(app, type_name)
     for r in rows:
-        c.execute("DELETE FROM associations WHERE app=? AND assoc_name=?",
-                  (app, r["name"]))
-    c.execute(
-        "DELETE FROM association_schemas WHERE app=? AND (from_type=? OR to_type=?)",
-        (app, type_name, type_name),
-    )
+        c.delete_edges_for_assoc(app, r["name"])
+    c.delete_association_schemas_touching_type(app, type_name)
 
 
 def _canonicalize_symmetric_edges(c, app, name):
     """Rewrite a now-symmetric relationship's edges into canonical (sorted)
     order and drop reverse duplicates, so A–B and B–A collapse to one row.
     """
-    rows = c.execute(
-        "SELECT from_guid, to_guid, created_at FROM associations WHERE app=? AND assoc_name=?",
-        (app, name),
-    ).fetchall()
+    rows = c.list_edges(app, name)
     canon = {}
     for r in rows:
         a, b = sorted((r["from_guid"], r["to_guid"]))
         prev = canon.get((a, b))
         if prev is None or r["created_at"] < prev:
             canon[(a, b)] = r["created_at"]
-    c.execute("DELETE FROM associations WHERE app=? AND assoc_name=?", (app, name))
+    c.delete_edges_for_assoc(app, name)
     for (a, b), created in canon.items():
-        c.execute(
-            "INSERT INTO associations (app, assoc_name, from_guid, to_guid, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (app, name, a, b, created),
-        )
+        c.insert_edge_ignore(app, name, a, b, created)
 
 
 # --- relation "views" (one per relation a type exposes) -----------------------
 
 
 def _all_assoc_schemas(app, c=None):
-    ex = (c or db.conn()).execute
-    return ex("SELECT * FROM association_schemas WHERE app=?", (app,)).fetchall()
+    return (c or db.storage()).list_association_schemas(app)
 
 
 def relation_views(app, type_name, c=None):
@@ -329,19 +288,16 @@ def project_relations(app, guids, type_name):
     if not views:
         return result
 
-    qmarks = ",".join("?" * len(guids))
     gset = set(guids)
     by_assoc = {}
     for v in views:
         by_assoc.setdefault(v["assoc_name"], []).append(v)
 
     for assoc_name, vs in by_assoc.items():
-        rows = db.conn().execute(
-            f"SELECT from_guid, to_guid FROM associations WHERE app=? AND assoc_name=? "
-            f"AND (from_guid IN ({qmarks}) OR to_guid IN ({qmarks})) "
-            f"ORDER BY created_at, id",
-            [app, assoc_name, *guids, *guids],
-        ).fetchall()
+        rows = sorted(
+            db.storage().list_edges_touching_guids(app, assoc_name, guids),
+            key=lambda r: (r.get("created_at"), str(r.get("id"))),
+        )
         for v in vs:
             side, key, mult = v["side"], v["key"], v["mult"]
             for r in rows:
@@ -417,29 +373,22 @@ def _set_relation(c, app, obj_guid, view, desired):
     side = view["side"]
 
     # Current neighbors for this relation, from obj's point of view.
-    if side == "from":
-        rows = c.execute(
-            "SELECT id, to_guid AS nb FROM associations WHERE app=? AND assoc_name=? AND from_guid=?",
-            (app, name, obj_guid)).fetchall()
-    elif side == "to":
-        rows = c.execute(
-            "SELECT id, from_guid AS nb FROM associations WHERE app=? AND assoc_name=? AND to_guid=?",
-            (app, name, obj_guid)).fetchall()
-    else:  # sym
-        rows = c.execute(
-            "SELECT id, from_guid, to_guid FROM associations WHERE app=? AND assoc_name=? "
-            "AND (from_guid=? OR to_guid=?)", (app, name, obj_guid, obj_guid)).fetchall()
+    rows = c.list_edges_for_object_side(app, name, side, obj_guid)
     current = {}
     for r in rows:
-        nb = r["nb"] if side != "sym" else (
-            r["to_guid"] if r["from_guid"] == obj_guid else r["from_guid"])
+        if side == "from":
+            nb = r["to_guid"]
+        elif side == "to":
+            nb = r["from_guid"]
+        else:
+            nb = r["to_guid"] if r["from_guid"] == obj_guid else r["from_guid"]
         current[nb] = r["id"]
 
     desired_set = set(desired)
     # Remove edges no longer wanted.
     for nb, eid in current.items():
         if nb not in desired_set:
-            c.execute("DELETE FROM associations WHERE id=?", (eid,))
+            c.delete_edge_by_id(eid)
 
     other_mult = _mult(view["cardinality"], "to" if side == "from" else "from")
     ts = now_iso()
@@ -452,9 +401,7 @@ def _set_relation(c, app, obj_guid, view, desired):
         if other_mult == "one":
             _free_target_slot(c, app, name, side, nb)
         fg, tg = _edge_endpoints(side, obj_guid, nb)
-        c.execute(
-            "INSERT OR IGNORE INTO associations (app, assoc_name, from_guid, to_guid, created_at) "
-            "VALUES (?, ?, ?, ?, ?)", (app, name, fg, tg, ts))
+        c.insert_edge_ignore(app, name, fg, tg, ts)
 
 
 def _edge_endpoints(side, obj_guid, neighbor):
@@ -466,25 +413,14 @@ def _edge_endpoints(side, obj_guid, neighbor):
 
 
 def _free_target_slot(c, app, name, side, neighbor):
-    if side == "from":
-        # neighbor sits on the to-side; its single inbound slot must be freed.
-        c.execute("DELETE FROM associations WHERE app=? AND assoc_name=? AND to_guid=?",
-                  (app, name, neighbor))
-    elif side == "to":
-        c.execute("DELETE FROM associations WHERE app=? AND assoc_name=? AND from_guid=?",
-                  (app, name, neighbor))
-    else:  # symmetric one_to_one
-        c.execute("DELETE FROM associations WHERE app=? AND assoc_name=? AND (from_guid=? OR to_guid=?)",
-                  (app, name, neighbor, neighbor))
+    c.delete_edges_for_target_slot(app, name, side, neighbor)
 
 
 def _validate_target(c, app, view, obj_guid, neighbor):
     if neighbor == obj_guid:
         raise bad_request("Self-referential edges (an object related to itself) are not allowed.")
     # The target must be an object in the SAME app — relations never cross apps.
-    row = c.execute(
-        "SELECT object_type FROM objects WHERE app=? AND guid=?",
-        (app, neighbor)).fetchone()
+    row = c.get_object(app, neighbor)
     if row is None:
         raise bad_request(
             f"Relation '{view['key']}' target '{neighbor}' does not exist.")

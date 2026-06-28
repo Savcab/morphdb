@@ -119,6 +119,12 @@ def apply_index_writes(c, app, object_type, guid, blob, fields):
     this in the same transaction as the blob write; the two then commit together
     and can never drift.
     """
+    if hasattr(c, "delete_field_index_for_object"):
+        c.delete_field_index_for_object(guid)
+        rows = index_rows_for(app, object_type, guid, blob, fields)
+        c.insert_field_index_rows(rows)
+        return
+
     c.execute("DELETE FROM field_index WHERE object_id = ?", (guid,))
     rows = index_rows_for(app, object_type, guid, blob, fields)
     if rows:
@@ -133,6 +139,26 @@ def reindex_field(c, app, object_type, field_name, fdef):
     one type — a one-time scan, like ``CREATE INDEX``. Idempotent: clears the
     field's rows first, then rebuilds. A ``json`` field is a no-op (not indexable).
     """
+    if hasattr(c, "delete_field_index_for_field"):
+        c.delete_field_index_for_field(app, object_type, field_name)
+        col = _COLUMN.get(fdef["type"])
+        if col is None:
+            return 0
+        rows = []
+        for r in c.list_objects(app, object_type):
+            try:
+                blob = json.loads(r["data"])
+            except Exception:
+                continue
+            if field_name not in blob:
+                continue
+            v = blob[field_name]
+            if v is None or not _matches_type(v, fdef["type"]):
+                continue
+            rows.append(_row(app, r["guid"], object_type, field_name, col, v))
+        c.insert_field_index_rows(rows)
+        return len(rows)
+
     c.execute("DELETE FROM field_index WHERE app = ? AND object_type = ? AND field_name = ?",
               (app, object_type, field_name))
     col = _COLUMN.get(fdef["type"])
@@ -161,6 +187,9 @@ def reindex_field(c, app, object_type, field_name, fdef):
 def drop_field(c, app, object_type, field_name):
     """Delete one field's index rows (its ``index`` flag was turned off, or the
     field was removed from the schema). Instant — no scan."""
+    if hasattr(c, "delete_field_index_for_field"):
+        c.delete_field_index_for_field(app, object_type, field_name)
+        return
     c.execute("DELETE FROM field_index WHERE app = ? AND object_type = ? AND field_name = ?",
               (app, object_type, field_name))
 
@@ -175,6 +204,28 @@ def backfill(c, app=None):
     aborting the rebuild (this runs inside ``init_db`` — a raise there would stop
     the daemon from starting).
     """
+    if hasattr(c, "delete_field_index_for_app"):
+        c.delete_field_index_for_app(app)
+        objs = c.list_objects(app=app)
+        schema_cache = {}
+        scanned = 0
+        for r in objs:
+            key = (r["app"], r["object_type"])
+            fields = schema_cache.get(key)
+            if fields is None:
+                srow = c.get_object_schema(*key)
+                fields = json.loads(srow["fields"]) if srow else {}
+                schema_cache[key] = fields
+            try:
+                rows = index_rows_for(r["app"], r["object_type"], r["guid"],
+                                      json.loads(r["data"]), fields)
+                if rows:
+                    c.insert_field_index_rows(rows)
+                scanned += 1
+            except Exception:
+                continue
+        return scanned
+
     if app is not None:
         c.execute("DELETE FROM field_index WHERE app = ?", (app,))
         objs = c.execute(

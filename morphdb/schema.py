@@ -45,9 +45,7 @@ def get_object_schema(app, name, required=False):
     Just the stored fields map — relations are resolved separately. This is the
     hot path for object reads/writes.
     """
-    row = db.conn().execute(
-        "SELECT * FROM object_schemas WHERE app = ? AND name = ?", (app, name)
-    ).fetchone()
+    row = db.storage().get_object_schema(app, name)
     if row is None:
         if required:
             raise not_found(f"No object type named '{name}'. Define it first.")
@@ -80,10 +78,8 @@ def get_type_doc(app, name, required=False):
 
 
 def list_type_docs(app):
-    rows = db.conn().execute(
-        "SELECT name FROM object_schemas WHERE app = ? ORDER BY name", (app,)
-    ).fetchall()
-    return [get_type_doc(app, r["name"], required=True) for r in rows]
+    names = db.storage().list_object_schema_names(app)
+    return [get_type_doc(app, name, required=True) for name in names]
 
 
 def upsert_type(app, name, fields=None, relations=None, merge=False):
@@ -102,10 +98,8 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
     if relations is not None and not isinstance(relations, dict):
         raise bad_request("'relations' must be an object mapping name -> definition.")
 
-    with db.transaction() as c:
-        existing = c.execute(
-            "SELECT * FROM object_schemas WHERE app = ? AND name = ?", (app, name)
-        ).fetchone()
+    with db.storage_transaction() as s:
+        existing = s.get_object_schema(app, name)
         ts = now_iso()
 
         # --- fields ---
@@ -119,18 +113,12 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
         else:
             final = json.loads(existing["fields"]) if existing else {}
 
-        if existing:
-            c.execute(
-                "UPDATE object_schemas SET fields = ?, updated_at = ? "
-                "WHERE app = ? AND name = ?",
-                (json.dumps(final), ts, app, name),
-            )
-        else:
-            c.execute(
-                "INSERT INTO object_schemas (app, name, fields, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (app, name, json.dumps(final), ts, ts),
-            )
+        s.put_object_schema(
+            app, name, json.dumps(final),
+            existing["created_at"] if existing else ts,
+            ts,
+            bool(existing),
+        )
 
         # Reconcile field_index with the new fields' index flags. Only an index
         # flag flip (or an indexed field's type change) touches the index —
@@ -143,39 +131,37 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
             old_idx = bool(old.get("index")) if isinstance(old, dict) else False
             if new_idx and (not old_idx or
                             (isinstance(old, dict) and old.get("type") != fdef["type"])):
-                fieldindex.reindex_field(c, app, name, fname, fdef)
+                fieldindex.reindex_field(s, app, name, fname, fdef)
             elif old_idx and not new_idx:
-                fieldindex.drop_field(c, app, name, fname)
+                fieldindex.drop_field(s, app, name, fname)
         for fname, old in old_fields.items():
             if fname not in final and isinstance(old, dict) and old.get("index"):
-                fieldindex.drop_field(c, app, name, fname)
+                fieldindex.drop_field(s, app, name, fname)
 
         # --- relations ---
         touched = {name}
         if relations is not None:
             for key, raw in relations.items():
-                d = assoc.upsert_relation(c, app, name, key, raw)
+                d = assoc.upsert_relation(s, app, name, key, raw)
                 touched.add(d["to_type"])
             if not merge:
-                assoc.prune_forward_relations(c, app, name, set(relations.keys()))
+                assoc.prune_forward_relations(s, app, name, set(relations.keys()))
 
         # Field names and relation names share the object body namespace, so they
         # must not collide on any affected type.
         for t in touched:
-            _assert_no_collisions(c, app, t)
+            _assert_no_collisions(s, app, t)
 
     return get_type_doc(app, name, required=True)
 
 
-def _assert_no_collisions(c, app, type_name):
-    row = c.execute(
-        "SELECT fields FROM object_schemas WHERE app = ? AND name = ?", (app, type_name)
-    ).fetchone()
+def _assert_no_collisions(s, app, type_name):
+    row = s.get_object_schema(app, type_name)
     if row is None:
         return
     field_keys = set(json.loads(row["fields"]).keys())
     seen = set()
-    for v in assoc.relation_views(app, type_name, c):
+    for v in assoc.relation_views(app, type_name, s):
         k = v["key"]
         if k in field_keys:
             raise bad_request(
@@ -197,26 +183,21 @@ def delete_type(app, name):
     metadata and the edge rows go. Relations where this type was an endpoint are
     removed from the other types' schemas too. Scoped to ``app``.
     """
-    with db.transaction() as c:
-        row = c.execute(
-            "SELECT * FROM object_schemas WHERE app = ? AND name = ?", (app, name)
-        ).fetchone()
+    with db.storage_transaction() as s:
+        row = s.get_object_schema(app, name)
         if row is None:
             raise not_found(f"No object type named '{name}'.")
 
-        guids = [
-            r["guid"] for r in c.execute(
-                "SELECT guid FROM objects WHERE app = ? AND object_type = ?", (app, name)
-            ).fetchall()
-        ]
+        guids = [r["guid"] for r in s.list_objects(app, name)]
         if guids:
-            qmarks = ",".join("?" * len(guids))
-            c.execute(f"DELETE FROM objects WHERE app = ? AND guid IN ({qmarks})",
-                      [app, *guids])
+            for guid in guids:
+                s.delete_field_index_for_object(guid)
+                s.delete_edges_touching_object(app, guid)
+            s.delete_objects_by_guids(app, guids)
 
         # Drop relationships (and their edges) where this type is an endpoint;
         # this also clears any edges from this type's objects to neighbors.
-        assoc.delete_relations_touching_type(c, app, name)
-        c.execute("DELETE FROM object_schemas WHERE app = ? AND name = ?", (app, name))
+        assoc.delete_relations_touching_type(s, app, name)
+        s.delete_object_schema(app, name)
 
     return {"deleted": name, "objects_removed": len(guids)}
