@@ -1,14 +1,16 @@
 name: Deploy example clones to GitHub Pages
 
-# Publishes examples/ as a static site: the gallery (examples/index.html) is the
-# root, each clone lives at /<app>/. The clones talk to the cloud MorphDB backend
-# (a public Lambda + Postgres), so they work fully hosted — no local server.
+# Publishes a static site: the gallery (examples/index.html) is the root, each
+# clone lives at /<app>/, and the design specs live at /specs/. Both the clones
+# and the spec comment threads talk to the cloud MorphDB backend (a public Lambda
+# + Postgres), so they work fully hosted — no local server.
 
 on:
   push:
     branches: [main]
     paths:
       - 'examples/**'
+      - 'specs/**'
       - '.github/workflows/deploy-clones.yml'
   workflow_dispatch:
 
@@ -31,8 +33,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Stage the site: gallery + clones at the root, design specs under /specs/.
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -a examples/. _site/
+          mkdir -p _site/specs
+          cp -a specs/. _site/specs/
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: examples
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MorphRules — Per-User Authorization for MorphDB · Design Spec v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#0f2230;       /* deep prussian/petrol blue — the blueprint ground */
+  --ground-2:#0b1a26;     /* darker panel */
+  --panel:#13283800;      /* transparent fallback */
+  --ink:#ECE4D2;          /* warm bone text */
+  --ink-2:#b9c6cf;        /* dimmer */
+  --ink-3:#8aa0ad;        /* dimmest / captions */
+  --line:#27424f;         /* blue hairline */
+  --line-2:#1c3340;
+  --brass:#E7B24C;        /* the key / section numbers / highlight */
+  --brass-d:#b98a2f;
+  --allow:#54c08a;        /* grant — semantic only */
+  --allow-bg:#11362b;
+  --deny:#e0664b;         /* deny — semantic only */
+  --deny-bg:#3a1f1b;
+  --lock:#7f93a0;         /* locked */
+  --cyan:#73b8d0;         /* links / identifiers / open-question */
+  --cyan-bg:#10303b;
+  --maxw:1240px;
+  --rail:268px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  margin:0;background:
+    radial-gradient(1100px 620px at 84% -8%, #163140 0%, rgba(22,49,64,0) 60%),
+    radial-gradient(900px 600px at -6% 4%, #11293a 0%, rgba(17,41,58,0) 55%),
+    var(--ground);
+  color:var(--ink);
+  font-family:"Newsreader",Georgia,serif;
+  font-size:18px;line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px;
+  display:grid;grid-template-columns:var(--rail) minmax(0,1fr);gap:54px;align-items:start}
+
+/* ---------- sidebar ---------- */
+aside{position:sticky;top:0;height:100vh;overflow:auto;padding:30px 0 60px;
+  scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+aside::-webkit-scrollbar{width:7px}aside::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.brand{font-family:"Space Grotesk",sans-serif;font-weight:700;letter-spacing:.02em;
+  font-size:18px;color:var(--ink);display:flex;align-items:center;gap:9px;margin-bottom:3px}
+.brand .key{color:var(--brass)}
+.brand-sub{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:24px}
+nav a{display:block;font-family:"Space Grotesk",sans-serif;font-size:13px;line-height:1.32;
+  color:var(--ink-2);text-decoration:none;padding:5px 12px 5px 0;border-left:2px solid transparent;
+  padding-left:13px;transition:color .15s,border-color .15s}
+nav a .n{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);margin-right:9px}
+nav a:hover{color:var(--ink)}
+nav a.active{color:var(--brass);border-left-color:var(--brass)}
+nav a.active .n{color:var(--brass-d)}
+.legend{margin-top:26px;padding:15px 14px;border:1px solid var(--line-2);border-radius:8px;
+  background:rgba(8,20,29,.5)}
+.legend h4{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 11px}
+.legend .row{display:flex;align-items:center;gap:9px;font-family:"Space Grotesk",sans-serif;
+  font-size:12px;color:var(--ink-2);margin:7px 0}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.dot.a{background:var(--allow)}.dot.d{background:var(--deny)}.dot.l{background:var(--lock)}
+.dot.b{background:var(--brass)}.dot.c{background:var(--cyan)}
+
+/* ---------- main ---------- */
+main{padding:30px 0 140px;min-width:0}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:20px}
+h1{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:clamp(40px,7vw,76px);line-height:.96;
+  letter-spacing:-.02em;margin:0 0 6px}
+h1 .lo{color:var(--ink-3);font-weight:500}
+.tagline{font-size:clamp(20px,2.4vw,26px);line-height:1.4;color:var(--ink);max-width:30ch;margin:14px 0 0;
+  font-weight:400}
+.tagline b{color:var(--brass);font-weight:600}
+.thesis{font-family:"Newsreader",serif;font-style:italic;font-size:21px;line-height:1.5;color:var(--ink-2);
+  border-left:3px solid var(--brass);padding:4px 0 4px 20px;margin:30px 0 8px;max-width:62ch}
+.metarow{display:flex;flex-wrap:wrap;gap:9px;margin:26px 0 4px}
+.tag{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.04em;color:var(--ink-2);
+  border:1px solid var(--line);border-radius:100px;padding:5px 12px}
+.tag b{color:var(--ink);font-weight:600}
+
+section{padding:46px 0 8px;border-top:1px solid var(--line-2);margin-top:18px}
+section:first-of-type{border-top:none}
+.shead{display:flex;align-items:baseline;gap:16px;margin-bottom:18px}
+.snum{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--brass);font-weight:500;
+  border:1px solid var(--brass-d);border-radius:6px;padding:3px 9px;flex:none;margin-top:6px}
+h2{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:clamp(26px,3.4vw,36px);line-height:1.06;
+  letter-spacing:-.015em;margin:0;color:var(--ink)}
+h3{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:20px;letter-spacing:-.01em;
+  margin:34px 0 10px;color:var(--ink)}
+h3 .hn{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--brass-d);margin-right:10px}
+p{margin:0 0 16px;max-width:70ch}
+main a{color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(115,184,208,.32)}
+main a:hover{border-bottom-color:var(--cyan)}
+strong{color:var(--ink);font-weight:600}
+em{color:var(--ink)}
+code,.mono{font-family:"IBM Plex Mono",monospace;font-size:.86em;color:var(--brass);
+  background:rgba(231,178,76,.08);border:1px solid rgba(231,178,76,.16);border-radius:4px;padding:.06em .36em}
+.fref{font-family:"IBM Plex Mono",monospace;font-size:.78em;color:var(--cyan);background:rgba(115,184,208,.07);
+  border:1px solid rgba(115,184,208,.16);border-radius:4px;padding:.05em .34em;white-space:nowrap}
+ul,ol{max-width:70ch;margin:0 0 18px;padding-left:22px}
+li{margin:7px 0}
+ul.tight li{margin:3px 0}
+
+/* code / rule blocks */
+pre{font-family:"IBM Plex Mono",monospace;font-size:13.5px;line-height:1.65;color:var(--ink);
+  background:linear-gradient(180deg,#0a1822,#081320);border:1px solid var(--line);
+  border-left:3px solid var(--brass);border-radius:9px;padding:16px 18px;overflow:auto;margin:0 0 18px}
+pre .cap{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+  margin-bottom:9px;border:none}
+.t-kw{color:#9fd0e0}.t-op{color:var(--brass)}.t-str{color:#8fd6a8}.t-com{color:var(--ink-3);font-style:italic}.t-num{color:#e0a0b8}
+
+/* callouts */
+.call{border:1px solid var(--line);border-radius:10px;padding:16px 18px 4px;margin:22px 0;
+  background:rgba(8,20,29,.45);position:relative}
+.call .lab{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.call.decision{border-left:3px solid var(--brass)}.call.decision .lab{color:var(--brass)}
+.call.threat{border-left:3px solid var(--deny);background:rgba(58,31,27,.32)}.call.threat .lab{color:var(--deny)}
+.call.rec{border-left:3px solid var(--allow)}.call.rec .lab{color:var(--allow)}
+.call.note{border-left:3px solid var(--cyan)}.call.note .lab{color:var(--cyan)}
+.call p{max-width:64ch}
+.call p:last-child{margin-bottom:14px}
+
+/* chips */
+.chip{font-family:"Space Grotesk",sans-serif;font-size:11.5px;font-weight:600;letter-spacing:.02em;
+  border-radius:5px;padding:2px 8px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.chip.allow{color:#bff0d6;background:var(--allow-bg);border:1px solid #2c6b53}
+.chip.deny{color:#f3c2b5;background:var(--deny-bg);border:1px solid #7a3a2e}
+.chip.lock{color:#cdd8de;background:#23323b;border:1px solid #3b4d57}
+.chip.pub{color:#cfeaf2;background:var(--cyan-bg);border:1px solid #2d5a68}
+.chip.brass{color:#f4d79a;background:#2c2413;border:1px solid #5e4a1f}
+
+/* tables */
+.tw{overflow:auto;margin:0 0 20px;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-family:"Space Grotesk",sans-serif;font-size:13.5px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-2);vertical-align:top}
+th{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;background:rgba(8,20,29,.5);position:sticky;top:0}
+tr:last-child td{border-bottom:none}
+td{color:var(--ink-2)}td strong{color:var(--ink)}
+td .mono,th .mono{background:none;border:none;padding:0;color:var(--brass)}
+.sev{font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.06em;
+  padding:2px 7px;border-radius:4px;white-space:nowrap}
+.sev.c{color:#f3c2b5;background:var(--deny-bg);border:1px solid #7a3a2e}
+.sev.h{color:#f4d79a;background:#2c2413;border:1px solid #5e4a1f}
+.sev.m{color:#cdd8de;background:#23323b;border:1px solid #3b4d57}
+.sev.l{color:#9aa9b1;background:#1a2730;border:1px solid #2b3a43}
+
+/* key hierarchy cards */
+.kgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:8px 0 20px}
+.kcard{border:1px solid var(--line);border-radius:10px;padding:15px 16px;background:rgba(8,20,29,.4)}
+.kcard h4{font-family:"Space Grotesk",sans-serif;font-size:15px;margin:0 0 4px;color:var(--ink);font-weight:600}
+.kcard .pfx{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--brass);margin-bottom:9px;
+  word-break:break-all}
+.kcard p{font-size:13.5px;line-height:1.5;color:var(--ink-2);margin:0;max-width:none}
+.kcard .bp{margin-top:10px}
+
+/* signature: the evaluation matrix */
+.evz{border:1px solid var(--line);border-radius:14px;padding:20px;margin:14px 0 8px;
+  background:linear-gradient(180deg,rgba(13,28,40,.7),rgba(8,18,26,.7))}
+.evz .head{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:4px}
+.evz .rulemini{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-2);margin-bottom:16px}
+.matrix{overflow:auto}
+.matrix table{border-collapse:separate;border-spacing:6px;width:100%;min-width:540px}
+.matrix th{background:none;border:none;position:static;text-transform:none;letter-spacing:0;
+  font-family:"Space Grotesk",sans-serif;font-size:12px;color:var(--ink-2);padding:4px 8px}
+.matrix th.idh{text-align:right;white-space:nowrap}
+.matrix th .idsub{display:block;font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--ink-3)}
+.matrix td{padding:0;border:none}
+.cell{width:100%;cursor:pointer;border-radius:7px;padding:10px 6px;text-align:center;border:1px solid transparent;
+  font-family:"Space Grotesk",sans-serif;font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--ink);
+  transition:transform .12s,box-shadow .12s}
+.cell:hover{transform:translateY(-1px)}
+.cell:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.cell.allow{background:var(--allow-bg);border-color:#2c6b53;color:#bff0d6}
+.cell.deny{background:var(--deny-bg);border-color:#7a3a2e;color:#f3c2b5}
+.cell.bypass{background:#2c2413;border-color:#5e4a1f;color:#f4d79a}
+.cell.sel{box-shadow:0 0 0 2px var(--brass)}
+.evdetail{margin-top:18px;border-top:1px solid var(--line-2);padding-top:16px}
+.evdetail .dl{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:6px}
+.evdetail .dd{font-size:15px;line-height:1.5;color:var(--ink);margin-bottom:14px;font-family:"Space Grotesk",sans-serif}
+.evdetail .dd b{color:var(--ink)}
+.evdetail pre{margin:0}
+
+.foot{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);
+  font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-3);line-height:1.7}
+.foot a{color:var(--cyan)}
+.refs{font-family:"Space Grotesk",sans-serif;font-size:13px;columns:2;column-gap:36px}
+.refs div{break-inside:avoid;margin-bottom:9px;color:var(--ink-2)}
+.refs a{word-break:break-all}
+
+.topbar{display:none}
+@media (max-width:920px){
+  .wrap{grid-template-columns:1fr;gap:0;padding:0 20px}
+  aside{position:static;height:auto;overflow:visible;padding:18px 0 0;border-bottom:1px solid var(--line)}
+  nav{display:none}
+  .legend{margin-top:14px}
+  main{padding-top:22px}
+  .kgrid{grid-template-columns:1fr}
+  .refs{columns:1}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<aside>
+  <div class="brand"><span class="key">⚷</span> MorphRules</div>
+  <div class="brand-sub">MorphDB · Design Spec</div>
+  <nav id="toc">
+    <a href="#abstract"><span class="n">00</span>Abstract</a>
+    <a href="#problem"><span class="n">01</span>The gap today</a>
+    <a href="#goals"><span class="n">02</span>Goals &amp; non-goals</a>
+    <a href="#priorart"><span class="n">03</span>Prior art</a>
+    <a href="#overview"><span class="n">04</span>Design overview</a>
+    <a href="#identity"><span class="n">05</span>Identity &amp; keys</a>
+    <a href="#roles"><span class="n">06</span>Roles</a>
+    <a href="#rules"><span class="n">07</span>The rule model</a>
+    <a href="#eval"><span class="n">08</span>Evaluation &amp; pushdown</a>
+    <a href="#ownership"><span class="n">09</span>Ownership &amp; reserved fields</a>
+    <a href="#fieldlevel"><span class="n">10</span>Field visibility</a>
+    <a href="#examples"><span class="n">11</span>Worked examples</a>
+    <a href="#surface"><span class="n">12</span>Data model &amp; API</a>
+    <a href="#migration"><span class="n">13</span>Migration</a>
+    <a href="#threats"><span class="n">14</span>Threat model</a>
+    <a href="#phasing"><span class="n">15</span>Phasing</a>
+    <a href="#decisions"><span class="n">16</span>Decision log</a>
+    <a href="#open"><span class="n">17</span>Open questions</a>
+    <a href="#refs"><span class="n">18</span>References</a>
+  </nav>
+  <div class="legend">
+    <h4>Access legend</h4>
+    <div class="row"><span class="dot a"></span> Allow — rule satisfied</div>
+    <div class="row"><span class="dot d"></span> Deny — masked as 404 / 200-empty</div>
+    <div class="row"><span class="dot b"></span> Secret key — bypasses rules</div>
+    <div class="row"><span class="dot l"></span> Locked — secret-key only</div>
+    <div class="row"><span class="dot c"></span> Public — any holder, incl. anon</div>
+  </div>
+</aside>
+
+<main>
+
+<header class="hero" id="abstract">
+  <div class="eyebrow">MorphDB · Within-App Authorization · Design Specification</div>
+  <h1>Morph<span class="lo">Rules</span></h1>
+  <p class="tagline">Per-user permissions <b>inside</b> an app — enforced by the database, not re-invented by every app.</p>
+  <p class="thesis">One small expression, per object type per action, that is <em>simultaneously</em> the authorization gate and the <code style="background:none;border:none;color:var(--brass);padding:0">WHERE</code> clause — pushed down through the index MorphDB already has, identically on SQLite and Postgres.</p>
+  <div class="metarow">
+    <span class="tag">Status <b>Draft v1</b></span>
+    <span class="tag">Codename <b>MorphRules</b></span>
+    <span class="tag">Backend <b>stdlib-only · dual SQLite/Postgres</b></span>
+    <span class="tag">Scope <b>spec only — no code yet</b></span>
+  </div>
+</header>
+
+<!-- 00 ABSTRACT -->
+<section>
+  <p>MorphDB isolates app&nbsp;A from app&nbsp;B with the <code>X-App-Key</code> header. It has <strong>no concept of an end-user inside an app</strong>. And because the skill tells vibe-coded frontends to ship that key in client JS as <span class="fref">window.MORPHDB_APP</span> (<span class="fref">SKILL.md:99,163-171</span>), the key is a public bearer secret: anyone who opens DevTools gets full read / write / <strong>DELETE</strong> over every object — and every schema — in the app. The Lambda Function URL is intentionally public (<span class="fref">lambda_function.py:16-17</span>) and CORS reflects any origin, so there is no gateway to lean on. <em>That</em> is the gap this spec closes.</p>
+
+  <p>The design — <strong>MorphRules v1</strong> — adds a per-end-user authorization layer enforced entirely inside MorphDB, on three foundations:</p>
+  <ul>
+    <li><strong>A key split.</strong> The all-powerful shared key is replaced by a two-tier API key: <code>mdb_sk_</code> (secret, server-side, bypasses all rules) and <code>mdb_pk_</code> (publishable, browser-safe, carries <em>no</em> power of its own — every request is rule-gated).</li>
+    <li><strong>Real end-users.</strong> A per-app <code>user</code> type plus <code>/auth</code> routes mint app-bound opaque session tokens (stdlib <code>scrypt</code>, instant revocation) that populate an <code>auth</code> namespace.</li>
+    <li><strong>The rule <em>is</em> the filter.</strong> Each type carries five rule slots (<code>list / get / create / update / delete</code>). A list rule lowers to the exact <code>guid IN (SELECT … FROM field_index …)</code> shape MorphDB already emits — so list filtering is index-backed, leak-safe, and dual-backend with <strong>zero new SQL and no Postgres RLS</strong>. The same parsed expression evaluates as a Python predicate for the single-object actions.</li>
+  </ul>
+
+  <div class="call rec">
+    <div class="lab">◇ How this spec was built</div>
+    <p>Fifteen agents researched Firebase, Supabase / Postgres RLS, PocketBase, Hasura, Zanzibar / ReBAC, the RBAC-ABAC-ReBAC literature, and stdlib auth mechanics; mapped MorphDB's live code to file&nbsp;and&nbsp;line; produced three competing designs; and adversarially red-teamed the winner. The red-team <strong>reproduced two cross-tenant data leaks in SQLite</strong> against an earlier draft and the fixes are folded in below. Every <span class="fref">file:line</span> reference is from the real tree.</p>
+  </div>
+</section>
+
+<!-- 01 PROBLEM -->
+<section id="problem">
+  <div class="shead"><span class="snum">01</span><h2>The gap today</h2></div>
+  <p>MorphDB's request path is two thin HTTP shims — the stdlib server (<span class="fref">server.py:114-168</span>) and the Lambda (<span class="fref">lambda_function.py:75-128</span>) — feeding <em>one</em> shared router. Every authed handler in <span class="fref">routes.py:70-192</span> begins with the same line, <code>app = apps.require_app(req)</code>, and immediately delegates to <code>objects.*</code>. That uniformity is the good news: a single choke point covers both transports.</p>
+  <p>The bad news is what <code>require_app</code> does: it validates the app key by a <strong>plaintext string compare</strong> (<span class="fref">apps.py:67-86</span>; the key is stored verbatim, <span class="fref">apps.py:46</span>) and returns nothing but the app key. There is no user. Any holder of the key is fully trusted for:</p>
+  <ul class="tight">
+    <li><code>POST/GET/PUT/PATCH/DELETE /objects/*</code> — read &amp; mutate every row;</li>
+    <li><code>PUT/DELETE /schema/*</code> — rewrite or drop any type;</li>
+    <li><code>DELETE /app/{key}</code> — <strong>wipe the entire tenant</strong> (<span class="fref">routes.py:82-84</span>).</li>
+  </ul>
+  <div class="call threat">
+    <div class="lab">▲ Threat — the shared browser key</div>
+    <p>The skill instructs frontends to embed the app key and send it on every request. Combined with the public no-auth gateway and origin-reflecting CORS, the key is visible in any browser's network tab and replayable by anyone, from any origin. App-vs-app isolation holds; <strong>within an app, every visitor is effectively an admin.</strong> For a shared to-do demo that is fine. For a gym with members, a storefront with customers, or the Alaska board, it is the whole problem.</p>
+  </div>
+  <p>What MorphDB already has that we will <em>reuse</em>: a derived index, <code>field_index</code> (<span class="fref">db.py:82-94</span>), that turns <code>?status=active</code> from a blob-scan into an index probe via <code>_indexed_field_clause</code> (<span class="fref">objects.py:386-443</span>), emitting <code>guid IN (SELECT object_id FROM field_index WHERE app=? AND object_type=? AND field_name=? AND str_val=?)</code>. Every fragment is plain ANSI SQL with <code>?</code> placeholders that the backend seam rewrites to <code>%s</code> for Postgres (<span class="fref">backend.py:327-334</span>). <strong>This is the exact template an owner-filter pushes down through — no RLS required.</strong></p>
+</section>
+
+<!-- 02 GOALS -->
+<section id="goals">
+  <div class="shead"><span class="snum">02</span><h2>Goals &amp; non-goals</h2></div>
+  <h3><span class="hn">2.1</span>Goals</h3>
+  <ul>
+    <li>Add per-end-user authorization <strong>within</strong> an app, enforced at the MorphDB level.</li>
+    <li><strong>Never leak across tenants</strong> when a rule is injected: every compiled fragment is wrapped in one outer paren and constant-folds never emit a bare <code>TRUE</code>/<code>FALSE</code> token, so a top-level <code>OR</code> cannot escape the <code>app</code>/<code>object_type</code> guards.</li>
+    <li>List <strong>never</strong> fetch-all-then-filter: the predicate pushes down through <code>field_index</code> and is injected <em>before</em> <code>COUNT</code> and <code>LIMIT</code>, so totals and pagination reveal only visible rows.</li>
+    <li>Make <code>hidden</code>/<code>private_owner</code> a <strong>real</strong> confidentiality boundary — blocking filter and sort, not just projection — killing the count/ordering/binary-search oracle.</li>
+    <li>Replace the in-browser all-powerful key with a rule-bound publishable key + a rules-bypassing secret key, and lock the control plane to the secret key from day one.</li>
+    <li>Give each app real end-users with stdlib-only credentials: app-bound opaque tokens, <code>scrypt</code> hashing, constant-time compare, enumeration-resistant login.</li>
+    <li>Server-stamp and protect <code>_owner</code>/<code>role</code>/reserved fields so a client can never forge ownership or escalate role.</li>
+    <li>Keep the guarantee <strong>byte-identical on SQLite and Postgres</strong> (COLLATE C, ASCII-only contains, a per-operator parity matrix).</li>
+    <li>Stay incrementally adoptable: default-deny engages only when a type has a rule or a publishable key is used; the bare app key stays legacy-open on rule-less types so live demos keep working.</li>
+  </ul>
+  <h3><span class="hn">2.2</span>Non-goals (v1/v2)</h3>
+  <ul class="tight">
+    <li>No Postgres RLS as the mechanism — SQLite has none, so the portable guarantee lives in MorphDB's query layer.</li>
+    <li>No record <em>sharing</em> with other users/groups and no folder/org hierarchies — deferred to v3 ReBAC. The v1 grammar has no cross-object joins, keeping the get-vs-list implication solver decidable.</li>
+    <li>No full per-<code>(role,type,action)</code> column allow-list matrix — its config weight fights MorphDB's constant-edit workflow. Only a flat <code>hidden</code>/<code>server_set</code>/<code>private_owner</code> flag.</li>
+    <li>No hand-written DSL with functions, arithmetic, or <code>let</code>-bindings — a small non-Turing-complete evaluator covers owner/role/public.</li>
+    <li>No JWTs in v1 — opaque server-side sessions give instant revocation and app-binding.</li>
+    <li>No change to the plaintext app key or the no-auth gateway — authz is enforced inside MorphDB.</li>
+  </ul>
+</section>
+
+<!-- 03 PRIOR ART -->
+<section id="priorart">
+  <div class="shead"><span class="snum">03</span><h2>Prior art — what we take, what we leave</h2></div>
+  <p>Five production systems and the authz literature were studied in primary docs. The throughline: <strong>for a list endpoint, the rule must become a query predicate</strong> — anything that fetches-then-filters either leaks counts (a per-object check) or fails the whole query (Firebase). MorphDB sits closest to PocketBase: a single binary with schema-attached rules over an embedded DB.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>System</th><th>Model</th><th>List pushdown</th><th>What we take</th><th>What we leave</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Firebase</strong><br>Firestore Rules</td>
+        <td>Declarative CEL-ish <code>allow</code> per path; <code>request.auth</code> + <code>resource.data</code>.</td>
+        <td><strong>Rules are NOT filters</strong> — a query that <em>could</em> return a forbidden doc fails entirely.</td>
+        <td>The granular <code>get</code>-vs-<code>list</code> split; default-deny; the <code>request.resource</code> (incoming) vs <code>resource</code> (stored) distinction.</td>
+        <td>The fail-the-query model (hostile to vibe coders) and the client-must-mirror-the-rule footgun.</td>
+      </tr>
+      <tr>
+        <td><strong>Supabase</strong><br>Postgres RLS</td>
+        <td>SQL <code>USING</code>/<code>WITH CHECK</code> per role per command; JWT <code>auth.uid()</code>.</td>
+        <td>True in-DB row filtering — the gold standard. <strong>But Postgres-only.</strong></td>
+        <td>The anon-key / service_role-key split; <code>USING</code> (which rows) vs <code>CHECK</code> (allowed writes); index the policy column.</td>
+        <td>RLS itself — SQLite has none; the portable guarantee must live above the DB.</td>
+      </tr>
+      <tr>
+        <td><strong>PocketBase</strong><br>API rules <span class="chip pub" style="font-size:9.5px;padding:1px 6px">closest analog</span></td>
+        <td>5 rule slots per collection; each rule <em>is</em> a filter expr compiled into the SQL <code>WHERE</code>.</td>
+        <td><strong>The rule = the pushdown.</strong> <code>null</code>=locked, <code>""</code>=public, expr=conditional.</td>
+        <td>The whole spine: per-action filter rules on the schema, AND-combined with client filters; the null/empty/expr tri-state.</td>
+        <td>Nothing structural — we harden the tenant-scoping the red-team broke.</td>
+      </tr>
+      <tr>
+        <td><strong>Hasura</strong></td>
+        <td>Per-<code>(role,table,op)</code> boolean predicate + column allow-list; session vars.</td>
+        <td>Compiled into the SQL <code>WHERE</code>; <code>filter</code> ≠ <code>check</code>.</td>
+        <td><code>filter</code>-vs-<code>check</code> (stops a user moving a row out of scope); flat field-visibility flag (a trimmed column allow-list).</td>
+        <td>The full role×table×column matrix — too much config for constant schema edits.</td>
+      </tr>
+      <tr>
+        <td><strong>Zanzibar</strong><br>SpiceDB / OpenFGA</td>
+        <td>Relationship tuples; <code>Check</code> is a <em>point</em> query, not a filter.</td>
+        <td>No free <code>WHERE</code> pushdown — listing needs a separate <code>LookupResources</code> + <code>id IN (…)</code>.</td>
+        <td>The v3 escape hatch for true N-way sharing &amp; hierarchies, on the existing <code>associations</code> edge table.</td>
+        <td>All of it in v1/v2 — overkill, and it breaks the clean list pushdown.</td>
+      </tr>
+      <tr>
+        <td><strong>RBAC/ABAC/ReBAC</strong><br>+ Oso/Cerbos/OPA</td>
+        <td>PDP must return a <em>partial</em> / query plan, else fetch-all-then-filter leaks.</td>
+        <td>Ownership is the simplest, most-needed ABAC.</td>
+        <td>RBAC + ownership-as-ABAC as the default; a tiny non-Turing-complete predicate language (never embedded app code).</td>
+        <td>Heavyweight external engines and Turing-complete policy languages.</td>
+      </tr>
+      <tr>
+        <td><strong>Key &amp; token mechanics</strong><br>Stripe / Supabase</td>
+        <td>—</td>
+        <td>—</td>
+        <td>Two-tier key (<code>pk</code>/<code>sk</code>); opaque tokens stored only as a hash; <code>scrypt</code> + per-user salt + constant-time compare; guard against mass-assignment.</td>
+        <td>JWTs in v1 (revocation lag); plaintext anything.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="thesis" style="border-color:var(--cyan);font-size:18px">The cross-cutting lesson from all five: a list authorization that is not a query predicate is either slow, leaky, or brittle. PocketBase already proved the “rule = WHERE clause” model for a single-binary embedded DB; MorphDB's <code>field_index</code> makes it portable to Postgres too.</p>
+</section>
+
+<!-- 04 OVERVIEW -->
+<section id="overview">
+  <div class="shead"><span class="snum">04</span><h2>Design overview</h2></div>
+  <p>Three principals, one expression language, one choke point.</p>
+  <h3><span class="hn">4.1</span>The spine</h3>
+  <p>For each object type, the schema gains a <code>rules</code> block with five slots. A slot is one expression in a tiny boolean grammar over three namespaces — <code>auth</code> (the current user), the row's own fields, and <code>new</code> (the incoming write). That single expression does double duty:</p>
+  <ul>
+    <li><strong>For <code>list</code></strong> it is <em>lowered to SQL</em> — the same <code>guid IN (SELECT … FROM field_index …)</code> shape MorphDB already emits — wrapped in one outer paren and injected before <code>COUNT</code>/<code>LIMIT</code>. Rows a user can't see never leave the database, and counts can't leak them.</li>
+    <li><strong>For <code>get</code>/<code>create</code>/<code>update</code>/<code>delete</code></strong> the <em>same parsed AST</em> evaluates as a Python predicate against the loaded (or incoming) row.</li>
+  </ul>
+  <h3><span class="hn">4.2</span>One choke point, fail-closed</h3>
+  <p>Identity resolution and rule evaluation hook in at exactly one place. <code>require_app</code> is extended to return <code>(app, principal)</code>, and a required <code>principal</code> argument is threaded into <code>objects.list/get/create/upsert/delete</code> — <strong>with no default</strong>. A handler that forgets it raises a <code>TypeError</code>, so a missing check is a loud call error, not a silent open. CI tests fail the build on bypass.</p>
+  <div class="call decision">
+    <div class="lab">◆ Decision — adopt PocketBase's spine, fix its tenant-scoping</div>
+    <p>Candidate A (“the rule <em>is</em> the <code>WHERE</code> clause”) won because its core mechanism reuses machinery that already exists twice in the tree (<code>_indexed_field_clause</code> and <code>_relation_clause</code>), so list pushdown is index-backed and dual-backend with zero new SQL. The red-team then reproduced a cross-tenant leak when a top-level-<code>OR</code> rule is injected as a bare fragment into the existing <code>AND</code>-join — fixed by the outer-paren + never-bare-<code>TRUE</code>/<code>FALSE</code> invariants in §8.</p>
+  </div>
+</section>
+
+<!-- 05 IDENTITY -->
+<section id="identity">
+  <div class="shead"><span class="snum">05</span><h2>Identity &amp; keys</h2></div>
+  <h3><span class="hn">5.1</span>The key hierarchy</h3>
+  <div class="kgrid">
+    <div class="kcard">
+      <h4>App key <span class="chip pub">tenant selector</span></h4>
+      <div class="pfx">X-App-Key · client-chosen · plaintext, unchanged</div>
+      <p>Selects the tenant namespace, exactly as today. Below the rule layer every clause still carries <code>app=?</code>. On a rule-less type it stays legacy-open; on the <strong>control plane it is hard-rejected</strong>.</p>
+    </div>
+    <div class="kcard">
+      <h4>Secret key <span class="chip brass">bypasses rules</span></h4>
+      <div class="pfx">X-Api-Key: mdb_sk_… · secrets.token_urlsafe(32)</div>
+      <p>Server-side only — migrations, admin tooling, schema &amp; control-plane edits. The one principal that bypasses all rules and field-visibility. Required for <code>PUT/DELETE /schema</code> and <code>DELETE /app</code>. Never shipped to a browser.</p>
+    </div>
+    <div class="kcard">
+      <h4>Publishable key <span class="chip pub">browser-safe</span></h4>
+      <div class="pfx">X-Api-Key: mdb_pk_…</div>
+      <p>What the frontend ships instead of a powerful key. Carries <strong>no power of its own</strong> — it merely lets the holder reach the rules engine as anonymous (or alongside a session). Default-deny the moment it arrives. May never reach the control plane.</p>
+    </div>
+    <div class="kcard">
+      <h4>Session token <span class="chip allow">the authenticated tier</span></h4>
+      <div class="pfx">Authorization: Bearer … · stored as sha256(app:token)</div>
+      <p>An end-user of one app. Minted at <code>/auth/login</code>, sent alongside the publishable key. Populates <code>auth.id</code>/<code>auth.role</code>/<code>auth.&lt;field&gt;</code>, read fresh from the live user row each request. <strong>Instant revocation</strong> by deleting the session row.</p>
+    </div>
+  </div>
+  <div class="call note">
+    <div class="lab">› Precedence when both arrive</div>
+    <p>If a request carries both <code>X-App-Key</code> and <code>X-Api-Key</code>, <strong>the API key wins</strong>: a publishable key rule-gates (default-deny on rule-less types), a secret key bypasses. The bare app key only takes effect when no API key is sent — so sending the publishable key <em>opts the request into the secure path</em>, which is what a migrating frontend wants.</p>
+  </div>
+
+  <h3><span class="hn">5.2</span>Users &amp; tokens (stdlib only)</h3>
+  <p>End-users are ordinary <code>objects</code> rows of a per-app <code>user</code> type — so they inherit app isolation, projection, and the field index — but are managed <strong>only</strong> via <code>/auth</code> routes. The generic <code>POST/PUT/PATCH/DELETE /objects/user</code> door is hard-blocked, so there is no second path to tamper with <code>role</code> or <code>password_hash</code>.</p>
+  <ul class="tight">
+    <li><strong>Password hashing:</strong> <code>hashlib.scrypt(pw, salt, n=2¹⁵, r=8, p=2, dklen=32)</code>, salt from <code>secrets.token_bytes(16)</code>; verify with <code>hmac.compare_digest</code>. (<code>pbkdf2_hmac</code> 600k is the documented memory-capped fallback.)</li>
+    <li><strong>Login is constant-time &amp; enumeration-resistant:</strong> a fixed-parameter decoy <code>scrypt</code> runs on unknown email <em>and</em> on a locked account (run the KDF, then decide), so latency doesn't fork. One generic “invalid email or password”, identical status for every failure, per-account auto-clearing lockout.</li>
+    <li><strong>Tokens are opaque, not JWTs:</strong> <code>secrets.token_urlsafe(32)</code>, returned once; the server stores only <code>sha256(app + ":" + token)</code> in a <code>_session</code> table. Folding the app into the hash means a token cannot validate under another tenant even if an <code>app=?</code> filter is ever dropped. Expiry is checked <em>inside</em> the resolve <code>SELECT</code>; the live role is re-read every request.</li>
+  </ul>
+</section>
+
+<!-- 06 ROLES -->
+<section id="roles">
+  <div class="shead"><span class="snum">06</span><h2>Roles</h2></div>
+  <p>Roles are deliberately <strong>not</strong> a first-class primitive — no role table, no role endpoints, no join. A role is just the server-side <code>role</code> string on the user row, read into <code>auth.role</code> at resolve time from the <em>live</em> row (never a snapshot) and referenced as <code>auth.role == "admin"</code>. It rides the session lookup the request already does, so a demotion takes effect on the next request and a ban is instant via session delete + a <code>disabled</code> flag.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Role</th><th>How it arises</th><th>Powers</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip pub">anon</span></td><td>Publishable key, no token. <code>auth.id</code> is a <strong>None sentinel</strong>.</td><td>Incomparable to any stored owner, so <code>_owner == auth.id</code> compiles to <code>FALSE</code> for anon — never binds the empty string (which would match legacy <code>NULL</code> rows).</td></tr>
+      <tr><td><span class="chip allow">authenticated</span></td><td>Any valid (app-bound, unexpired, not-disabled) session whose <code>role</code> is empty.</td><td>Owns its own rows; the canonical gate is <code>auth.id != ""</code>.</td></tr>
+      <tr><td><span class="chip brass">admin</span></td><td>A convention: a user whose <code>role == "admin"</code>.</td><td>Rules opt in via <code>… || auth.role == "admin"</code>. No automatic engine bypass — the admin disjunct folds to a <em>dropped</em> clause (still app/type-scoped), never a bare <code>TRUE</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Custom roles are arbitrary strings (<code>trainer</code>, <code>staff</code>, …) set only by the secret key or an existing admin — <code>role</code> is a <code>server_set</code> field, so a normal user patching its own role is rejected by the unconditional strip in the access layer.</p>
+</section>
+
+<!-- 07 RULES -->
+<section id="rules">
+  <div class="shead"><span class="snum">07</span><h2>The rule model</h2></div>
+  <p>Rules live in the schema JSON for each type, a sibling key to <code>fields</code> — persisted in the same <code>object_schemas.fields</code> blob (<span class="fref">schema.py:89-167</span>), no new table. Each of the five slots is nullable:</p>
+  <div class="metarow" style="margin:0 0 20px">
+    <span class="tag"><span class="chip lock" style="margin-right:6px">null</span> locked — secret-key only (default-deny)</span>
+    <span class="tag"><span class="chip pub" style="margin-right:6px">""</span> public — any holder, incl. anon</span>
+    <span class="tag"><span class="chip allow" style="margin-right:6px">expr</span> conditional</span>
+  </div>
+
+  <h3><span class="hn">7.1</span>Actions &amp; namespaces</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Action</th><th>Evaluated as</th><th>Against</th></tr></thead>
+    <tbody>
+      <tr><td><code>list</code></td><td>SQL <code>WHERE</code> (outer-parenthesized, before <code>COUNT</code>/<code>LIMIT</code>)</td><td>indexed field values; filter/sort on a non-readable field is rejected</td></tr>
+      <tr><td><code>get</code></td><td>Python predicate</td><td>the loaded + projected row · also re-run per-row over list results</td></tr>
+      <tr><td><code>create</code></td><td>Python predicate</td><td>the incoming body · <code>_owner</code> stamped from <code>auth</code>, never the body</td></tr>
+      <tr><td><code>update</code></td><td>Python — twice</td><td>read-gate on the stored row + write-gate on the post-write image (<code>new</code>)</td></tr>
+      <tr><td><code>delete</code></td><td>Python predicate</td><td>the stored row</td></tr>
+    </tbody>
+  </table></div>
+  <p>Four namespaces are available: <code>auth</code> (<code>auth.id</code>, <code>auth.role</code>, any <code>auth.&lt;field&gt;</code> from the live user row), the bare row fields (plus <code>_owner</code>, <code>_guid</code>), <code>new</code> (the incoming write — <code>create</code>/<code>update</code> only, e.g. <code>new._owner == _owner</code> for immutability), and <code>method</code> (the HTTP verb, literals only).</p>
+
+  <h3><span class="hn">7.2</span>Grammar — small, safe, decidable</h3>
+  <p>A tiny boolean grammar (recursive descent, ~150 lines): a disjunction of conjunctions of optionally-negated comparisons. Exactly seven comparison operators, mapped one-to-one onto the engine's existing filter ops. <strong>No function calls, no arithmetic, no subqueries, no <code>in</code>-lists, no regex, no arbitrary code</strong> — guaranteeing linear-time, side-effect-free evaluation (safe for author-supplied rules in the shared process) and keeping the <code>list ⊆ get</code> implication check decidable.</p>
+  <pre data-rule><span class="cap">rule grammar (EBNF-ish)</span>expr        = disjunction
+disjunction = conjunction { "||" conjunction }
+conjunction = unary { "&&" unary }
+unary       = [ "!" ] primary
+primary     = comparison | "(" expr ")" | boollit
+comparison  = operand CMP operand
+CMP         = "==" | "!=" | ">" | ">=" | "<" | "<=" | "~"   // ~ = ASCII contains
+operand     = field | auth | new | method | literal
+field       = IDENT | "row" "." IDENT            // declared scalar, or _owner / _guid
+auth        = "auth" "." IDENT                   // auth.id, auth.role, auth.&lt;field&gt;
+new         = "new" "." IDENT                    // create / update only
+literal     = STRING | NUMBER | "true" | "false" | "null"</pre>
+  <p><code>IDENT</code> is validated against the schema, so nothing client-controlled is ever interpolated into SQL; only resolved <code>auth</code>/<code>method</code> values and literals become bound params. <code>~</code> (contains) is contractually <strong>ASCII</strong>-case-insensitive via <code>db.like_ci()</code>, so it behaves identically on both backends.</p>
+
+  <h3><span class="hn">7.3</span>Presets</h3>
+  <p>Authors rarely write raw rules — they pick a preset (expanded at schema-PUT):</p>
+  <div class="tw"><table>
+    <thead><tr><th>Preset</th><th>list / get</th><th>create</th><th>update / delete</th></tr></thead>
+    <tbody>
+      <tr><td><strong>owner</strong><br><span style="color:var(--ink-3);font-size:12px">the dominant case</span></td><td><code>_owner == auth.id || auth.role == "admin"</code></td><td><code>auth.id != ""</code></td><td>update adds <code>&amp;&amp; new._owner == _owner</code></td></tr>
+      <tr><td><strong>public-read-<br>owner-write</strong></td><td><span class="chip pub">"" public</span></td><td><code>auth.id != ""</code></td><td><code>_owner == auth.id || auth.role == "admin"</code></td></tr>
+      <tr><td><strong>authenticated</strong></td><td><code>auth.id != ""</code></td><td><code>auth.id != ""</code></td><td><code>auth.id != ""</code></td></tr>
+      <tr><td><strong>admin-only</strong></td><td><code>auth.role == "admin"</code></td><td><code>auth.role == "admin"</code></td><td><code>auth.role == "admin"</code></td></tr>
+      <tr><td><strong>locked</strong><br><span style="color:var(--ink-3);font-size:12px">the safe default</span></td><td colspan="3"><span class="chip lock">all five slots null → secret-key only</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="hn">7.4</span>Signature — evaluate a rule, live</h3>
+  <p>Below is the <code>owner</code> preset on a <code>task</code> type. The row under test belongs to <strong>Alice</strong>. Each cell is the real decision for that principal × action; click one to see why, and — for <code>list</code> — the compiled <code>WHERE</code> clause.</p>
+
+  <div class="evz" id="evz">
+    <div class="head">⚷ rule evaluator — task · owner preset · row._owner = "alice"</div>
+    <div class="rulemini">list/get/delete: <span style="color:var(--brass)">_owner == auth.id || auth.role == "admin"</span> &nbsp;·&nbsp; create: <span style="color:var(--brass)">auth.id != ""</span> &nbsp;·&nbsp; update: <span style="color:var(--brass)">(… owner …) &amp;&amp; new._owner == _owner</span></div>
+    <div class="matrix">
+      <table><thead><tr>
+        <th></th>
+        <th>list</th><th>get</th><th>create</th><th>update</th><th>delete</th>
+      </tr></thead>
+      <tbody id="matbody"></tbody></table>
+    </div>
+    <div class="evdetail">
+      <div class="dl">decision</div>
+      <div class="dd" id="ev-dd">Select a cell above.</div>
+      <div id="ev-where-wrap" hidden>
+        <div class="dl">compiled list predicate</div>
+        <pre data-rule id="ev-where" style="border-left-color:var(--cyan)"></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 08 EVAL -->
+<section id="eval">
+  <div class="shead"><span class="snum">08</span><h2>Evaluation &amp; pushdown</h2></div>
+  <p>This is the engineering heart. A list rule becomes an index-backed <code>WHERE</code> in five steps:</p>
+  <ol>
+    <li><strong>Parse</strong> the rule into an AST once, cached per <code>(app, type, schema-version)</code>. At schema-PUT, validate every bare identifier is a declared <em>indexed</em> scalar field — else reject, so a rule can't silently fall back to a blob scan.</li>
+    <li><strong>Resolve</strong> <code>auth.*</code> once per request from the live user row into bound params; anonymous <code>auth.id</code> is the None sentinel.</li>
+    <li><strong>Lower</strong> each leaf via the same <code>_indexed_field_clause</code> (<span class="fref">objects.py:386-443</span>): <code>_owner == auth.id</code> becomes a <code>field_index</code> subquery on <code>field_name='_owner'</code>; <code>A &amp;&amp; B</code> → <code>(A AND B)</code>, <code>A || B</code> → <code>(A OR B)</code>, <code>!A</code> → <code>NOT (A)</code>.</li>
+    <li><strong>Constant-fold</strong> <code>auth</code>/<code>method</code>-only sub-expressions — but <strong>never emit a bare <code>TRUE</code>/<code>FALSE</code> token</strong>: drop a true conjunct; collapse a true disjunct so the whole authz clause vanishes (query unfiltered but still app/type-scoped); compile false to a self-contained empty-set probe.</li>
+    <li><strong>Wrap &amp; inject:</strong> the whole clause gets one outer paren and is AND-combined with client filters <em>before</em> <code>COUNT</code> (<span class="fref">objects.py:549-551</span>) and <code>LIMIT/OFFSET</code>.</li>
+  </ol>
+  <pre data-rule><span class="cap">list: _owner == auth.id || auth.role == "admin"  →  lowered for a non-admin user "alice"</span>(
+  guid IN (
+    SELECT object_id FROM field_index
+    WHERE app = ? AND object_type = 'task'
+      AND field_name = '_owner' AND str_val = ? COLLATE C   // ? = "alice"
+  )
+)
+// the admin disjunct folded AWAY (not "OR FALSE") — no bare token escapes the outer paren
+// injected as: WHERE app=? AND object_type=? AND ( …above… )  — before COUNT and LIMIT</pre>
+
+  <div class="call threat">
+    <div class="lab">▲ Reproduced regression — the cross-tenant OR leak (CRITICAL, fixed)</div>
+    <p>The existing list pipeline joins clauses with bare <code>AND</code> because every existing fragment is a self-contained <code>guid IN (…)</code> term. A rule like <code>published == true || _owner == auth.id</code> lowers to a <strong>top-level OR</strong>; injected bare, SQL precedence parses it as <code>(app=? AND type=? AND probeA) OR (probeB AND client-filter)</code> — and the second disjunct has <em>no</em> <code>app</code>/<code>type</code> guard. The red-team verified in SQLite that this returns rows from <strong>another app and another type</strong>. The fix is the step-4/5 invariants: outer paren + never-bare-<code>TRUE</code>/<code>FALSE</code>. A CI test asserts a top-level-<code>OR</code> rule plus a client filter returns zero cross-app/cross-type rows.</p>
+  </div>
+
+  <h3><span class="hn">8.1</span>Dual-backend parity</h3>
+  <p>Every fragment is plain ANSI SQL with <code>?</code> placeholders that <code>backend.translate</code> rewrites to <code>%s</code>; booleans bind as <code>0/1</code>; contains routes through <code>db.like_ci()</code>. The one real divergence is string ordering — SQLite compares <code>str_val</code> <strong>BINARY</strong> while Neon's ICU collation reorders, so a <code>tier &gt; "gold"</code> rule or any ordering oracle could return different sets. <strong>Fix:</strong> emit <code>COLLATE "C"</code> on Postgres <code>str_val</code> comparisons, limit <code>~</code> to ASCII, and prove it with a per-operator test matrix asserting identical row sets on both engines (including <code>NULL</code>, default, and boundary cases).</p>
+
+  <h3><span class="hn">8.2</span>Enumeration defenses — four side-channels closed</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Channel</th><th>Closed by</th></tr></thead>
+    <tbody>
+      <tr><td>Count / pagination total</td><td>predicate injected <em>before</em> <code>COUNT</code> and <code>LIMIT/OFFSET</code> — totals reflect only visible rows.</td></tr>
+      <tr><td>Projection / filter / sort oracle</td><td><code>hidden</code>/<code>private_owner</code> fields removed from the filter- <em>and</em> sort-eligible set — no contains-count, no sort-order, no per-character binary search, even on <code>password_hash</code>.</td></tr>
+      <tr><td>Single-object existence</td><td>denied <code>get</code>/<code>update</code>/<code>delete</code> return <strong>404</strong>, indistinguishable from absent (mirrors the existing cross-app mask).</td></tr>
+      <tr><td>Auth timing</td><td>fixed-param decoy <code>scrypt</code>, KDF always run even when locked; per-account lockout.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 09 OWNERSHIP -->
+<section id="ownership">
+  <div class="shead"><span class="snum">09</span><h2>Ownership &amp; reserved fields</h2></div>
+  <p><code>_owner</code> is a dedicated <code>owner_guid TEXT</code> column on <code>objects</code> — <em>not</em> a blob field. It has to be a column: <code>validate_member_name</code> bans underscore names and <code>_split_body</code> silently drops underscore keys (<span class="fref">fieldtypes.py:91</span>, <span class="fref">objects.py:73</span>), so a column dodges unknown-field rejection and survives schema churn. It is set from <code>auth.id</code> before <code>INSERT</code>, immutable thereafter (never from a body except by the secret key), and mirrored as one synthetic <code>field_index</code> row so owner filters push down.</p>
+  <div class="call decision">
+    <div class="lab">◆ Decision — legacy owner backfills to <code>NULL</code>, never <code>""</code></div>
+    <p>The red-team reproduced an IDOR: if legacy rows backfill to <code>owner_guid = ""</code> and anonymous <code>auth.id</code> resolves to <code>""</code>, then <code>_owner == auth.id</code> is <code>"" == ""</code> — <strong>every legacy row becomes owned by every anonymous visitor</strong>. Fix: backfill to <code>NULL</code> with <em>no</em> synthetic index row, and make anonymous <code>auth.id</code> a None sentinel that compiles owner-equality to <code>FALSE</code>. A one-time secret-key “assign-owner” tool attributes legacy rows before owner rules are switched on.</p>
+  </div>
+  <p><strong>Reserved &amp; server-controlled fields</strong> are stripped before validation for every principal except the secret key (admin for <code>role</code> only): all <code>_</code>-prefixed keys, <code>role</code> and any <code>server_set</code> field, and <code>owner_guid</code>. Today <code>role</code> is an ordinary writable field (the red-team confirmed <code>validate_against_schema</code> accepts <code>{"role":"admin"}</code>), so this unconditional strip — plus closing the generic <code>/objects/user</code> door — <em>is</em> the entire defense against self-promotion.</p>
+</section>
+
+<!-- 10 FIELD LEVEL -->
+<section id="fieldlevel">
+  <div class="shead"><span class="snum">10</span><h2>Field visibility</h2></div>
+  <p>v1 ships a flat per-field flag — not a per-<code>(role,type,action)</code> matrix — carried inside each field's JSON (an extended <code>normalize_field_def</code>, <span class="fref">fieldtypes.py:41-77</span>, which today drops unknown keys, so this must land <em>before</em> any <code>/auth</code> rollout or <code>hidden</code> is a no-op and <code>password_hash</code> leaks):</p>
+  <ul class="tight">
+    <li><code>hidden:true</code> — projected out of every non-secret read, and excluded from filter/sort.</li>
+    <li><code>server_set:true</code> — rejected on client writes.</li>
+    <li><code>private_owner:true</code> — hidden + filter/sort-blocked for everyone except owner / admin / secret key.</li>
+  </ul>
+  <div class="call threat">
+    <div class="lab">▲ Reproduced break — the projection oracle (CRITICAL, fixed)</div>
+    <p>The original plan hid fields only at the projection (serialization) seam. But <code>_build_where</code> and the sort path gate solely on the <code>index</code> flag — and rules <em>require</em> referenced fields be indexed. So a hidden-but-indexed field stayed fully <code>?phone__contains=…</code> filterable and <code>?sort=phone</code> sortable: a non-owner couldn't read <code>phone</code> in the body but could count-oracle and binary-search it character by character. <strong>Fix:</strong> the access layer computes the principal's readable-field set once and intersects it against <em>both</em> the projection set <em>and</em> the filter/sort-eligible set — making the flag a real boundary, and delivering Felix's “owners see contact fields, others don't” case honestly.</p>
+  </div>
+</section>
+
+<!-- 11 EXAMPLES -->
+<section id="examples">
+  <div class="shead"><span class="snum">11</span><h2>Worked examples</h2></div>
+
+  <h3><span class="hn">11.1</span>Gym — members, trainers, owner</h3>
+  <p>Types: <code>user</code> (<code>phone</code> private), <code>class</code> (public-read; trainer/admin writes), <code>booking</code> (owner preset + a denormalized <code>trainer</code> guid). A scraped publishable key is powerless where a scraped app key returns everything.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Actor</th><th>Action</th><th>Decision</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Member Alice</td><td><code>GET /objects/booking</code></td><td><span class="chip allow">allow · filtered</span></td><td>list lowers to an index-backed <code>_owner = alice</code> probe in one outer paren; before <code>COUNT</code> so her total reflects only her bookings. Bob's never leave the DB.</td></tr>
+      <tr><td>Member Alice</td><td><code>GET …/booking/{bob's}</code></td><td><span class="chip deny">deny · 404</span></td><td><code>owner = bob ≠ alice</code>, admin false → not-found, identical to a non-existent guid.</td></tr>
+      <tr><td>Trainer Tom</td><td><code>GET /objects/booking?trainer=tom</code></td><td><span class="chip allow">allow</span></td><td>“trainer sees their classes' bookings” can't lower from a relation, so it's solved by a <strong>denormalized</strong> <code>trainer</code> guid ruled <code>trainer == auth.id || auth.role=="admin"</code> — a single index probe, surfaced first-class so Tom never loosens the rule to public.</td></tr>
+      <tr><td>Owner Olivia <span class="chip brass">admin</span></td><td><code>GET /objects/booking</code></td><td><span class="chip allow">allow · all in app</span></td><td>admin disjunct folds to a <em>dropped</em> clause → unfiltered but still <code>app</code>/<code>object_type</code>-scoped. (A bare <code>OR TRUE</code> would leak another app — the fold-away prevents it.)</td></tr>
+      <tr><td>Scraper <span class="chip pub">pk only</span></td><td><code>GET /objects/booking</code></td><td><span class="chip deny">deny · 200 empty</span></td><td><code>auth.id</code> is the None sentinel → owner probe is the empty set, admin branch folds away → 200 with <code>total 0</code>. The secret key is never in the browser; the control plane rejects pk.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="hn">11.2</span>Storefront — customers, staff, card data</h3>
+  <p>Types: <code>order</code> (<code>card_last4</code> <code>hidden</code>; owner = customer; list/get also allow <code>staff</code>/<code>admin</code>), <code>product</code> (public-read), <code>user</code> (<code>phone</code> private).</p>
+  <div class="tw"><table>
+    <thead><tr><th>Actor</th><th>Action</th><th>Decision</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Customer Carol</td><td><code>GET /objects/order</code></td><td><span class="chip allow">allow · filtered</span></td><td>staff/admin disjuncts fold away → her orders only, accurate total; each row omits <code>card_last4</code>.</td></tr>
+      <tr><td>Staff Sam</td><td><code>GET …/order?card_last4~4242</code></td><td><span class="chip deny">deny · 400</span></td><td>The headline break, closed: <code>card_last4</code> is <code>hidden</code> → excluded from the filter set, so no contains/sort oracle can reconstruct card data even though Sam may list orders.</td></tr>
+      <tr><td>Staff Sam</td><td><code>PATCH …/order/{any} status=shipped</code></td><td><span class="chip allow">allow</span></td><td>update read-gate true for staff; <code>status</code> is writable; <code>card_last4</code>/<code>owner</code> in the body are stripped.</td></tr>
+      <tr><td>Staff Sam</td><td><code>DELETE …/order/{any}</code></td><td><span class="chip deny">deny · 404</span></td><td><code>order.delete</code> is admin-only; Sam is staff.</td></tr>
+      <tr><td>Anon shopper</td><td><code>GET /objects/product?published=true</code></td><td><span class="chip pub">allow · public</span></td><td><code>product.list</code> is public, so no authz clause; the client's <code>published=true</code> still applies. Hitting <code>DELETE /app</code> with the scraped key → 403 (control plane locked).</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 12 SURFACE -->
+<section id="surface">
+  <div class="shead"><span class="snum">12</span><h2>Data model &amp; API changes</h2></div>
+  <h3><span class="hn">12.1</span>Data model</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Change</th><th>Purpose &amp; backend notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>objects.owner_guid</code><br><span style="color:var(--ink-3);font-size:12px">new column</span></td><td>Per-object owner stamp. <code>TEXT</code> nullable; <code>NULL</code> = legacy/ownerless. Migration backfills <code>NULL</code> gated on <code>user_version</code> (v2). Optional <code>idx_objects_owner</code>. Pure ANSI, dual-engine.</td></tr>
+      <tr><td><code>morphdb_api_keys</code><br><span style="color:var(--ink-3);font-size:12px">new table</span></td><td>Per-app <code>pk</code>/<code>sk</code> keys by <code>sha256</code> hash (never plaintext), optional <code>cross_app</code> flag, <code>revoked</code>. FK <code>apps(key)</code> cascade. Minting requires the app key <em>plus</em> a one-time operator bootstrap secret — never an anonymous browser request.</td></tr>
+      <tr><td><code>_session</code><br><span style="color:var(--ink-3);font-size:12px">new table</span></td><td>App-bound opaque tokens: <code>sha256(app:token)</code>, <code>user_guid</code>, <code>expires_at</code>. Resolve selects with expiry in the <code>WHERE</code>. Instant revocation by delete. Plain <code>INSERT</code> (a duplicate raises — do not use <code>INSERT OR IGNORE</code>).</td></tr>
+      <tr><td><code>user</code><br><span style="color:var(--ink-3);font-size:12px">system type, no DDL</span></td><td>End-users as <code>objects</code> rows; <code>password_hash</code>/<code>salt</code> are <code>hidden</code>+<code>server_set</code>; managed only via <code>/auth</code>. Email uniqueness via an indexed guard probe.</td></tr>
+      <tr><td><code>object_schemas.fields</code><br><span style="color:var(--ink-3);font-size:12px">additive keys</span></td><td>Carries the <code>rules</code> block + per-field <code>hidden</code>/<code>server_set</code>/<code>private_owner</code>. No DDL change. Schema-PUT now requires the secret key.</td></tr>
+    </tbody>
+  </table></div>
+  <h3><span class="hn">12.2</span>API surface</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Endpoint</th><th>Change</th><th>Key</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /auth/signup · login · logout · me</code></td><td><strong>New.</strong> scrypt + app-bound opaque token; constant-time login; <code>/me</code> returns the live auth user.</td><td><span class="chip pub">pk</span> (+Bearer for logout/me)</td></tr>
+      <tr><td><code>POST /app/{key}/keys</code></td><td><strong>New.</strong> Mint a pk/sk; raw key returned once. Gated by app key + operator bootstrap secret.</td><td>app key + bootstrap</td></tr>
+      <tr><td><code>PUT/DELETE /schema/{type}</code><br><code>DELETE /app/{key}</code></td><td><strong>Locked.</strong> Accepts a <code>rules</code> block + field flags; the bare app key is hard-rejected from day one (the catastrophic-wipe surface).</td><td><span class="chip brass">sk only</span></td></tr>
+      <tr><td><code>GET /objects/{type}</code> (list)</td><td>Rule compiled, outer-parenthesized, before <code>COUNT</code>/<code>LIMIT</code>; filter/sort on non-readable fields rejected; get re-checked per row.</td><td><span class="chip pub">pk</span> +opt Bearer</td></tr>
+      <tr><td><code>GET …/{guid}</code></td><td>get rule evaluated; deny → 404; <code>hidden</code>/<code>private_owner</code> projected per principal; <code>?include=</code> neighbors each pass their own get rule.</td><td><span class="chip pub">pk</span> +opt Bearer</td></tr>
+      <tr><td><code>POST · PUT · PATCH · DELETE …</code></td><td>create/update/delete rules; owner stamped from <code>auth</code>; reserved fields stripped; create-via-PUT/PATCH disabled for non-secret principals.</td><td><span class="chip pub">pk</span> +Bearer</td></tr>
+      <tr><td>All routes</td><td>New <code>X-Api-Key</code> header (added to CORS allow-list); <code>Bearer</code> for sessions; 500s &amp; logs scrubbed of keys/tokens/rule-text.</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 13 MIGRATION -->
+<section id="migration">
+  <div class="shead"><span class="snum">13</span><h2>Migration</h2></div>
+  <p>Storage is untouched: the <code>owner_guid</code> column and two new tables are added idempotently, no object blob is rewritten, and the field-flag parser ships in the same release as <code>/auth</code>. The data plane is a three-state, per-type model:</p>
+  <div class="tw"><table>
+    <thead><tr><th>State</th><th>Condition</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>A · legacy-open</td><td>no rules + bare app key only</td><td>every type reachable by the app key — live demos keep working unchanged.</td></tr>
+      <tr><td>B · default-deny</td><td>no rules + publishable key</td><td>denied — makes adopting <code>pk</code> safe (you can't accidentally expose a rule-less type to anon).</td></tr>
+      <tr><td>C · enforced</td><td>has rules</td><td>enforced for everyone except the secret key.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="call note">
+    <div class="lab">› The deployed browser-key apps (Alaska board, explainer)</div>
+    <p>They ship the app key client-side today. On day one they keep working on the data plane (no rules → legacy-open) but the <strong>control plane is hardened immediately</strong>: a scraped browser key can no longer wipe the tenant or rewrite schema. To secure the data plane: (1) mint a <code>pk</code> and send <code>X-Api-Key</code> alongside <code>X-App-Key</code>; (2) declare a <code>rules</code> block per type — the moment a type has a rule, default-deny engages for pk/anon callers; (3) optionally add <code>/auth</code>. The kept tenants <code>test_bookclub/test_gym/test_storefront</code> stay legacy-open and keep passing.</p>
+  </div>
+  <div class="call rec">
+    <div class="lab">◇ Loud warning to surface in /help, the dashboard, and the skill</div>
+    <p>Declaring rules on <em>one</em> type does not secure the others. To fully close an app: add rules (or the <code>locked</code>/<code>admin-only</code> preset) to <strong>every</strong> type and rotate the frontend to the publishable key. The control plane is already secret-key-only.</p>
+  </div>
+</section>
+
+<!-- 14 THREATS -->
+<section id="threats">
+  <div class="shead"><span class="snum">14</span><h2>Threat model</h2></div>
+  <p>The adversary holds the publishable key (it ships in the frontend). The red-team verdict on the <em>first</em> draft was <strong>“reject as a security guarantee”</strong> — five criticals, two reproduced as live SQLite leaks. All are fixed in this revision; the verdict is what makes the design trustworthy.</p>
+  <h3><span class="hn">14.1</span>The five criticals (reproduced &amp; fixed)</h3>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>Break</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><span class="sev c">CRIT</span></td><td><strong>Cross-tenant OR leak.</strong> A top-level-<code>OR</code> rule injected bare into the <code>AND</code>-join escapes the app/type guards — returned other-app rows.</td><td>Outer-paren every compiled rule; constant-folds never emit bare <code>TRUE</code>/<code>FALSE</code>; CI test on the exact shape.</td></tr>
+      <tr><td><span class="sev c">CRIT</span></td><td><strong>Projection oracle.</strong> <code>hidden</code> fields stayed filterable/sortable → count + binary-search exfiltration of even <code>password_hash</code>.</td><td>Intersect the readable-field set against the filter/sort-eligible set, not just projection.</td></tr>
+      <tr><td><span class="sev c">CRIT</span></td><td><strong>Legacy-owner IDOR.</strong> <code>owner_guid=""</code> backfill + anon <code>auth.id=""</code> made every legacy row owned by everyone.</td><td>Backfill <code>NULL</code> (no synthetic index row); anon <code>auth.id</code> = None sentinel → owner-equality folds to <code>FALSE</code>.</td></tr>
+      <tr><td><span class="sev c">CRIT</span></td><td><strong>Role mass-assignment.</strong> <code>role</code> is a normal writable field today; the generic <code>/objects/user</code> route is a self-promotion door.</td><td>Unconditional <code>server_set</code> strip for all non-secret principals; close the generic <code>user</code> door.</td></tr>
+      <tr><td><span class="sev c">CRIT</span></td><td><strong>Control-plane wipe.</strong> <code>DELETE /app</code> &amp; schema edits stayed bare-app-key-reachable under legacy-open.</td><td>Secret-key-only on the control plane from day one — a deliberate flag day.</td></tr>
+    </tbody>
+  </table></div>
+  <h3><span class="hn">14.2</span>High / medium findings</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Sev</th><th>Threat</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td><span class="sev h">HIGH</span></td><td>Chokepoint bypass — app-layer only, two transports, no gateway.</td><td>Thread a <strong>required</strong> principal into the data layer (no default) → a forgotten check is a <code>TypeError</code>, not a silent open.</td></tr>
+      <tr><td><span class="sev h">HIGH</span></td><td>Unsound get-vs-list lint — <code>list ⊆ get</code> isn't a string compare.</td><td>A real decidable implication solver (BDD/truth-table over the finite grammar) <em>and</em> a runtime per-row get re-check.</td></tr>
+      <tr><td><span class="sev h">HIGH</span></td><td>Session scoping/revocation — a dropped <code>app=?</code> = cross-tenant impersonation; throttled <code>last_seen</code> could skip expiry.</td><td>Hash the app into the token; put expiry inside the resolve <code>SELECT</code>; re-read the live role; <code>disabled</code> flag.</td></tr>
+      <tr><td><span class="sev h">HIGH</span></td><td>Type divergence — <code>str_val</code> ordering &amp; Unicode contains differ across engines.</td><td><code>COLLATE "C"</code> on Postgres; ASCII-only <code>~</code>; per-operator parity matrix.</td></tr>
+      <tr><td><span class="sev h">HIGH</span></td><td>create-via-PUT/PATCH bypass — upsert creates at a client-chosen guid via the update path.</td><td>Under a non-secret principal, unknown guid → hard 404; creation only via <code>POST</code>; read-gate fail-closed when there's no stored row.</td></tr>
+      <tr><td><span class="sev h">HIGH</span></td><td><code>?include=</code> IDOR — neighbor hydration was unauthorized.</td><td>Run the neighbor's get rule + field visibility per hydrated object.</td></tr>
+      <tr><td><span class="sev m">MED</span></td><td><code>!=</code> NULL three-valued logic — bare negation over nullable fields over-includes absent rows.</td><td>Reject bare <code>!=</code>/negation over nullable fields in <em>list</em> rules; or compile <code>field IS NOT NULL AND …</code> explicitly.</td></tr>
+      <tr><td><span class="sev m">MED</span></td><td>No request rate-limit — single-RLock connection is DoS-able; per-account lockout doesn't stop stuffing.</td><td>v2: coarse per-key/per-source token bucket <em>before</em> the DB lock; document the Function URL needs a WAF/throttle beyond a test deploy.</td></tr>
+      <tr><td><span class="sev m">MED</span></td><td>Key-mint bootstrap race — an anonymous first-key mint on a known app key.</td><td>Require the app key + a one-time operator secret (CLI/dashboard); never an anonymous browser mint.</td></tr>
+      <tr><td><span class="sev l">LOW</span></td><td>Error/log leakage; create-deny status code as an existence oracle.</td><td>Scrub keys/tokens/rule-text from 500s &amp; logs; uniform 404 mask (or a uniform 403 helper) across both transports.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 15 PHASING -->
+<section id="phasing">
+  <div class="shead"><span class="snum">15</span><h2>Phasing</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>Phase</th><th>Scope</th><th>Deliverable</th></tr></thead>
+    <tbody>
+      <tr><td><strong>v1</strong><br>owner · role · public</td><td>Two-tier keys + app-bound sessions + <code>/auth</code>; <code>owner_guid</code> column + stamping + reserved strip; the 5-slot rule model + grammar + presets; list→<code>field_index</code> pushdown with the leak-safe invariants; per-row Python eval; flat field visibility enforced in projection <em>and</em> query layer; COLLATE-C parity matrix; secret-key-only control plane; one chokepoint with a required principal; the solver-backed lint.</td><td>Within-app per-user authz that closes the deployed-browser-key risk and passes the red-team. Covers the 95% the gym / storefront / bookclub demos need.</td></tr>
+      <tr><td><strong>v2</strong><br>ergonomics &amp; depth</td><td>Richer presets + a dashboard linter (too-loose list rules, relation-reachable owners); optional per-field <code>readableBy</code>/<code>writableBy</code> role lists; a rules-unit-test harness; key rotation; a coarse rate-limit/DoS backstop; admin self-service schema edits (if relaxed).</td><td>Safer authoring, per-role field masking for apps that ask, and a basic rate limiter for the public Function URL — without Hasura's full matrix.</td></tr>
+      <tr><td><strong>v3</strong><br>ReBAC escape hatch</td><td>A relationship-tuple table (or typed reuse of <code>associations</code>); a <code>shared(relation)</code> built-in as a bounded recursive CTE (stdlib, no SpiceDB). Allowed only in point checks (get/update/delete/create), <strong>rejected in list rules</strong>; a separate <code>ListObjects</code> endpoint returns the reachable guid set.</td><td>True N-way sharing &amp; group/hierarchy access for the rare app that needs it — with the listing gap stated up front. The default stays the cheap owner+role+public path that pushes down.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 16 DECISIONS -->
+<section id="decisions">
+  <div class="shead"><span class="snum">16</span><h2>Decision log</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>Decision</th><th>Rationale</th><th>Rejected</th></tr></thead>
+    <tbody>
+      <tr><td>The rule <em>is</em> the <code>WHERE</code> clause (Candidate A).</td><td>Reuses <code>_indexed_field_clause</code>/<code>_relation_clause</code> — index-backed, dual-backend, zero new SQL, no RLS.</td><td>B's role×type×column matrix (config weight, schema-churn coupling); C's ~300-LOC DSL (mostly cashes out in sharing, which can't push down).</td></tr>
+      <tr><td><code>hidden</code>/<code>private_owner</code> enforced in the query layer, not projection-only.</td><td>A hidden-but-indexed field is otherwise a count/order/binary-search oracle.</td><td>Projection-only hiding (demonstrably leaky); per-row <code>columns_if_owner</code> (complicates the 404 mask).</td></tr>
+      <tr><td><code>_owner</code> = server-stamped column, <code>NULL</code>-backfilled, anon = None sentinel.</td><td>A blob field is impossible (underscore rules); <code>""</code>-backfill is a reproduced IDOR.</td><td><code>owner_guid=""</code>; a declared owner field; binding <code>""</code> for anon.</td></tr>
+      <tr><td>App-bound opaque server-side sessions, not JWTs.</td><td>Instant revocation; app-in-hash blocks cross-tenant replay; expiry-in-SELECT; live-role re-read.</td><td>Self-contained JWTs (no instant revoke, stale role); globally-scoped token hash.</td></tr>
+      <tr><td>Default-deny on rule/pk; legacy-open on bare app key; secret-only control plane; <code>X-Api-Key</code> wins.</td><td>Live demos &amp; kept tenants keep working while pk adoption is safe; the wipe surface is locked immediately.</td><td>Global hard default-deny (breaks every demo); open-by-default forever; legacy-open control plane (catastrophic).</td></tr>
+      <tr><td>Non-Turing-complete grammar + decidable get-vs-list solver + runtime re-check; no bare <code>!=</code> on nullable list fields.</td><td>Author rules run in the shared process; <code>list ⊆ get</code> must be a real (decidable) proof, not a string compare.</td><td>A syntactic lint shipped as a guarantee (unsound); an <code>eval</code> grammar (RCE/DoS); bare negation in list rules (leaky, divergent).</td></tr>
+      <tr><td>One <code>apply_access</code> chokepoint with a required principal + CI bypass tests.</td><td>App-layer enforcement under a public gateway — a forgotten check must fail closed.</td><td>Per-handler inline checks (drift); a default principal arg (silent wrong-identity); trusting the gateway/CORS.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 17 OPEN -->
+<section id="open">
+  <div class="shead"><span class="snum">17</span><h2>Open questions</h2></div>
+  <ol>
+    <li><strong>Create-deny status.</strong> 403 for a logged-in-but-unauthorized author vs the 404 mask for anon/unknown — confirm the split and that adding a 403 helper to <code>errors.py</code> is acceptable.</li>
+    <li><strong>Control-plane editor in v2.</strong> Schema/rule edits are secret-key-only in v1. Should an admin-roled session edit them in v2? How does the MCP-over-app-key path present credentials? (Safe default: secret-key-only.)</li>
+    <li><strong>Both-credentials precedence.</strong> Confirm <code>X-Api-Key</code>-wins (opt-into-secure) vs a stricter reject-on-disagreement.</li>
+    <li><strong>Share-with-N before v3?</strong> A small fixed-cap multi-value half-step (a JSON list scanned in Python for get + a denormalized recipient index for list) vs hold at 1:1.</li>
+    <li><strong>Anonymous ownerless rows</strong> are disallowed by default — confirm no app needs anonymous create on an owner-ruled type (else the per-row random-sentinel path is opt-in).</li>
+    <li><strong>Rate-limiting beyond login</strong> — where does the v2 token bucket live (in-process dict vs a tiny table) without breaking zero-dep, and should the Function URL sit behind a WAF?</li>
+    <li><strong>Legacy-row attribution</strong> — run the one-time secret-key assign-owner pass on the kept tenants before flipping owner rules on, or leave legacy rows secret-key-only?</li>
+    <li><strong>Hard cutover.</strong> Once any rule exists in an app, reject the bare app key on object routes (forcing the frontend migration), or keep it optional indefinitely? The <code>X-Api-Key</code>-wins precedence softens but doesn't close the window.</li>
+  </ol>
+</section>
+
+<!-- 18 REFS -->
+<section id="refs">
+  <div class="shead"><span class="snum">18</span><h2>References</h2></div>
+  <div class="refs">
+    <div><strong>Firebase</strong> — Firestore Security Rules: <a href="https://firebase.google.com/docs/firestore/security/rules-structure">rules-structure</a>, <a href="https://firebase.google.com/docs/firestore/security/rules-conditions">rules-conditions</a>; “rules are not filters”: <a href="https://firebase.google.com/docs/firestore/security/rules-query">rules-query</a>.</div>
+    <div><strong>Supabase / Postgres RLS</strong> — <a href="https://supabase.com/docs/guides/database/postgres/row-level-security">RLS guide</a>; <a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html">DDL row security</a>; <a href="https://www.postgresql.org/docs/current/sql-createpolicy.html">CREATE POLICY</a>.</div>
+    <div><strong>PocketBase</strong> — <a href="https://pocketbase.io/docs/api-rules-and-filters/">API rules &amp; filters</a>; <a href="https://pocketbase.io/docs/working-with-relations/">relations</a>.</div>
+    <div><strong>Hasura</strong> — <a href="https://hasura.io/docs/latest/auth/authorization/index/">authorization</a>; <a href="https://hasura.io/docs/2.0/auth/authorization/permissions/row-level-permissions/">row-level permissions</a>.</div>
+    <div><strong>Zanzibar / ReBAC</strong> — <a href="https://authzed.com/blog/what-is-zanzibar">what is Zanzibar</a>; <a href="https://authzed.com/docs/spicedb/concepts/relationships">SpiceDB relationships</a>; <a href="https://openfga.dev/docs">OpenFGA</a>.</div>
+    <div><strong>Models &amp; engines</strong> — <a href="https://www.osohq.com/learn/rbac-vs-abac-vs-rebac-what-is-the-best-access-policy-paradigm">RBAC vs ABAC vs ReBAC (Oso)</a>; <a href="https://www.permit.io/blog/rbac-vs-abac-and-rebac-choosing-the-right-authorization-model">Permit.io</a>.</div>
+    <div><strong>Key / token mechanics</strong> — <a href="https://docs.stripe.com/keys">Stripe keys</a>; <a href="https://docs.stripe.com/keys-best-practices">key best practices</a>; Python <a href="https://docs.python.org/3/library/hashlib.html">hashlib</a> / <a href="https://docs.python.org/3/library/secrets.html">secrets</a>.</div>
+  </div>
+  <div class="foot">
+    MorphRules · MorphDB within-app authorization · Draft v1 · spec only — no code changes proposed here.<br>
+    Synthesized from a 15-agent research + design + red-team workflow; every <span style="color:var(--cyan)">file:line</span> reference is from the live tree. Two cross-tenant leaks were reproduced in SQLite and fixed before this draft.
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  /* ---- syntax highlight for rule / SQL blocks ---- */
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  var KW=/\b(?:auth|new|method|row|role|true|false|null|app|object_type|object_id|field_name|str_val|num_val|bool_val|guid|SELECT|FROM|WHERE|AND|OR|NOT|IN|LIKE|COLLATE|C)\b/;
+  function hl(src){
+    var re=/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*")|(\b(?:auth|new|method|row|role|true|false|null|app|object_type|object_id|field_name|str_val|num_val|bool_val|guid|SELECT|FROM|WHERE|AND|OR|NOT|IN|LIKE|COLLATE|C)\b)|(==|!=|>=|<=|&&|\|\||[=<>!~])|(\b\d+\b)/g;
+    var out="",last=0,m;
+    while((m=re.exec(src))){
+      out+=esc(src.slice(last,m.index));
+      if(m[1]) out+='<span class="t-com">'+esc(m[1])+'</span>';
+      else if(m[2]) out+='<span class="t-str">'+esc(m[2])+'</span>';
+      else if(m[3]) out+='<span class="t-kw">'+esc(m[3])+'</span>';
+      else if(m[4]) out+='<span class="t-op">'+esc(m[4])+'</span>';
+      else if(m[5]) out+='<span class="t-num">'+esc(m[5])+'</span>';
+      last=re.lastIndex;
+    }
+    out+=esc(src.slice(last));
+    return out;
+  }
+  document.querySelectorAll('pre[data-rule]').forEach(function(p){
+    var cap=p.querySelector('.cap'), capHTML=cap?cap.outerHTML:'';
+    var raw=cap? p.textContent.replace(cap.textContent,'') : p.textContent;
+    p.innerHTML=capHTML+hl(raw.replace(/^\n/,''));
+  });
+
+  /* ---- scroll-spy TOC ---- */
+  var links=[].slice.call(document.querySelectorAll('#toc a'));
+  var map={};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)]=a; });
+  var spy=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(l){l.classList.remove('active');});
+        var id=e.target.id; if(map[id]) map[id].classList.add('active');
+      }
+    });
+  },{rootMargin:"-12% 0px -78% 0px",threshold:0});
+  document.querySelectorAll('main section[id], header[id]').forEach(function(s){spy.observe(s);});
+
+  /* ---- signature: the evaluation matrix ---- */
+  var IDS=[
+    {k:"anon",  label:"Anonymous",      sub:"pk · auth.id = ∅"},
+    {k:"owner", label:"Alice · owner",  sub:"auth.id = alice"},
+    {k:"other", label:"Bob · other",    sub:"auth.id = bob"},
+    {k:"admin", label:"Olivia · admin", sub:'role = "admin"'},
+    {k:"secret",label:"Secret key",     sub:"mdb_sk_ · server"}
+  ];
+  var ACTS=["list","get","create","update","delete"];
+  var W_ALICE='(\n  guid IN (\n    SELECT object_id FROM field_index\n    WHERE app = ? AND object_type = \'task\'\n      AND field_name = \'_owner\' AND str_val = ? COLLATE C   // ? = "alice"\n  )\n)';
+  var W_BOB  ='(\n  guid IN (\n    SELECT object_id FROM field_index\n    WHERE app = ? AND object_type = \'task\'\n      AND field_name = \'_owner\' AND str_val = ? COLLATE C   // ? = "bob"\n  )\n)';
+  var W_ANON ='(\n  guid IN (SELECT object_id FROM field_index WHERE 1 = 0)   // anon: owner-equality folds to FALSE\n)';
+  var W_ADMIN='// admin disjunct folds to a DROPPED clause — no authz filter,\n// query still scoped: WHERE app = ? AND object_type = \'task\'';
+  var W_SECRET='// secret key — rules bypassed entirely;\n// query scoped: WHERE app = ? AND object_type = \'task\'  (single tenant unless cross_app)';
+
+  // decision table: [decision, code, why, whereSQL|null]
+  var D={
+    anon:{
+      list:["deny","200 · empty","Owner-equality folds to FALSE for the None sentinel and the admin branch folds away — an empty-set probe. Rows never leave the DB.",W_ANON],
+      get:["deny","404","owner = alice ≠ ∅, admin false → not-found, identical to a non-existent guid.",null],
+      create:["deny","404","create requires auth.id != \"\"; anonymous fails. Masked as 404, not 401, to avoid an existence/type oracle.",null],
+      update:["deny","404",null,null],
+      delete:["deny","404","No session → owner-equality is FALSE → not-found.",null]
+    },
+    owner:{
+      list:["allow","200 · filtered","Index-backed owner probe in one outer paren, injected before COUNT/LIMIT so Alice's total reflects only her rows. Admin disjunct folds away.",W_ALICE],
+      get:["allow","200","owner = alice == auth.id → the get rule is satisfied.",null],
+      create:["allow","201","auth.id != \"\" holds; _owner is stamped = alice from the session before INSERT, never read from the body.",null],
+      update:["allow","200","read-gate owner == auth.id true; write-gate new._owner == _owner pins ownership immutable.",null],
+      delete:["allow","200","owner = alice == auth.id.",null]
+    },
+    other:{
+      list:["allow","200 · filtered","Bob's list filters to Bob's own rows — Alice's row is simply not in his result set. Allowed, but her data never returns.",W_BOB],
+      get:["deny","404","owner = alice ≠ bob, admin false → not-found.",null],
+      create:["allow","201","Any logged-in user may create; _owner is stamped = bob.",null],
+      update:["deny","404","read-gate fails: the stored row's owner = alice ≠ bob.",null],
+      delete:["deny","404","owner = alice ≠ bob → not-found.",null]
+    },
+    admin:{
+      list:["allow","200 · all in app","The admin disjunct folds to a DROPPED clause (never a bare TRUE), so the query is unfiltered but still app & object_type scoped — every task in this app, no cross-app leak.",W_ADMIN],
+      get:["allow","200","auth.role == \"admin\" disjunct satisfies the get rule.",null],
+      create:["allow","201","auth.id != \"\" holds; _owner stamped = olivia.",null],
+      update:["allow","200","admin disjunct true; new._owner == _owner still pins ownership.",null],
+      delete:["allow","200","admin disjunct.",null]
+    },
+    secret:{
+      list:["bypass","ALLOW","The secret key is the one principal that bypasses all rules and field visibility. Server-side only; never in a browser. App-scoped unless cross_app is set.",W_SECRET],
+      get:["bypass","ALLOW","Rules bypassed — reads every field including hidden.",null],
+      create:["bypass","ALLOW","Rules bypassed — may set owner_guid and server_set fields explicitly.",null],
+      update:["bypass","ALLOW","Rules bypassed.",null],
+      delete:["bypass","ALLOW","Rules bypassed.",null]
+    }
+  };
+  var CHIP={allow:"chip allow",deny:"chip deny",bypass:"chip brass"};
+  var CELLCLS={allow:"allow",deny:"deny",bypass:"bypass"};
+
+  var body=document.getElementById('matbody');
+  IDS.forEach(function(id){
+    var tr=document.createElement('tr');
+    var th=document.createElement('th'); th.className="idh";
+    th.innerHTML=id.label+'<span class="idsub">'+id.sub+'</span>';
+    tr.appendChild(th);
+    ACTS.forEach(function(act){
+      var td=document.createElement('td');
+      var d=D[id.k][act];
+      var btn=document.createElement('button');
+      btn.className="cell "+CELLCLS[d[0]];
+      btn.type="button";
+      btn.textContent=(d[0]==="bypass"?"BYPASS":d[0].toUpperCase());
+      btn.setAttribute('data-id',id.k); btn.setAttribute('data-act',act);
+      btn.setAttribute('aria-label',id.label+' '+act+' '+d[0]);
+      btn.addEventListener('click',function(){select(id.k,act,btn);});
+      td.appendChild(btn);
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  });
+
+  var dd=document.getElementById('ev-dd');
+  var ww=document.getElementById('ev-where-wrap');
+  var we=document.getElementById('ev-where');
+  var cur=null;
+  function select(idk,act,btn){
+    if(cur) cur.classList.remove('sel');
+    btn.classList.add('sel'); cur=btn;
+    var d=D[idk][act];
+    var idLabel=IDS.filter(function(x){return x.k===idk;})[0].label;
+    var chip='<span class="'+CHIP[d[0]]+'">'+(d[0]==="bypass"?"bypass · rules off":d[0])+' · '+d[1]+'</span>';
+    dd.innerHTML='<b>'+idLabel+'</b> &nbsp;·&nbsp; <code style="background:none;border:none;color:var(--brass);padding:0">'+act+'</code> &nbsp; '+chip+'<div style="margin-top:9px;color:var(--ink-2);font-size:14px;max-width:64ch">'+(d[2]||"")+'</div>';
+    if(d[3]){ we.innerHTML=hl(d[3]); ww.hidden=false; }
+    else { ww.hidden=true; }
+  }
+  // default selection
+  var first=body.querySelector('button[data-id="owner"][data-act="list"]');
+  if(first) select("owner","list",first);
+})();
+</script>
+<!-- Reader comments: one inline thread per section, stored in cloud MorphDB. -->
+<script>window.SPEC_COMMENTS = { slug: "permissions" };</script>
+<script src="comments.js"></script>
+</body>
+</html>

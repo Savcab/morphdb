@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MorphDB — design specs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#0f2230; --ink:#ECE4D2; --ink-2:#b9c6cf; --ink-3:#8aa0ad;
+  --line:#27424f; --line-2:#1c3340; --brass:#E7B24C; --brass-d:#b98a2f; --cyan:#73b8d0; --cyan-bg:#10303b;
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:
+  radial-gradient(1100px 620px at 84% -8%, #163140 0%, rgba(22,49,64,0) 60%),
+  radial-gradient(900px 600px at -6% 4%, #11293a 0%, rgba(17,41,58,0) 55%), var(--ground);
+  color:var(--ink);font-family:"Newsreader",Georgia,serif;font-size:18px;line-height:1.62;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:880px;margin:0 auto;padding:72px 24px 90px}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:18px}
+h1{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:clamp(38px,7vw,64px);line-height:1;
+  letter-spacing:-.02em;margin:0 0 14px}
+h1 .lo{color:var(--ink-3);font-weight:500}
+.lead{font-size:20px;color:var(--ink-2);max-width:60ch;margin:0 0 8px}
+.note{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink-3);max-width:64ch;margin:14px 0 40px}
+.note b{color:var(--cyan)}
+.cards{display:grid;gap:16px}
+a.card{display:block;text-decoration:none;color:inherit;border:1px solid var(--line);border-radius:14px;
+  padding:24px 26px;background:rgba(8,20,29,.45);transition:border-color .15s,transform .15s}
+a.card:hover{border-color:var(--brass-d);transform:translateY(-2px)}
+.card .k{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:10px;display:flex;align-items:center;gap:10px}
+.card .k .st{color:var(--ink-3);border:1px solid var(--line);border-radius:100px;padding:2px 9px;letter-spacing:.04em;text-transform:none}
+.card h2{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:26px;letter-spacing:-.01em;margin:0 0 8px}
+.card p{font-size:15.5px;color:var(--ink-2);margin:0;max-width:62ch}
+.card .go{font-family:"Space Grotesk",sans-serif;font-size:13px;color:var(--cyan);margin-top:14px;font-weight:600}
+footer{margin-top:46px;font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-3);line-height:1.8}
+footer a{color:var(--cyan);text-decoration:none}
+footer a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">MorphDB · Design Specs</div>
+  <h1>Design <span class="lo">specs</span></h1>
+  <p class="lead">Open design documents for MorphDB — the gaps worth closing and the systems worth building. Read them, and <b style="color:var(--brass)">comment on any section</b> right inline.</p>
+  <p class="note">&#9656; For contributors: each section has a comment thread. Pick something, weigh in, or claim it to implement. Comments are public and stored in the cloud MorphDB app <b>morphdb-spec-comments</b> — MorphDB hosting its own discussion.</p>
+
+  <div class="cards">
+    <a class="card" href="./gaps.html">
+      <div class="k">Findings <span class="st">living document</span></div>
+      <h2>The Gaps</h2>
+      <p>What the generic MorphDB backend can't do yet — 13 limitations found while building the LinkedIn / Notion / Figma / Linear clones, plus a full map of what a production rebuild would categorically require. This is the prioritized to-do list.</p>
+      <div class="go">Read the findings &rarr;</div>
+    </a>
+    <a class="card" href="./permissions.html">
+      <div class="k">Design Spec <span class="st">draft v1</span></div>
+      <h2>MorphRules — per-user authorization</h2>
+      <p>A design for per-end-user permissions enforced inside MorphDB: a two-tier key split, real end-users with stdlib auth, and a rule model where the rule <em>is</em> the index-backed <code style="color:var(--brass)">WHERE</code> clause — portable across SQLite and Postgres. Closes gap #8.</p>
+      <div class="go">Read the spec &rarr;</div>
+    </a>
+  </div>
+
+  <footer>
+    MorphDB &mdash; schema-fluid, API-stable &nbsp;·&nbsp;
+    <a href="https://github.com/Savcab/morphdb">repo</a> &nbsp;·&nbsp;
+    <a href="../index.html">example apps &rarr;</a>
+  </footer>
+</div>
+</body>
+</html>

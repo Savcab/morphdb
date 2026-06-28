@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The MorphDB Gaps — what the generic backend can't do yet · Findings v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#0f2230; --ground-2:#0b1a26; --ink:#ECE4D2; --ink-2:#b9c6cf; --ink-3:#8aa0ad;
+  --line:#27424f; --line-2:#1c3340; --brass:#E7B24C; --brass-d:#b98a2f;
+  --allow:#54c08a; --allow-bg:#11362b; --deny:#e0664b; --deny-bg:#3a1f1b; --lock:#7f93a0;
+  --cyan:#73b8d0; --cyan-bg:#10303b; --maxw:1240px; --rail:268px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:
+  radial-gradient(1100px 620px at 84% -8%, #163140 0%, rgba(22,49,64,0) 60%),
+  radial-gradient(900px 600px at -6% 4%, #11293a 0%, rgba(17,41,58,0) 55%), var(--ground);
+  color:var(--ink);font-family:"Newsreader",Georgia,serif;font-size:18px;line-height:1.62;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px;
+  display:grid;grid-template-columns:var(--rail) minmax(0,1fr);gap:54px;align-items:start}
+
+aside{position:sticky;top:0;height:100vh;overflow:auto;padding:30px 0 60px;
+  scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+aside::-webkit-scrollbar{width:7px}aside::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.brand{font-family:"Space Grotesk",sans-serif;font-weight:700;letter-spacing:.02em;font-size:18px;
+  color:var(--ink);display:flex;align-items:center;gap:9px;margin-bottom:3px}
+.brand .key{color:var(--brass)}
+.brand-sub{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:24px}
+.back{display:block;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--cyan);
+  text-decoration:none;margin-bottom:18px}
+.back:hover{text-decoration:underline}
+nav a{display:block;font-family:"Space Grotesk",sans-serif;font-size:12.5px;line-height:1.3;
+  color:var(--ink-2);text-decoration:none;padding:4px 12px 4px 13px;border-left:2px solid transparent;
+  transition:color .15s,border-color .15s}
+nav a .n{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--ink-3);margin-right:8px}
+nav a:hover{color:var(--ink)}
+nav a.active{color:var(--brass);border-left-color:var(--brass)}
+nav .grp{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);margin:18px 0 6px 13px}
+.legend{margin-top:22px;padding:14px;border:1px solid var(--line-2);border-radius:8px;background:rgba(8,20,29,.5)}
+.legend h4{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 10px}
+.legend .row{display:flex;align-items:center;gap:9px;font-family:"Space Grotesk",sans-serif;
+  font-size:12px;color:var(--ink-2);margin:6px 0}
+.legend .sev{min-width:64px;text-align:center}
+
+main{padding:30px 0 140px;min-width:0}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:20px}
+h1{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:clamp(40px,7vw,72px);line-height:.98;
+  letter-spacing:-.02em;margin:0 0 6px}
+h1 .lo{color:var(--ink-3);font-weight:500}
+.tagline{font-size:clamp(20px,2.4vw,25px);line-height:1.4;color:var(--ink);max-width:34ch;margin:14px 0 0;font-weight:400}
+.tagline b{color:var(--brass);font-weight:600}
+.thesis{font-family:"Newsreader",serif;font-style:italic;font-size:20px;line-height:1.5;color:var(--ink-2);
+  border-left:3px solid var(--brass);padding:4px 0 4px 20px;margin:28px 0 8px;max-width:64ch}
+.metarow{display:flex;flex-wrap:wrap;gap:9px;margin:24px 0 4px}
+.tag{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.04em;color:var(--ink-2);
+  border:1px solid var(--line);border-radius:100px;padding:5px 12px}
+.tag b{color:var(--ink);font-weight:600}
+
+section{padding:42px 0 8px;border-top:1px solid var(--line-2);margin-top:14px}
+section:first-of-type{border-top:none}
+.shead{display:flex;align-items:baseline;gap:14px;margin-bottom:6px;flex-wrap:wrap}
+.snum{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--brass);font-weight:500;
+  border:1px solid var(--brass-d);border-radius:6px;padding:3px 9px;flex:none;margin-top:6px}
+h2{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:clamp(23px,3vw,31px);line-height:1.08;
+  letter-spacing:-.015em;margin:0;color:var(--ink)}
+.parthead{padding:60px 0 6px;border-top:2px solid var(--line)}
+.parthead .eyebrow{margin-bottom:8px}
+.parthead h2{font-size:clamp(26px,3.6vw,38px)}
+.surfaced{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--cyan);margin:8px 0 14px}
+.surfaced::before{content:"\25B8  surfaced by ";color:var(--ink-3)}
+p{margin:0 0 16px;max-width:72ch}
+strong{color:var(--ink);font-weight:600}
+em{color:var(--ink)}
+code{font-family:"IBM Plex Mono",monospace;font-size:.84em;color:var(--brass);
+  background:rgba(231,178,76,.08);border:1px solid rgba(231,178,76,.16);border-radius:4px;padding:.05em .34em}
+ul{max-width:72ch;margin:0 0 16px;padding-left:22px}
+li{margin:7px 0;color:var(--ink-2)}
+li strong{color:var(--ink)}
+.sev{font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.06em;
+  padding:2px 7px;border-radius:4px;white-space:nowrap}
+.sev.c{color:#f3c2b5;background:var(--deny-bg);border:1px solid #7a3a2e}
+.sev.h{color:#f4d79a;background:#2c2413;border:1px solid #5e4a1f}
+.sev.m{color:#cdd8de;background:#23323b;border:1px solid #3b4d57}
+.sev.l{color:#9aa9b1;background:#1a2730;border:1px solid #2b3a43}
+.fix{border-left:3px solid var(--allow);background:rgba(17,54,43,.28);border-radius:0 8px 8px 0;
+  padding:10px 16px;margin:4px 0 8px;max-width:72ch}
+.fix .lab{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--allow);margin-bottom:4px}
+.fix p{margin:0;color:var(--ink-2);font-size:15px;max-width:none}
+.call{border:1px solid var(--line);border-radius:10px;padding:16px 18px 4px;margin:22px 0;
+  background:rgba(8,20,29,.45)}
+.call.verdict{border-left:3px solid var(--brass)}
+.call .lab{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  font-weight:600;margin-bottom:8px;color:var(--brass)}
+.call p{max-width:66ch}
+.foot{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);
+  font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-3);line-height:1.7}
+.foot a{color:var(--cyan)}
+@media (max-width:920px){
+  .wrap{grid-template-columns:1fr;gap:0;padding:0 20px}
+  aside{position:static;height:auto;overflow:visible;padding:18px 0 0;border-bottom:1px solid var(--line)}
+  nav{display:none}.legend{margin-top:14px}main{padding-top:22px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<aside>
+  <div class="brand"><span class="key">&#9670;</span> The Gaps</div>
+  <div class="brand-sub">MorphDB · Findings</div>
+  <a class="back" href="./index.html">&larr; all specs</a>
+  <nav id="toc">
+    <div class="grp">Empirical limits</div>
+    <a href="#lim-1"><span class="n">01</span>Value validation</a>
+    <a href="#lim-2"><span class="n">02</span>Atomic relation delta</a>
+    <a href="#lim-3"><span class="n">03</span>Atomic increment</a>
+    <a href="#lim-4"><span class="n">04</span>Atomic reorder / txn</a>
+    <a href="#lim-5"><span class="n">05</span>Realtime / subscriptions</a>
+    <a href="#lim-6"><span class="n">06</span>Full-text search</a>
+    <a href="#lim-7"><span class="n">07</span>Aggregation / group-by</a>
+    <a href="#lim-8"><span class="n">08</span>Identity &amp; auth</a>
+    <a href="#lim-9"><span class="n">09</span>Client IDs / soft-delete</a>
+    <a href="#lim-10"><span class="n">10</span>Cascade / bulk delete</a>
+    <a href="#lim-11"><span class="n">11</span>Uniqueness / sequence</a>
+    <a href="#lim-12"><span class="n">12</span>Sort collation</a>
+    <a href="#lim-13"><span class="n">13</span>Null-order / OR filter</a>
+    <div class="grp">Production rebuild</div>
+    <a href="#arch-a"><span class="n">A</span>Identity &amp; access</a>
+    <a href="#arch-b"><span class="n">B</span>Realtime &amp; collab</a>
+    <a href="#arch-c"><span class="n">C</span>Search &amp; discovery</a>
+    <a href="#arch-d"><span class="n">D</span>Feeds &amp; aggregation</a>
+    <a href="#arch-e"><span class="n">E</span>Storage &amp; media</a>
+    <a href="#arch-f"><span class="n">F</span>Async &amp; integration</a>
+    <a href="#arch-g"><span class="n">G</span>History &amp; governance</a>
+    <a href="#arch-h"><span class="n">H</span>Scale &amp; ops</a>
+    <a href="#arch-i"><span class="n">I</span>Business plumbing</a>
+    <a href="#verdict"><span class="n">&#9671;</span>The verdict</a>
+  </nav>
+  <div class="legend">
+    <h4>Severity</h4>
+    <div class="row"><span class="sev c">BLOCKER</span> stops a real build</div>
+    <div class="row"><span class="sev h">HIGH</span> forces a bad workaround</div>
+    <div class="row"><span class="sev m">MEDIUM</span> client-side patch needed</div>
+    <div class="row"><span class="sev l">MINOR</span> polish</div>
+  </div>
+</aside>
+
+<main>
+
+<header class="hero" id="overview">
+  <div class="eyebrow">MorphDB · Backend Gaps · Findings from the example clones</div>
+  <h1>The <span class="lo">Gaps</span></h1>
+  <p class="tagline">What the <b>generic</b> MorphDB backend can't do yet — found by building LinkedIn, Notion, Figma &amp; Linear on it.</p>
+  <p class="thesis">Every gap below is a primitive a real product needs that the generic object API doesn't express. Part 1 is what we hit empirically while building; Part 2 is what a production rebuild would categorically require. Comment on any section — contributors, this is the to-do list.</p>
+  <div class="metarow">
+    <span class="tag">Status <b>living document</b></span>
+    <span class="tag">Source <b>example-app audit loop</b></span>
+    <span class="tag">Scope <b>backend primitives, not app bugs</b></span>
+  </div>
+</header>
+
+<div class="parthead" id="part-empirical">
+  <div class="eyebrow">Part 1</div>
+  <h2 style="margin:0">Empirical limitations</h2>
+  <p style="margin-top:12px;color:var(--ink-2)">Things the clones couldn't do cleanly because the generic backend lacks a primitive — each one reproduced while building. Not frontend bugs (those got fixed in the apps).</p>
+</div>
+
+<section id="lim-1">
+  <div class="shead"><span class="snum">01</span><h2>No value-level validation</h2><span class="sev m">MEDIUM</span></div>
+  <div class="surfaced">Figma (fill, w/h)</div>
+  <p>The store validates a field's <strong>type</strong> (it rejects <code>w:"abc"</code> with <code>400 Field w expects a number</code>) and rejects unknown fields, but it cannot constrain a <em>value</em>: no format (hex color), no numeric range/min, no string enum/length, no allowed-values for a free-form <code>kind</code>. So <code>fill:"banana"</code> and <code>w:-150</code> are accepted and persisted, collapsing a shape to 0px. All semantic validation must live client-side.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>Optional per-field constraints (regex / min / max / enum) checked centrally at write time.</p></div>
+</section>
+
+<section id="lim-2">
+  <div class="shead"><span class="snum">02</span><h2>No atomic add/remove on a to-many relation</h2><span class="sev h">HIGH</span></div>
+  <div class="surfaced">LinkedIn (connections), Notion/Figma (list membership)</div>
+  <p>A to-many relation is written by sending its <strong>whole</strong> new array. To add one connection you read the full <code>connections</code> list and PATCH it back — a read-modify-write that <strong>loses updates</strong> when two edits overlap (connect to two people in quick succession &rarr; one is dropped, server-confirmed).</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A <code>{add:[guid], remove:[guid]}</code> delta op on a relation, making membership edits atomic and concurrency-safe.</p></div>
+</section>
+
+<section id="lim-3">
+  <div class="shead"><span class="snum">03</span><h2>No atomic increment / counter</h2><span class="sev h">HIGH</span></div>
+  <div class="surfaced">LinkedIn (post likes)</div>
+  <p>A counter like <code>likes</code> is a scalar the client reads, <code>+1</code>s, and writes back. Concurrent likes race (last-write-wins), and there's no server-side increment op.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A <code>PATCH {likes:{$inc:1}}</code>-style atomic numeric op.</p></div>
+</section>
+
+<section id="lim-4">
+  <div class="shead"><span class="snum">04</span><h2>No atomic reorder / multi-object transaction</h2><span class="sev h">HIGH</span></div>
+  <div class="surfaced">Figma (z-order), Notion (block order), Linear (ordered lists)</div>
+  <p>Ordering is emulated with an integer <code>order</code>/<code>z</code> field the client computes (<code>max(z)+1</code>) and PATCHes one object at a time. There's no atomic "move item to position N" and no way to renumber a whole list in one transaction, so concurrent reorders collide and a full renumber is N separate non-atomic writes.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A small multi-object transaction / atomic reorder endpoint (and fractional ordering helps the renumber problem).</p></div>
+</section>
+
+<section id="lim-5">
+  <div class="shead"><span class="snum">05</span><h2>No realtime / subscriptions</h2><span class="sev c">BLOCKER</span></div>
+  <div class="surfaced">all (multi-tab); Figma header reads "synced" but isn't live</div>
+  <p>The client is request/response <code>fetch</code> only. Two tabs or two users never see each other's edits without a manual reload. The generic backend offers no change-feed / observe primitive (no push, websocket, or SSE), so a collaborative "live" experience — the whole point of Figma/Notion — can't be built on it.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A change-feed primitive (server-sent events or websocket) over an op/change log. This is the keystone gap: one change-feed also unlocks webhooks and cache/search sync.</p></div>
+</section>
+
+<section id="lim-6">
+  <div class="shead"><span class="snum">06</span><h2>No full-text / substring search</h2><span class="sev h">HIGH</span></div>
+  <div class="surfaced">Figma (search layers); also LinkedIn/Notion search</div>
+  <p>List filtering is <strong>exact-equality</strong> on indexed fields (plus <code>contains</code> only where explicitly supported per field). There's no general full-text or fuzzy search across an app's objects, so a global search box — a core feature of every one of these products — isn't expressible against the backend.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A tokenized full-text index (relevance + prefix), or an external search engine fed by a change-feed.</p></div>
+</section>
+
+<section id="lim-7">
+  <div class="shead"><span class="snum">07</span><h2>No server-side aggregation / group-by</h2><span class="sev h">HIGH</span></div>
+  <div class="surfaced">Figma ("Layers · N"), Linear (per-status counts), LinkedIn (counts)</div>
+  <p>List responses expose a flat <code>total</code> for the filter, but no grouped counts (shapes-per-kind, issues-per-status, connection-count without fetching them all). Every tally is computed client-side after fetching the objects, which doesn't scale.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A <code>count-by</code> / <code>group-by</code> on an indexed field returning grouped totals.</p></div>
+</section>
+
+<section id="lim-8">
+  <div class="shead"><span class="snum">08</span><h2>App keys are namespaces, not identity/auth</h2><span class="sev c">BLOCKER</span></div>
+  <div class="surfaced">LinkedIn (per-user likes, "your" posts)</div>
+  <p><code>X-App-Key</code> isolates apps but is not authentication and carries no per-user identity. There's no notion of "the current user", so per-user semantics (one like per user, ownership, permissions) must be faked client-side (here: localStorage), which is trivially bypassed. Real multi-user apps need an identity/auth primitive.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>Identity + per-object authorization — see the companion <a href="./permissions.html" style="color:var(--cyan)">MorphRules permissions spec</a>, which designs exactly this.</p></div>
+</section>
+
+<section id="lim-9">
+  <div class="shead"><span class="snum">09</span><h2>No client-supplied IDs, no soft-delete + restore</h2><span class="sev m">MEDIUM</span></div>
+  <div class="surfaced">Figma (undo of a delete)</div>
+  <p>The server assigns every <code>_guid</code> on create; a client can't create an object with a known id, and there's no soft-delete/restore. So "undo a delete" can't bring the <em>same</em> object back — re-creating yields a <strong>new</strong> <code>_guid</code>, and any references to the old guid must be remapped client-side.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A client-supplied id (idempotent create) or a soft-delete/restore (trash + undelete) primitive, making undo/redo and offline replay correct instead of approximate.</p></div>
+</section>
+
+<section id="lim-10">
+  <div class="shead"><span class="snum">10</span><h2>No cascade / bulk-delete-by-filter</h2><span class="sev m">MEDIUM</span></div>
+  <div class="surfaced">Notion (delete a page + its subtree)</div>
+  <p>Deleting a type's objects is one-at-a-time. Deleting a Notion page must walk the subtree client-side and issue a <code>DELETE</code> per descendant page <strong>and</strong> per block. It's non-atomic — a mid-way failure orphans blocks/pages — and O(N) round-trips. (App-level delete cascades its own schema/objects, but there's no object-level <code>ON DELETE CASCADE</code> and no "delete all matching this filter".)</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A relation-level cascade and a bulk-delete-by-filter endpoint.</p></div>
+</section>
+
+<section id="lim-11">
+  <div class="shead"><span class="snum">11</span><h2>No uniqueness constraint, no sequence</h2><span class="sev h">HIGH</span></div>
+  <div class="surfaced">Linear (duplicate <code>ENG-11</code> minted)</div>
+  <p>There's no unique index and no atomic sequence allocator. An issue tracker needs unique, monotonic identifiers (ENG-1, ENG-2, …); with no <code>UNIQUE</code> the store happily accepted <strong>two</strong> issues with <code>identifier:"ENG-11"</code>, and with no <code>next_val()</code> the client computes <code>max(N)+1</code> over the rows it has loaded — racy under concurrency and simply wrong when a filter is active.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A unique-field constraint + a server-side sequence / auto-increment.</p></div>
+</section>
+
+<section id="lim-12">
+  <div class="shead"><span class="snum">12</span><h2>No collation control on sort</h2><span class="sev l">MINOR</span></div>
+  <div class="surfaced">Todo (sort by title)</div>
+  <p><code>sort=&lt;field&gt;</code> orders by the raw stored value — for strings that's byte/ASCII order, so <code>"Zebra"</code> sorts before <code>"apple"</code>, with no locale/case-insensitive option. The Todo app re-sorts the fetched page client-side with <code>localeCompare</code> — which can't stay correct across pagination.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A per-sort collation flag (case-insensitive / locale-aware) so the server returns the right order.</p></div>
+</section>
+
+<section id="lim-13">
+  <div class="shead"><span class="snum">13</span><h2>No null-ordering control, no OR / multi-field filter</h2><span class="sev m">MEDIUM</span></div>
+  <div class="surfaced">Todo (sort by due date; search title-or-notes)</div>
+  <p>Two query-expressiveness gaps. <strong>(a) Null ordering:</strong> <code>sort</code> has no <code>NULLS FIRST/LAST</code>, and SQLite places NULLs first — so sorting tasks by <code>due</code> puts every undated task above the dated ones, the opposite of what a to-do app wants. <strong>(b) OR / multi-field:</strong> <code>__contains</code> matches one field at a time and filters are AND-combined; there's no OR across fields, so "search title <em>or</em> notes" must be two indexed queries merged client-side.</p>
+  <div class="fix"><div class="lab">&rarr; direction</div><p>A nulls-ordering flag and a basic OR / multi-field filter.</p></div>
+</section>
+
+<div class="parthead" id="part-arch">
+  <div class="eyebrow">Part 2</div>
+  <h2 style="margin:0">Architectural gaps for a production rebuild</h2>
+  <p style="margin-top:12px;color:var(--ink-2);max-width:72ch">A forward-looking pass: <em>if you rebuilt the real product</em> (LinkedIn / Notion / Figma), what infrastructure would it need, and where does MorphDB fall short. Part 1 was hit empirically on toy clones; these are the categorical systems a real rebuild requires.</p>
+</div>
+
+<section id="arch-a">
+  <div class="shead"><span class="snum">A</span><h2>Identity &amp; access — the first cliff</h2></div>
+  <ul>
+    <li><strong>Authentication &amp; identity</strong> <span class="sev c">BLOCKER</span> — no login/sessions/OAuth/SSO/MFA/recovery; the server can't tell <em>which user</em> is calling (<code>X-App-Key</code> is a tenant namespace, not identity). Needs an identity provider + request&rarr;user binding. <em>(deepens #8)</em></li>
+    <li><strong>Authorization, ACLs &amp; sharing</strong> <span class="sev c">BLOCKER</span> — no per-object/row/field access control, no owner/viewer, no roles/teams/orgs, no share links or inherited+overridden page ACLs. Any key-holder reads/writes everything. Needs a policy engine the backend enforces — designed in the <a href="./permissions.html" style="color:var(--cyan)">MorphRules spec</a>.</li>
+  </ul>
+</section>
+
+<section id="arch-b">
+  <div class="shead"><span class="snum">B</span><h2>Realtime &amp; collaboration — kills Figma/Notion as-is</h2></div>
+  <ul>
+    <li><strong>Realtime transport</strong> (WebSocket/SSE, pub/sub) <span class="sev c">BLOCKER</span> — polling-only; two tabs never see each other live. <em>(= #5)</em></li>
+    <li><strong>Conflict-free concurrent editing</strong> (CRDT/OT) + a <strong>per-document authoritative server</strong> + <strong>durable op-log/WAL</strong> <span class="sev c">BLOCKER</span> (Figma, Notion) — read-modify-write loses edits; no op ordering, merge, or authoritative in-memory document.</li>
+    <li><strong>Presence &amp; live cursors/selections</strong> <span class="sev h">MAJOR</span> (Figma, Notion).</li>
+    <li><strong>Offline / local-first sync</strong> with reconnect reconciliation <span class="sev h">MAJOR</span> (Notion, Figma).</li>
+  </ul>
+</section>
+
+<section id="arch-c">
+  <div class="shead"><span class="snum">C</span><h2>Search &amp; discovery</h2></div>
+  <ul>
+    <li><strong>Full-text + typeahead + fuzzy + faceted search</strong> <span class="sev c">BLOCKER</span> — only <code>contains</code> on one indexed field; no relevance, tokenization, typo-tolerance, prefix autocomplete, or facets. <em>(= #6)</em></li>
+    <li><strong>Semantic / vector search &amp; embeddings</strong> (ANN) <span class="sev h">MAJOR&rarr;BLOCKER</span> (LinkedIn PYMK/jobs, Notion AI) — a <code>json</code> field can hold an embedding but it isn't queryable; no vector type or ANN index.</li>
+    <li><strong>Graph traversal</strong> — 2nd/3rd-degree, shortest-path, mutual-connection, degree counts <span class="sev h">MAJOR</span> (LinkedIn) — relations model edges, but <code>include</code> depth &le;4 hydration is not graph algorithms.</li>
+  </ul>
+</section>
+
+<section id="arch-d">
+  <div class="shead"><span class="snum">D</span><h2>Feeds, aggregation &amp; derived data</h2></div>
+  <ul>
+    <li><strong>Feed generation</strong> — fan-out, candidate gen, dedup, ML ranking, per-user materialized timelines <span class="sev c">BLOCKER</span> (LinkedIn).</li>
+    <li><strong>Aggregation / group-by / count-by / distinct / analytics</strong> <span class="sev h">MAJOR</span> (all) — only a flat <code>total</code> per filter. <em>(= #7)</em></li>
+    <li><strong>Rollups &amp; formula / computed properties</strong> <span class="sev h">MAJOR</span> (Notion) — no server-side derived fields.</li>
+    <li><strong>Atomic increment counters</strong> <span class="sev h">MAJOR</span> (all). <em>(= #3)</em> &nbsp; <strong>Atomic relation deltas</strong> <span class="sev h">MAJOR</span> (all). <em>(= #2)</em></li>
+    <li><strong>Multi-object transactions &amp; cross-entity invariants</strong> <span class="sev c">BLOCKER</span> (all) — accept-connection (both sides + notification), apply-to-job, payments. <em>(= #4)</em></li>
+    <li><strong>Idempotency &amp; optimistic concurrency</strong> (compare-and-set / version token) <span class="sev h">MAJOR</span> (all) — dedup double-submits, prevent lost updates.</li>
+  </ul>
+</section>
+
+<section id="arch-e">
+  <div class="shead"><span class="snum">E</span><h2>Storage &amp; media</h2></div>
+  <ul>
+    <li><strong>Blob / file / media storage + processing + CDN</strong> <span class="sev c">BLOCKER</span> (all) — objects are JSON; you can store a URL but not the bytes. No upload endpoint, transcoding, image resize, thumbnail/export rendering, or edge delivery. Needs object storage (S3/GCS) + media pipeline + CDN.</li>
+  </ul>
+</section>
+
+<section id="arch-f">
+  <div class="shead"><span class="snum">F</span><h2>Async &amp; integration</h2></div>
+  <ul>
+    <li><strong>Background jobs / queues / cron / event pipelines</strong> <span class="sev c">BLOCKER</span> (all) — fan-out, search indexing, embedding generation, email batches, exports, cleanup.</li>
+    <li><strong>Webhooks / triggers / change-data-capture / change-feed</strong> <span class="sev c">BLOCKER</span> (all) — keep search/feed/analytics in sync; third-party integration. The store emits no change events.</li>
+    <li><strong>Notifications</strong> — generation, fan-out, rollup ("X and 12 others"), in-app/push/email, read state <span class="sev c">BLOCKER</span> (all).</li>
+    <li><strong>Transactional / outbound email</strong> <span class="sev h">MAJOR</span> (LinkedIn, Notion).</li>
+  </ul>
+</section>
+
+<section id="arch-g">
+  <div class="shead"><span class="snum">G</span><h2>History &amp; governance</h2></div>
+  <ul>
+    <li><strong>Version history / snapshots / restore / branching+merge</strong> <span class="sev c">BLOCKER</span> (Figma), <span class="sev h">MAJOR</span> (Notion) — no history; PATCH overwrites.</li>
+    <li><strong>Audit log / activity / compliance trails</strong> (GDPR, SOC2, moderation) <span class="sev h">MAJOR</span> (all).</li>
+    <li><strong>Soft delete / trash / TTL purge</strong> <span class="sev l">MINOR</span> (Notion).</li>
+  </ul>
+</section>
+
+<section id="arch-h">
+  <div class="shead"><span class="snum">H</span><h2>Scale, performance &amp; ops</h2></div>
+  <ul>
+    <li><strong>Query at scale</strong> — cursor pagination (offset-only today), composite/partial indexes, geospatial, deep filters <span class="sev h">MAJOR</span> (all).</li>
+    <li><strong>Write scalability / sharding / horizontal throughput</strong> <span class="sev c">BLOCKER</span> (all) — a single serialized writer (or N stateless nodes over one Postgres) won't take these products' write volume or hot partitions.</li>
+    <li><strong>Caching / read replicas / CDN / denormalized read views</strong> <span class="sev h">MAJOR</span> (all).</li>
+    <li><strong>Rate limiting / quotas / anti-abuse / spam / moderation</strong> <span class="sev c">BLOCKER</span> (LinkedIn), <span class="sev h">MAJOR</span> (others).</li>
+    <li><strong>Server-side compute / functions / validation rules</strong> <span class="sev h">MAJOR</span> (all) — semantic validation, computed defaults, hooks. <em>(deepens #1)</em></li>
+    <li><strong>Observability / metrics / tracing</strong> <span class="sev l">MINOR</span>.</li>
+  </ul>
+</section>
+
+<section id="arch-i">
+  <div class="shead"><span class="snum">I</span><h2>Product / business plumbing</h2></div>
+  <ul>
+    <li><strong>Billing / seats / plans / workspace admin</strong> <span class="sev h">MAJOR</span> (Notion, LinkedIn).</li>
+    <li><strong>i18n / localization</strong> <span class="sev l">MINOR</span>.</li>
+  </ul>
+</section>
+
+<section id="verdict">
+  <div class="shead"><span class="snum">&#9671;</span><h2>The honest verdict</h2></div>
+  <p>MorphDB is a genuinely good fit for the <em>system-of-record, prototype</em> layer — schema-fluid typed entities, bidirectional relations, indexed filtering, relation-include hydration, offset pagination over SQLite/Postgres. That covers maybe <strong>10–20%</strong> of any of these products (modeling + CRUD of profiles/posts/jobs, the block tree, the scene-graph metadata). Every <em>load-bearing</em> system that makes them what they are sits outside MorphDB.</p>
+  <div class="call verdict">
+    <div class="lab">&#9671; Most reusable primitives to add, in rough priority</div>
+    <p><strong>(1)</strong> identity + per-object authorization &nbsp;·&nbsp; <strong>(2)</strong> a change-feed/subscription (unlocks realtime, webhooks, cache/search sync) &nbsp;·&nbsp; <strong>(3)</strong> atomic ops (increment, relation delta, compare-and-set, small transactions) &nbsp;·&nbsp; <strong>(4)</strong> aggregation/group-by &nbsp;·&nbsp; <strong>(5)</strong> blob storage.</p>
+  </div>
+  <p>The clones work because a demo only needs the 10–20% MorphDB nails. The list above is what separates "a convincing single-file demo" from "the real product" — and almost none of it is expressible against the generic object API today.</p>
+</section>
+
+<div class="foot">
+  MorphDB · living findings document &nbsp;·&nbsp; generated from the example-app audit loop &nbsp;·&nbsp;
+  source: <a href="https://github.com/Savcab/morphdb/blob/main/docs/morphdb-limitations.md">docs/morphdb-limitations.md</a><br>
+  Companion design: <a href="./permissions.html">MorphRules — per-user authorization</a> &nbsp;·&nbsp; <a href="./index.html">all specs</a>
+</div>
+
+</main>
+</div>
+
+<script>
+/* scroll-spy for the sidebar */
+(function(){
+  var links=[].slice.call(document.querySelectorAll('nav a'));
+  var map={}; links.forEach(function(a){var h=a.getAttribute('href');if(h&&h[0]==='#')map[h.slice(1)]=a;});
+  var spy=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(l){l.classList.remove('active');});
+        if(map[e.target.id]) map[e.target.id].classList.add('active');
+      }
+    });
+  },{rootMargin:"-12% 0px -78% 0px",threshold:0});
+  document.querySelectorAll('main section[id]').forEach(function(s){spy.observe(s);});
+})();
+</script>
+<!-- Reader comments: one inline thread per section, stored in cloud MorphDB. -->
+<script>window.SPEC_COMMENTS = { slug: "gaps" };</script>
+<script src="comments.js"></script>
+</body>
+</html>
