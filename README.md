@@ -10,6 +10,11 @@ database — same API, same code.
 
 📖 **[Visual explainer → morphdb.pages.dev](https://morphdb.pages.dev)** — the whole idea (schema-fluid, API-stable), the agent/frontend split, relations, and how Claude plugs in through the `morphdb` CLI, on one page.
 
+🧭 **Design specs** (hosted on GitHub Pages, with inline text-anchored comments — highlight any line to weigh in):
+- **[The Gaps →](https://savcab.github.io/morphdb/specs/gaps.html)** — what the generic backend can't do yet, found by building the example clones; the prioritized to-do list.
+- **[MorphRules →](https://savcab.github.io/morphdb/specs/permissions.html)** — a design for per-user authorization enforced inside MorphDB.
+- **[All specs + example apps →](https://savcab.github.io/morphdb/specs/)**
+
 ## Install
 
 ```bash
