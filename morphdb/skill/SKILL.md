@@ -5,7 +5,8 @@ description: A coding-agent-friendly, multi-tenant backend for vibe-coded websit
 
 # MorphDB — instant morphable backend for AI-built apps
 
-MorphDB is a single Python process (zero dependencies, backed by SQLite). One
+MorphDB is a single Python process. By default it is zero-dependency and backed
+by SQLite; it can also run against PostgreSQL or DynamoDB when configured. One
 process hosts **many apps** — one per website you build — fully isolated from
 each other. Three surfaces:
 
@@ -144,6 +145,10 @@ guid for to-one, a list of guids for to-many). Use `morphdb query` only when
 | `DELETE /objects/{type}/{guid}` | Delete object + its edges (neighbors survive). |
 
 List returns `{objects, total, limit, offset}` (`total` = full filtered count).
+On DynamoDB, MorphDB keeps this exact behavior, but large offsets, broad exact
+totals, `__contains`, negative relation filters, and broad sorts may read more
+items internally. Prefer selective indexed filters and small offsets when you
+know the backend is DynamoDB.
 
 **Nested reads — `include`.** By default a relation comes back as a guid (to-one)
 or list of guids (to-many). Add `?include=<rel>,<rel>.<subrel>` to replace those
@@ -241,6 +246,18 @@ morphdb logs -f    # follow the server log
 morphdb dashboard  # read-only web view of every app + its tables
 ```
 
+Storage target examples:
+
+```bash
+morphdb start --db ./app.sqlite3
+morphdb start --db postgresql://user:pass@host:5432/db
+morphdb start --db 'dynamodb://morphdb-prod?region=us-west-2'
+```
+
+For DynamoDB install `morphdb[dynamodb]`; credentials come from the normal AWS
+IAM/boto3 chain, not from a database password in the URL. Use
+`?create_table=true` only for local/prototype table creation.
+
 **Debug tip:** if the frontend can't reach the backend (connection refused, a
 `fetch` throws) and you're running locally, the server is probably down — run
 `morphdb status`, then `morphdb start`, and check `morphdb logs`. A `morphdb query
@@ -324,5 +341,10 @@ applies here — cheap context that keeps later edits consistent.
   composable with field filters/sort/pagination. Only scalar comparisons
   (`gt`/`lt`/`contains`) are field-only. So model a link as a relation, not a
   guid-bearing string field.
+- DynamoDB uses the same MorphDB API as SQLite/Postgres, not a narrower
+  DynamoDB-specific API. It is correct for exact totals and offset pagination,
+  but some broad query shapes cost more. Shape generated apps toward selective
+  indexed filters, relation equality filters, and "load more" pagination when
+  possible.
 
 See the repo `README.md` for the complete reference.
