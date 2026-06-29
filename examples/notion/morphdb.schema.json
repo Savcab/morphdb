@@ -25,6 +25,21 @@
       "relations": {
         "page": { "to": "page", "cardinality": "many_to_one", "inverse": "blocks" }
       }
+    },
+    {
+      "name": "comment",
+      "fields": {
+        "page": { "type": "string", "index": true },
+        "block": { "type": "string", "index": true },
+        "quote": "string",
+        "prefix": "string",
+        "suffix": "string",
+        "startOffset": "number",
+        "endOffset": "number",
+        "author": "string",
+        "body": "string",
+        "docVersion": "string"
+      }
     }
   ]
 }

@@ -855,6 +855,7 @@ async function loadDoc(guid) {
       title: page.title, icon: page.icon, order: page.order, parent: page.parent,
     });
     state.blocks = (page.blocks || []).slice().sort((a, b) => a.order - b.order);
+    await CommentLayer.load(guid);
     renderDoc();
   } catch (e) { showErr(e.message); }
 }
@@ -952,6 +953,7 @@ function renderDoc() {
   add.onclick = () => addBlockAfter(null);
 
   doc.append(icon, title, blocks, add);
+  CommentLayer.paintAll();
 }
 
 function renderEmptyDoc() {
@@ -1123,6 +1125,7 @@ function rebuildBlock(b, caret) {
   old.replaceWith(fresh);
   const ce = fresh.querySelector(".ce");
   if (ce && caret != null) { caret === "end" ? placeCaretEnd(ce) : placeCaretAt(ce, caret); }
+  CommentLayer.paintBlock(b._guid);
   return ce;
 }
 
@@ -2011,12 +2014,271 @@ function expandAncestors(guid) {
   while (g && state.byId[g]) { state.expanded.add(g); g = state.byId[g].parent; }
 }
 
+/* ---------- Inline comments (text-anchored, Notion-style) ----------
+   Select text in any block -> a floating "Comment" button -> the span is
+   highlighted (CSS Custom Highlight API, no DOM mutation) and a comment is
+   anchored to it. The comment stores the quoted text + a little context + char
+   offsets within the block, so on reload we re-find the span by offsets, falling
+   back to a context-disambiguated quote search. If the quoted text is edited
+   away, the comment is shown as "outdated" (kept) -- like a stale GitHub review
+   comment. A small bubble in the block's right margin opens the thread; you can
+   delete comments you posted from this browser. Stored in the same MorphDB app. */
+const CommentLayer = (() => {
+  const NAME_KEY = "noted:cname", MINE_KEY = "noted:cmine", CTX = 40;
+  const MINE = new Set((() => { try { return JSON.parse(localStorage.getItem(MINE_KEY) || "[]"); } catch (_) { return []; } })());
+  const saveMine = () => localStorage.setItem(MINE_KEY, JSON.stringify([...MINE]));
+  const HL_OK = !!(window.Highlight && window.CSS && CSS.highlights);
+  const HL = HL_OK ? new Highlight() : null, HLA = HL_OK ? new Highlight() : null;
+  if (HL_OK) { CSS.highlights.set("noted-comment", HL); CSS.highlights.set("noted-active", HLA); }
+  const cel = (t, p) => Object.assign(document.createElement(t), p || {});
+  const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const agoTxt = (iso) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; if (s < 60) return "just now"; if (s < 3600) return Math.floor(s / 60) + "m ago"; if (s < 86400) return Math.floor(s / 3600) + "h ago"; if (s < 2592000) return Math.floor(s / 86400) + "d ago"; return new Date(iso).toLocaleDateString(); };
+
+  let byBlock = new Map();    // blockGuid -> [comment]
+  let entries = [];           // {comment, blockGuid, range, start, end, outdated}
+  let curPage = null;
+
+  // ----- text map over a .ce, skipping our injected nodes -----
+  function textMap(root) {
+    const nodes = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) { for (let p = n.parentElement; p && p !== root; p = p.parentElement) if (p.hasAttribute && p.hasAttribute("data-noted")) return NodeFilter.FILTER_REJECT; return NodeFilter.FILTER_ACCEPT; },
+    });
+    let total = 0, node; while ((node = w.nextNode())) { nodes.push({ node, start: total, len: node.nodeValue.length }); total += node.nodeValue.length; }
+    return { nodes, text: nodes.map((x) => x.node.nodeValue).join(""), total };
+  }
+  function pointToOffset(map, container, offset) {
+    if (container.nodeType === 3) { const e = map.nodes.find((x) => x.node === container); return e ? e.start + offset : 0; }
+    const b = document.createRange(); b.setStart(container, offset); b.collapse(true); let c = 0;
+    for (const e of map.nodes) { let cmp; try { cmp = b.comparePoint(e.node, e.len); } catch (_) { cmp = 1; } if (cmp < 0) c += e.len; else break; }
+    return c;
+  }
+  function locate(map, off) { for (const e of map.nodes) if (off <= e.start + e.len) return { node: e.node, local: Math.max(0, off - e.start) }; const l = map.nodes[map.nodes.length - 1]; return l ? { node: l.node, local: l.len } : null; }
+  function rangeFromOffsets(map, s, e) { const a = locate(map, s), b = locate(map, e); if (!a || !b) return null; const r = document.createRange(); try { r.setStart(a.node, a.local); r.setEnd(b.node, b.local); } catch (_) { return null; } return r; }
+  const csuf = (a, b) => { let i = 0; while (i < a.length && i < b.length && a[a.length - 1 - i] === b[b.length - 1 - i]) i++; return i; };
+  const cpre = (a, b) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
+  function quoteSearch(full, q, pre, suf) { if (!q) return -1; const idx = []; let i = full.indexOf(q); while (i >= 0) { idx.push(i); i = full.indexOf(q, i + 1); } if (idx.length <= 1) return idx.length ? idx[0] : -1; let best = idx[0], sc = -1; for (const k of idx) { const a = full.slice(Math.max(0, k - (pre ? pre.length : 0)), k), b = full.slice(k + q.length, k + q.length + (suf ? suf.length : 0)); const s = (pre ? csuf(a, pre) : 0) + (suf ? cpre(b, suf) : 0); if (s > sc) { sc = s; best = k; } } return best; }
+  function anchorIn(map, c) {
+    const full = map.text, q = c.quote || "";
+    if (!q) return { range: null, start: 0, end: 0, outdated: false };    // block-level reply -> no highlight, not "outdated"
+    if (typeof c.startOffset === "number" && full.slice(c.startOffset, c.endOffset) === q) return { range: rangeFromOffsets(map, c.startOffset, c.endOffset), start: c.startOffset, end: c.endOffset, outdated: false };
+    const i = quoteSearch(full, q, c.prefix, c.suffix);
+    if (i >= 0) return { range: rangeFromOffsets(map, i, i + q.length), start: i, end: i + q.length, outdated: false };
+    return { range: null, start: 0, end: 0, outdated: true };
+  }
+  function refreshHL() { if (!HL_OK) return; HL.clear(); for (const e of entries) if (e.range && !e.outdated) HL.add(e.range); }
+  const emph = (r) => { if (HL_OK) { HLA.clear(); if (r) HLA.add(r); } };
+
+  async function ensureSchema() {
+    try { await api("PUT", "/schema/comment", { merge: true, fields: {
+      page: { type: "string", index: true }, block: { type: "string", index: true },
+      quote: { type: "string" }, prefix: { type: "string" }, suffix: { type: "string" },
+      startOffset: { type: "number" }, endOffset: { type: "number" },
+      author: { type: "string" }, body: { type: "string" }, docVersion: { type: "string" } } }); } catch (_) {}
+  }
+  async function load(pg) {
+    curPage = pg; byBlock = new Map();
+    try {
+      const d = await api("GET", `/objects/comment?page=${encodeURIComponent(pg)}&sort=_created_at&limit=1000`);
+      for (const c of (d?.objects || [])) { if (!byBlock.has(c.block)) byBlock.set(c.block, []); byBlock.get(c.block).push(c); }
+    } catch (_) {}
+  }
+
+  // ----- paint -----
+  function paintBlock(guid) {
+    entries = entries.filter((e) => e.blockGuid !== guid);
+    const w = document.querySelector(`.block[data-guid="${guid}"]`); if (!w) { refreshHL(); return; }
+    const oldInd = w.querySelector(":scope > .noted-ind"); if (oldInd) oldInd.remove();
+    const list = byBlock.get(guid) || []; if (!list.length) { refreshHL(); return; }
+    const ceEl = w.querySelector(".ce"); const map = ceEl ? textMap(ceEl) : null;
+    for (const c of list) { const a = map ? anchorIn(map, c) : { range: null, start: 0, end: 0, outdated: !!c.quote }; entries.push({ comment: c, blockGuid: guid, ...a }); }
+    const ind = cel("button", { className: "noted-ind", type: "button", textContent: "💬 " + list.length, title: "Show comments" });
+    ind.setAttribute("data-noted", "");
+    ind.addEventListener("mousedown", (e) => e.stopPropagation());
+    ind.addEventListener("mouseenter", () => { const r = entries.find((e) => e.blockGuid === guid && e.range); emph(r && r.range); });
+    ind.addEventListener("mouseleave", () => emph(null));
+    ind.addEventListener("click", (e) => { e.stopPropagation(); openThread(guid, ind); });
+    w.appendChild(ind);
+    refreshHL();
+  }
+  function paintAll() { entries = []; for (const guid of byBlock.keys()) paintBlock(guid); refreshHL(); }
+
+  // ----- floating selection button + popover -----
+  const selBtn = cel("button", { className: "noted-selbtn", type: "button", textContent: "💬 Comment", hidden: true });
+  selBtn.setAttribute("data-noted", "");
+  const pop = cel("div", { className: "noted-pop", hidden: true });
+  pop.setAttribute("data-noted", "");
+  let pending = null;
+  const place = (elm, vx, vy) => { elm.style.left = (window.scrollX + vx) + "px"; elm.style.top = (window.scrollY + vy) + "px"; };
+
+  function currentSel() {
+    const sel = window.getSelection(); if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+    const r = sel.getRangeAt(0); if (!r.toString().trim()) return null;
+    const sCE = (r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement)?.closest(".ce");
+    const eCE = (r.endContainer.nodeType === 1 ? r.endContainer : r.endContainer.parentElement)?.closest(".ce");
+    if (!sCE || sCE !== eCE || !sCE.closest(".blocks")) return null;
+    for (let p = r.startContainer.parentElement; p; p = p.parentElement) if (p.hasAttribute && p.hasAttribute("data-noted")) return null;
+    const w = sCE.closest(".block[data-guid]"); if (!w) return null;
+    return { r, ceEl: sCE, blockGuid: w.dataset.guid };
+  }
+  function onSelect() {
+    if (!pop.hidden) return;
+    const s = currentSel();
+    if (!s) { selBtn.hidden = true; return; }
+    const rect = s.r.getBoundingClientRect();
+    place(selBtn, rect.left + rect.width / 2, rect.top - 8); selBtn.hidden = false;
+    const map = textMap(s.ceEl);
+    const start = pointToOffset(map, s.r.startContainer, s.r.startOffset);
+    const end = pointToOffset(map, s.r.endContainer, s.r.endOffset);
+    pending = { ceEl: s.ceEl, blockGuid: s.blockGuid, start, end, quote: map.text.slice(start, end),
+      prefix: map.text.slice(Math.max(0, start - CTX), start), suffix: map.text.slice(end, end + CTX), docVersion: "" };
+  }
+
+  function composeForm(onPost) {
+    const form = cel("div", { className: "noted-compose" });
+    const name = cel("input", { type: "text", placeholder: "Your name (optional)", value: localStorage.getItem(NAME_KEY) || "" });
+    const body = cel("textarea", { placeholder: "Write a comment…" });
+    const actions = cel("div", { className: "noted-actions" });
+    const post = cel("button", { type: "button", className: "noted-post", textContent: "Comment" });
+    const cancel = cel("button", { type: "button", className: "noted-cancel", textContent: "Cancel" });
+    const msg = cel("span", { className: "noted-msg" });
+    actions.append(post, cancel, msg); form.append(name, body, actions);
+    cancel.addEventListener("click", closePop);
+    post.addEventListener("click", async () => {
+      const text = body.value.trim(); if (!text) { body.focus(); return; }
+      const author = name.value.trim() || "Anonymous"; localStorage.setItem(NAME_KEY, name.value.trim());
+      post.disabled = true; msg.className = "noted-msg"; msg.textContent = "Posting…";
+      try { await onPost(author, text); } catch (e) { msg.className = "noted-msg err"; msg.textContent = "Could not post — " + e.message; post.disabled = false; }
+    });
+    return { form, body };
+  }
+  function closePop() { pop.hidden = true; pending = null; }
+
+  function openCompose() {
+    if (!pending) return;
+    pop.textContent = "";
+    pop.appendChild(cel("div", { className: "noted-quote", textContent: norm(pending.quote) }));
+    const { form, body } = composeForm(async (author, text) => {
+      const saved = await api("POST", "/objects/comment", { page: curPage, block: pending.blockGuid,
+        quote: pending.quote, prefix: pending.prefix, suffix: pending.suffix,
+        startOffset: pending.start, endOffset: pending.end, author, body: text, docVersion: pending.docVersion });
+      if (saved && saved._guid) { MINE.add(saved._guid); saveMine(); }
+      if (!byBlock.has(pending.blockGuid)) byBlock.set(pending.blockGuid, []);
+      byBlock.get(pending.blockGuid).push(saved);
+      const g = pending.blockGuid; closePop(); window.getSelection()?.removeAllRanges(); paintBlock(g);
+    });
+    pop.appendChild(form);
+    pop.hidden = false; selBtn.hidden = true; pop.style.left = selBtn.style.left; pop.style.top = selBtn.style.top;
+    body.focus();
+  }
+
+  function commentNode(c) {
+    const card = cel("div", { className: "noted-card" });
+    const a = entries.find((e) => e.comment._guid === c._guid);
+    if (a && a.outdated) card.classList.add("outdated");
+    if (c.quote) card.appendChild(cel("div", { className: "noted-quote", textContent: norm(c.quote) }));
+    const meta = cel("div", { className: "noted-meta" });
+    meta.appendChild(cel("b", { textContent: c.author || "Anonymous" }));
+    if (c._created_at) meta.appendChild(cel("time", { textContent: "· " + agoTxt(c._created_at) }));
+    if (a && a.outdated) meta.appendChild(cel("span", { className: "noted-badge", textContent: "outdated" }));
+    if (c._guid && MINE.has(c._guid)) {
+      const del = cel("button", { type: "button", className: "noted-del", textContent: "Delete" });
+      del.addEventListener("click", async () => {
+        if (del.disabled) return; del.disabled = true; del.textContent = "Deleting…";
+        try {
+          await api("DELETE", "/objects/comment/" + c._guid);
+          const arr = byBlock.get(c.block) || []; const i = arr.findIndex((x) => x._guid === c._guid); if (i >= 0) arr.splice(i, 1);
+          if (!arr.length) byBlock.delete(c.block);
+          MINE.delete(c._guid); saveMine();
+          const open = !byBlock.has(c.block); paintBlock(c.block);
+          if (open) closePop(); else openThread(c.block, null, true);
+        } catch (_) { del.disabled = false; del.textContent = "Delete"; }
+      });
+      meta.appendChild(del);
+    }
+    card.append(meta, cel("div", { className: "noted-cbody", textContent: c.body || "" }));
+    return card;
+  }
+  function openThread(guid, anchorEl, keepPos) {
+    const list = byBlock.get(guid) || []; if (!list.length) { closePop(); return; }
+    pop.textContent = "";
+    const wrapList = cel("div", { className: "noted-list" });
+    list.forEach((c) => wrapList.appendChild(commentNode(c)));
+    pop.appendChild(wrapList);
+    const { form, body } = composeForm(async (author, text) => {     // reply -> block-level (no quote)
+      const saved = await api("POST", "/objects/comment", { page: curPage, block: guid, author, body: text });
+      if (saved && saved._guid) { MINE.add(saved._guid); saveMine(); }
+      byBlock.get(guid).push(saved); paintBlock(guid); openThread(guid, anchorEl, true);
+    });
+    pop.appendChild(form);
+    pop.hidden = false;
+    if (!keepPos && anchorEl) { const rect = anchorEl.getBoundingClientRect(); place(pop, Math.min(rect.left, window.innerWidth - 300), rect.bottom + 6); }
+    body.placeholder = "Reply…";
+  }
+
+  function setup() {
+    document.body.append(selBtn, pop);
+    selBtn.addEventListener("mousedown", (e) => e.preventDefault());   // keep selection alive
+    selBtn.addEventListener("click", openCompose);
+    let t; document.addEventListener("selectionchange", () => { clearTimeout(t); t = setTimeout(onSelect, 120); });
+    document.addEventListener("mousedown", (e) => { if (!pop.hidden && !pop.contains(e.target) && e.target !== selBtn) closePop(); });
+    // re-anchor a block's comments after it's edited (debounced) so "outdated" stays live
+    let rt; document.addEventListener("input", (e) => {
+      const ceEl = e.target.closest && e.target.closest(".ce"); if (!ceEl) return;
+      const w = ceEl.closest(".block[data-guid]"); if (!w || !byBlock.has(w.dataset.guid)) return;
+      clearTimeout(rt); rt = setTimeout(() => paintBlock(w.dataset.guid), 450);
+    }, true);
+    injectCSS();
+  }
+  function injectCSS() {
+    const css = `
+    ::highlight(noted-comment){background:rgba(255,212,41,.30);border-radius:2px}
+    ::highlight(noted-active){background:rgba(255,193,7,.55)}
+    .noted-ind{position:absolute;top:2px;right:-40px;font:inherit;font-size:11px;line-height:1;cursor:pointer;
+      background:var(--menu-bg,#fff);color:var(--faint,#9a9a97);border:1px solid var(--border,#e4e4e2);border-radius:14px;
+      padding:3px 8px;opacity:0;transition:opacity .1s;box-shadow:0 1px 3px rgba(0,0,0,.08);white-space:nowrap;z-index:6}
+    .block:hover .noted-ind,.noted-ind:focus-visible{opacity:1}
+    .noted-selbtn{position:absolute;z-index:90;transform:translate(-50%,-100%);font:inherit;font-size:12.5px;font-weight:600;
+      cursor:pointer;background:var(--menu-bg,#fff);color:var(--text,#37352f);border:1px solid var(--border,#e4e4e2);
+      border-radius:7px;padding:5px 11px;box-shadow:0 3px 14px rgba(0,0,0,.18);white-space:nowrap}
+    .noted-pop{position:absolute;z-index:95;width:284px;max-width:90vw;background:var(--menu-bg,#fff);
+      border:1px solid var(--border,#e4e4e2);border-radius:10px;padding:12px;box-shadow:0 8px 30px rgba(0,0,0,.22)}
+    .noted-list{display:flex;flex-direction:column;gap:10px;margin-bottom:10px;max-height:46vh;overflow:auto}
+    .noted-card{font-size:13px;line-height:1.45}
+    .noted-card.outdated{opacity:.72}
+    .noted-quote{font-size:11.5px;color:var(--faint,#9a9a97);border-left:2px solid rgba(255,193,7,.7);padding-left:7px;margin-bottom:5px;
+      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .noted-card.outdated .noted-quote{text-decoration:line-through;border-left-color:var(--border,#e4e4e2)}
+    .noted-meta{font-size:11px;color:var(--faint,#9a9a97);margin-bottom:3px}
+    .noted-meta b{color:var(--text,#37352f);font-weight:600}.noted-meta time{margin-left:6px}
+    .noted-badge{margin-left:7px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint,#9a9a97);
+      border:1px solid var(--border,#e4e4e2);border-radius:4px;padding:1px 5px}
+    .noted-del{float:right;font:inherit;font-size:11px;color:#e0664b;background:none;border:none;cursor:pointer;padding:0;opacity:.7}
+    .noted-del:hover{opacity:1;text-decoration:underline}.noted-del:disabled{opacity:.4}
+    .noted-cbody{color:var(--text,#37352f);white-space:pre-wrap;overflow-wrap:anywhere}
+    .noted-compose{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border,#e4e4e2);padding-top:10px}
+    .noted-compose input,.noted-compose textarea{font:inherit;font-size:13px;color:var(--text,#37352f);background:var(--bg,#fff);
+      border:1px solid var(--border,#e4e4e2);border-radius:6px;padding:7px 9px;width:100%}
+    .noted-compose textarea{min-height:58px;resize:vertical}
+    .noted-actions{display:flex;align-items:center;gap:8px}
+    .noted-actions button{font:inherit;font-size:12px;font-weight:600;cursor:pointer;border-radius:6px;padding:6px 13px}
+    .noted-post{background:#2383e2;color:#fff;border:none}.noted-post:disabled{opacity:.5}
+    .noted-cancel{background:transparent;color:var(--faint,#9a9a97);border:1px solid var(--border,#e4e4e2)}
+    .noted-msg{font-size:11px;color:var(--faint,#9a9a97)}.noted-msg.err{color:#e0664b}
+    @media (max-width:760px){ .noted-ind{right:2px;top:-4px} .noted-pop{width:240px} }`;
+    document.head.appendChild(cel("style", { textContent: css }));
+  }
+
+  async function init() { setup(); await ensureSchema(); }
+  return { init, load, paintAll, paintBlock };
+})();
+
 (async () => {
   loadCollapsed();   // restore folded toggles from a previous session
   try {
     await ensureApp();
     await ensureSchema();
     await seedIfEmpty();
+    await CommentLayer.init();
   } catch (e) {
     showErr("Could not reach MorphDB at " + BASE + " — is it running? (" + e.message + ")");
     return;
