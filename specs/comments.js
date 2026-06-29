@@ -22,6 +22,9 @@
   const APP  = CFG.app  || "morphdb-spec-comments";
   const SECTION_SEL = CFG.sectionSelector || "main > section[id], main > header[id]";
   const NAME_KEY = "morphdb-spec:name";
+  const MINE_KEY = "morphdb-spec:mine";   // guids of comments this browser posted (so you can delete your own)
+  const MINE = new Set((() => { try { return JSON.parse(localStorage.getItem(MINE_KEY) || "[]"); } catch (_) { return []; } })());
+  const saveMine = () => localStorage.setItem(MINE_KEY, JSON.stringify([...MINE]));
   const CTX = 40;                      // chars of prefix/suffix context stored
   const HL_OK = !!(window.Highlight && window.CSS && CSS.highlights);
 
@@ -165,6 +168,9 @@
     .mdb-meta time{margin-left:6px}
     .mdb-badge{margin-left:7px;font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.06em;
       text-transform:uppercase;color:var(--ink-3,#8aa0ad);border:1px solid var(--line,#27424f);border-radius:4px;padding:1px 5px}
+    .mdb-del{float:right;font:inherit;font-size:11px;color:var(--deny,#e0664b);background:none;border:none;
+      cursor:pointer;padding:0;opacity:.65}
+    .mdb-del:hover{opacity:1;text-decoration:underline}.mdb-del:disabled{opacity:.4;cursor:default}
     .mdb-cbody{color:var(--ink-2,#b9c6cf);white-space:pre-wrap;overflow-wrap:anywhere}
     /* floating selection button + compose popover (appended to body) */
     .mdb-selbtn{position:absolute;z-index:9998;transform:translate(-50%,-100%);font:inherit;font-size:12.5px;font-weight:600;
@@ -206,6 +212,21 @@
     meta.appendChild(el("b", { textContent: c.author || "Anonymous" }));
     if (c._created_at) { const t = el("time", { dateTime: c._created_at, textContent: "· " + ago(c._created_at) }); meta.appendChild(t); }
     if (entry.outdated) meta.appendChild(el("span", { className: "mdb-badge", textContent: "outdated" }));
+    if (c._guid && MINE.has(c._guid)) {
+      const del = el("button", { type: "button", className: "mdb-del", textContent: "Delete" });
+      del.setAttribute("data-mdb", "");
+      del.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        if (del.disabled) return;
+        del.disabled = true; del.textContent = "Deleting…";
+        try {
+          await api("DELETE", "/objects/comment/" + c._guid);
+          const i = entries.indexOf(entry); if (i >= 0) entries.splice(i, 1);
+          card.remove(); MINE.delete(c._guid); saveMine(); refreshHighlights(entries);
+        } catch (e) { del.disabled = false; del.textContent = "Delete"; }
+      });
+      meta.appendChild(del);
+    }
     card.appendChild(meta);
     card.appendChild(el("div", { className: "mdb-cbody", textContent: c.body || "" }));
     card.addEventListener("mouseenter", () => emphasize(entry.range));
@@ -304,6 +325,7 @@
             quote: pending.quote, prefix: pending.prefix, suffix: pending.suffix,
             startOffset: pending.start, endOffset: pending.end, docVersion: hash(pending.map.text),
           });
+          if (saved && saved._guid) { MINE.add(saved._guid); saveMine(); }
           addEntry(pending.sec, textMap(pending.sec), saved);
           refreshHighlights(entries);
           close();
