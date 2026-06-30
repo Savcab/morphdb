@@ -6,8 +6,10 @@
 #   ./setup-iam.sh
 #
 # Creates:
-#   * role  morphdb-lambda-exec  (Lambda execution role; CloudWatch logs only)
-#   * user  morphdb-deploy       (Lambda + ECR + Logs + PassRole on the role)
+#   * role  morphdb-lambda-exec  (Lambda execution role; CloudWatch logs, plus
+#                                  a DynamoDB table policy when deploy.sh needs it)
+#   * user  morphdb-deploy       (Lambda + ECR + Logs + PassRole/role-policy
+#                                  management on the execution role)
 #   * aws profile 'morphdb'      (access keys stored in ~/.aws/credentials, 0600)
 set -euo pipefail
 
@@ -37,7 +39,10 @@ for P in arn:aws:iam::aws:policy/AWSLambda_FullAccess \
   aws iam attach-user-policy --user-name "$USER" --policy-arn "$P" --profile "$ADMIN_PROFILE"
 done
 cat >"$TMP/passrole.json" <<JSON
-{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"iam:PassRole","Resource":"arn:aws:iam::${ACCT}:role/${ROLE}"}]}
+{"Version":"2012-10-17","Statement":[
+  {"Effect":"Allow","Action":"iam:PassRole","Resource":"arn:aws:iam::${ACCT}:role/${ROLE}"},
+  {"Effect":"Allow","Action":["iam:GetRole","iam:GetRolePolicy","iam:PutRolePolicy","iam:DeleteRolePolicy"],"Resource":"arn:aws:iam::${ACCT}:role/${ROLE}"}
+]}
 JSON
 aws iam put-user-policy --user-name "$USER" --policy-name morphdb-passrole \
   --policy-document "file://$TMP/passrole.json" --profile "$ADMIN_PROFILE"

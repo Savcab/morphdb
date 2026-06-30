@@ -5,7 +5,7 @@
 #   ./teardown.sh           # delete the function + Function URL
 #   ./teardown.sh --iam     # ...and the IAM user/role created by setup-iam.sh
 #
-# Your data lives in the external database (Neon/RDS), NOT in Lambda — tearing
+# Your data lives in the external database (Postgres/DynamoDB), NOT in Lambda — tearing
 # this down removes the public endpoint only; the database is untouched.
 set -euo pipefail
 
@@ -33,6 +33,7 @@ if [ "${1:-}" = "--iam" ]; then
   done
   aws iam delete-user --user-name "$USER" --profile "$ADMIN_PROFILE" 2>/dev/null && echo "deleted user $USER" || true
   aws iam detach-role-policy --role-name "$ROLE" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole --profile "$ADMIN_PROFILE" 2>/dev/null || true
+  aws iam delete-role-policy --role-name "$ROLE" --policy-name morphdb-dynamodb-runtime --profile "$ADMIN_PROFILE" 2>/dev/null || true
   aws iam delete-role --role-name "$ROLE" --profile "$ADMIN_PROFILE" 2>/dev/null && echo "deleted role $ROLE" || true
 fi
 echo "done."
