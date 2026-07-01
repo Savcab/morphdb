@@ -8,8 +8,8 @@ stdlib HTTP server, re-expressed for a Lambda **Function URL** (payload format
 
 — the same route lookup + handler invocation the stdlib server runs. No business
 logic lives here. The persistence target comes from
-``$MORPHDB_DATABASE_URL`` (a Postgres URL, e.g. Neon); the schema is created on
-the first (cold-start) invocation and the connection is reused while the
+``$MORPHDB_DATABASE_URL`` (a Postgres or DynamoDB URL); the schema is created
+on the first (cold-start) invocation and the backend handle is reused while the
 execution environment stays warm, with a one-shot reconnect if it goes stale.
 
 NOTE: there is intentionally no authentication here — the Function URL is public.

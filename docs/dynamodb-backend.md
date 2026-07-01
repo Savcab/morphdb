@@ -98,3 +98,22 @@ morphdb start --db 'dynamodb://morphdb-dev?region=us-west-2&endpoint_url=http://
 
 The dashboard works against DynamoDB and shows logical MorphDB views. The raw SQL
 table explorer remains SQLite/PostgreSQL-specific.
+
+## AWS Lambda Deploy
+
+The AWS deploy helper can run MorphDB as a Lambda Function URL backed by
+DynamoDB:
+
+```bash
+cd deploy/aws
+./setup-iam.sh
+export MORPHDB_DATABASE_URL='dynamodb://morphdb-prod?region=us-west-2'
+./deploy.sh
+```
+
+For quick prototypes, append `&create_table=true` so MorphDB creates the table
+with on-demand billing on first cold start. Production deployments should usually
+create the table outside MorphDB and omit `create_table=true`.
+
+Do not include `endpoint_url` in hosted Lambda deployments. That parameter is
+only for DynamoDB Local/LocalStack.
