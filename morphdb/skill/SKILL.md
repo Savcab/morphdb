@@ -30,8 +30,10 @@ Small data-backed web app that wants persistence without a rigid backend: todos,
 trackers, CRMs, dashboards, inventory, notes — "CRUD + relationships".
 
 Do **not** use it when the user already has a real backend/database, or needs
-multi-tenant auth, horizontal scale, or strong durability. It is a
-localhost-scale dev tool.
+production-grade auth, permissions, high-throughput horizontal scale, or strict
+durability/SLA guarantees without deliberately designing the deployment around
+those needs. Local SQLite is the default prototype path; PostgreSQL and DynamoDB
+targets are available when the user wants a shared or hosted MorphDB server.
 
 ## The morphdb CLI (how you reshape the data model)
 
@@ -243,10 +245,10 @@ morphdb start      # start the background server (default 127.0.0.1:8787)
 morphdb status     # running? where? how many apps?
 morphdb stop       # stop it
 morphdb logs -f    # follow the server log
-morphdb dashboard  # read-only web view of every app + its tables
+morphdb dashboard  # read-only web view of every app + SQL/logical tables
 ```
 
-Storage target examples:
+Database target examples:
 
 ```bash
 morphdb start --db ./app.sqlite3
@@ -256,7 +258,9 @@ morphdb start --db 'dynamodb://morphdb-prod?region=us-west-2'
 
 For DynamoDB install `morphdb[dynamodb]`; credentials come from the normal AWS
 IAM/boto3 chain, not from a database password in the URL. Use
-`?create_table=true` only for local/prototype table creation.
+`?create_table=true` only for local/prototype table creation. Use
+`endpoint_url=http://localhost:8000` only for DynamoDB Local/LocalStack; omit
+`endpoint_url` when targeting real AWS DynamoDB.
 
 **Debug tip:** if the frontend can't reach the backend (connection refused, a
 `fetch` throws) and you're running locally, the server is probably down — run
@@ -306,7 +310,7 @@ the main HTML / entry file (and/or a line in the project README):
 <!-- Backend: MorphDB · app key "my-cool-site".
      Schema edits: the `morphdb schema` CLI (add-field, add-relation, …).
      Server: `morphdb start` / `morphdb status` / `morphdb logs`.
-     This project uses the `morphdb` Claude skill. -->
+     This project uses the `morphdb` agent skill. -->
 ```
 
 It reminds the agent which app key to use and signals that the `morphdb` skill
