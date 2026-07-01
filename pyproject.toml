@@ -34,6 +34,8 @@ dependencies = []
 dev = ["pytest>=7.0"]
 # Persist to PostgreSQL instead of SQLite: pip install morphdb[postgres]
 postgres = ["psycopg[binary]>=3.1"]
+# Persist to Amazon DynamoDB instead of SQLite: pip install morphdb[dynamodb]
+dynamodb = ["boto3>=1.34"]
 
 [project.scripts]
 morphdb = "morphdb.cli.main:main"

@@ -172,10 +172,10 @@ def cmd_install_skill(args):
 
 def cmd_reindex(args):
     from .. import fieldindex
-    from ..db import init_db, transaction
+    from ..db import init_db, storage_transaction
     path = service.resolve_target(args.db)
     init_db(path)
-    with transaction() as c:
+    with storage_transaction() as c:
         n = fieldindex.backfill(c, app=args.app)
     scope = f" in app '{args.app}'" if args.app else ""
     print(f"Reindexed field_index for {n} object(s){scope}.")
@@ -188,9 +188,10 @@ def _add_server_opts(sp):
     sp.add_argument("--port", type=int, default=service.DEFAULT_PORT,
                     help=f"bind port (default {service.DEFAULT_PORT})")
     sp.add_argument("--db", default=None,
-                    help="SQLite path, :memory:, or a Postgres URL "
-                         "(postgresql://...). Default $MORPHDB_DATABASE_URL or "
-                         "~/.morphdb/data.sqlite3")
+                    help="SQLite path, :memory:, a Postgres URL "
+                         "(postgresql://...), or a DynamoDB URL "
+                         "(dynamodb://table?...). Default $MORPHDB_DATABASE_URL "
+                         "or ~/.morphdb/data.sqlite3")
 
 
 def build_parser():

@@ -31,14 +31,18 @@ consistency. A connection pool is a future optimization, not a correctness need.
 
 import os
 import re
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 def is_url(target):
-    """True if ``target`` is a Postgres connection URL (vs a SQLite path)."""
+    """True if ``target`` is a network/cloud backend URL (vs a SQLite path)."""
     return isinstance(target, str) and (
-        target.startswith("postgresql://") or target.startswith("postgres://"))
+        target.startswith("postgresql://")
+        or target.startswith("postgres://")
+        or target.startswith("dynamodb://"))
 
 
 def from_target(target=None):
@@ -53,6 +57,8 @@ def from_target(target=None):
             raise ValueError(
                 "No database target given and $MORPHDB_DATABASE_URL is unset.")
     if is_url(target):
+        if target.startswith("dynamodb://"):
+            return DynamoBackend(target)
         return PostgresBackend(target)
     return SqliteBackend(target)
 
@@ -389,3 +395,211 @@ class PostgresBackend(Backend):
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'")
             return [r["table_name"] for r in cur.fetchall()]
+
+
+# --- DynamoDB ----------------------------------------------------------------
+
+
+@dataclass
+class DynamoRaw:
+    """Small raw handle for the logical DynamoDB backend."""
+
+    resource: object
+    client: object
+    table: object
+    table_name: str
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class DynamoBackend(Backend):
+    """Optional backend targeting one DynamoDB table via boto3.
+
+    Requires ``pip install morphdb[dynamodb]``. Unlike the SQL backends, the
+    engine talks to DynamoDB through :mod:`morphdb.storage`'s logical methods,
+    so SQL translation/introspection methods are only present for tooling.
+    """
+
+    name = "dynamodb"
+
+    def __init__(self, url):
+        self.url = url
+        parsed = urlparse(url)
+        table = unquote(parsed.netloc or parsed.path.lstrip("/"))
+        if not table:
+            raise ValueError(
+                "DynamoDB URL must include a table name, e.g. "
+                "dynamodb://morphdb?region=us-east-1")
+        q = parse_qs(parsed.query)
+        self.table_name = table
+        self.region = _one(q, "region") or os.environ.get("AWS_REGION")
+        self.endpoint_url = _one(q, "endpoint_url")
+        self.profile = _one(q, "profile")
+        self.create_table_flag = _truthy(_one(q, "create_table"))
+
+    def describe(self):
+        parts = [f"dynamodb://{self.table_name}"]
+        opts = []
+        if self.region:
+            opts.append(f"region={self.region}")
+        if self.endpoint_url:
+            opts.append(f"endpoint_url={self.endpoint_url}")
+        if self.create_table_flag:
+            opts.append("create_table=true")
+        return parts[0] + (("?" + "&".join(opts)) if opts else "")
+
+    def connect(self):
+        try:
+            import boto3
+        except ImportError as e:  # pragma: no cover - environment-dependent
+            raise RuntimeError(
+                "DynamoDB support needs boto3. Install it with:\n"
+                "    pip install 'morphdb[dynamodb]'\n"
+                f"(import error: {e})")
+        session_kwargs = {}
+        if self.profile:
+            session_kwargs["profile_name"] = self.profile
+        if self.region:
+            session_kwargs["region_name"] = self.region
+        session = boto3.Session(**session_kwargs)
+        resource_kwargs = {}
+        client_kwargs = {}
+        if self.endpoint_url:
+            resource_kwargs["endpoint_url"] = self.endpoint_url
+            client_kwargs["endpoint_url"] = self.endpoint_url
+        resource = session.resource("dynamodb", **resource_kwargs)
+        client = session.client("dynamodb", **client_kwargs)
+        table = resource.Table(self.table_name)
+        return DynamoRaw(resource, client, table, self.table_name)
+
+    def translate(self, sql):
+        return sql
+
+    def like_ci(self):
+        return "LIKE"
+
+    def create_schema(self, raw, schema_sql):
+        if self.create_table_flag:
+            self._create_table_if_missing(raw)
+            self._validate_table(raw.client.describe_table(TableName=raw.table_name)["Table"])
+            return
+        try:
+            desc = raw.client.describe_table(TableName=raw.table_name)
+        except raw.client.exceptions.ResourceNotFoundException as e:
+            raise RuntimeError(
+                f"DynamoDB table '{raw.table_name}' does not exist. Create it "
+                "ahead of time for production, or add ?create_table=true for "
+                "local/prototype use.") from e
+        self._validate_table(desc["Table"])
+
+    def _create_table_if_missing(self, raw):
+        try:
+            raw.client.describe_table(TableName=raw.table_name)
+            return
+        except raw.client.exceptions.ResourceNotFoundException:
+            pass
+        raw.client.create_table(
+            TableName=raw.table_name,
+            BillingMode="PAY_PER_REQUEST",
+            AttributeDefinitions=[
+                {"AttributeName": "pk", "AttributeType": "S"},
+                {"AttributeName": "sk", "AttributeType": "S"},
+                {"AttributeName": "gsi1pk", "AttributeType": "S"},
+                {"AttributeName": "gsi1sk", "AttributeType": "S"},
+                {"AttributeName": "gsi2pk", "AttributeType": "S"},
+                {"AttributeName": "gsi2sk", "AttributeType": "S"},
+            ],
+            KeySchema=[
+                {"AttributeName": "pk", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "by_app",
+                    "KeySchema": [
+                        {"AttributeName": "gsi1pk", "KeyType": "HASH"},
+                        {"AttributeName": "gsi1sk", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "KEYS_ONLY"},
+                },
+                {
+                    "IndexName": "by_type_updated",
+                    "KeySchema": [
+                        {"AttributeName": "gsi2pk", "KeyType": "HASH"},
+                        {"AttributeName": "gsi2sk", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+            ],
+        )
+        raw.table.wait_until_exists()
+
+    def _validate_table(self, table):
+        key_schema = {k["AttributeName"]: k["KeyType"] for k in table.get("KeySchema", [])}
+        if key_schema.get("pk") != "HASH" or key_schema.get("sk") != "RANGE":
+            raise RuntimeError(
+                f"DynamoDB table '{self.table_name}' must use pk/sk as its "
+                "HASH/RANGE primary key.")
+        gsis = {g["IndexName"] for g in table.get("GlobalSecondaryIndexes", [])}
+        missing = {"by_app", "by_type_updated"} - gsis
+        if missing:
+            raise RuntimeError(
+                f"DynamoDB table '{self.table_name}' is missing required GSI(s): "
+                f"{', '.join(sorted(missing))}.")
+
+    def reset(self, raw):
+        items = []
+        while True:
+            res = raw.table.scan(ProjectionExpression="pk, sk")
+            items.extend(res.get("Items", []))
+            if "LastEvaluatedKey" not in res:
+                break
+        with raw.table.batch_writer() as batch:
+            for item in items:
+                batch.delete_item(Key=item)
+
+    @contextmanager
+    def transaction(self, raw):
+        yield
+
+    def get_user_version(self, raw):
+        return 1
+
+    def set_user_version(self, raw, version):
+        pass
+
+    def table_columns(self, raw, table):
+        logical = {
+            "apps": ["key", "created_at"],
+            "object_schemas": ["app", "name", "fields", "created_at", "updated_at"],
+            "objects": ["guid", "app", "object_type", "data", "created_at", "updated_at"],
+            "field_index": ["app", "object_id", "object_type", "field_name", "value"],
+            "association_schemas": [
+                "app", "name", "from_type", "to_type", "forward_name",
+                "inverse_name", "cardinality", "symmetric", "created_at", "updated_at",
+            ],
+            "associations": ["id", "app", "assoc_name", "from_guid", "to_guid", "created_at"],
+        }
+        return logical.get(table, [])
+
+    def list_tables(self, raw):
+        return [
+            "apps", "object_schemas", "objects", "field_index",
+            "association_schemas", "associations",
+        ]
+
+
+def _one(query, key):
+    vals = query.get(key)
+    return vals[0] if vals else None
+
+
+def _truthy(v):
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}

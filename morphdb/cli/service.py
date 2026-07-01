@@ -254,8 +254,12 @@ def app_count(target):
     from .. import backend as bemod
     try:
         if bemod.is_url(target):
-            raw = bemod.from_target(target).connect()
+            be = bemod.from_target(target)
+            raw = be.connect()
             try:
+                if be.name == "dynamodb":
+                    from ..storage import DynamoStorage
+                    return len(DynamoStorage(raw).list_apps())
                 cur = raw.cursor()
                 cur.execute("SELECT COUNT(*) AS n FROM apps")
                 return cur.fetchone()["n"]

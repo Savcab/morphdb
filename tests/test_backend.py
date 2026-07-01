@@ -19,6 +19,7 @@ class TestSelection(unittest.TestCase):
     def test_is_url(self):
         self.assertTrue(backend.is_url("postgresql://h/db"))
         self.assertTrue(backend.is_url("postgres://h/db"))
+        self.assertTrue(backend.is_url("dynamodb://morphdb"))
         self.assertFalse(backend.is_url("/tmp/x.sqlite3"))
         self.assertFalse(backend.is_url(":memory:"))
         self.assertFalse(backend.is_url(None))
@@ -27,6 +28,7 @@ class TestSelection(unittest.TestCase):
         self.assertIsInstance(backend.from_target(":memory:"), backend.SqliteBackend)
         self.assertIsInstance(backend.from_target("/tmp/x.sqlite3"), backend.SqliteBackend)
         self.assertIsInstance(backend.from_target("postgresql://h/db"), backend.PostgresBackend)
+        self.assertIsInstance(backend.from_target("dynamodb://morphdb"), backend.DynamoBackend)
 
     def test_from_target_none_needs_env(self):
         old = os.environ.pop("MORPHDB_DATABASE_URL", None)
@@ -35,6 +37,8 @@ class TestSelection(unittest.TestCase):
                 backend.from_target(None)
             os.environ["MORPHDB_DATABASE_URL"] = "postgresql://h/db"
             self.assertIsInstance(backend.from_target(None), backend.PostgresBackend)
+            os.environ["MORPHDB_DATABASE_URL"] = "dynamodb://morphdb"
+            self.assertIsInstance(backend.from_target(None), backend.DynamoBackend)
         finally:
             os.environ.pop("MORPHDB_DATABASE_URL", None)
             if old is not None:
@@ -100,10 +104,29 @@ class TestPostgresDialect(unittest.TestCase):
         self.assertNotIn("AUTOINCREMENT", ddl)
 
 
+class TestDynamoDialect(unittest.TestCase):
+    def test_describe_is_credential_free(self):
+        be = backend.DynamoBackend(
+            "dynamodb://morphdb?region=us-west-2&endpoint_url=http%3A%2F%2Flocalhost%3A8000")
+        self.assertEqual(
+            be.describe(),
+            "dynamodb://morphdb?region=us-west-2&endpoint_url=http://localhost:8000")
+
+    def test_create_table_flag(self):
+        be = backend.DynamoBackend("dynamodb://morphdb?create_table=true")
+        self.assertTrue(be.create_table_flag)
+
+    def test_missing_table_name_rejected(self):
+        with self.assertRaises(ValueError):
+            backend.DynamoBackend("dynamodb://")
+
+
 class TestInterface(unittest.TestCase):
     def test_both_backends_satisfy_the_interface(self):
         self.assertIsInstance(backend.SqliteBackend(":memory:"), backend.Backend)
         self.assertIsInstance(backend.PostgresBackend("postgresql://h/db"),
+                              backend.Backend)
+        self.assertIsInstance(backend.DynamoBackend("dynamodb://morphdb"),
                               backend.Backend)
 
     def test_abstract_base_cannot_be_instantiated(self):
@@ -116,6 +139,8 @@ class TestInterface(unittest.TestCase):
         self.assertEqual(backend.SqliteBackend(":memory:").__abstractmethods__,
                          frozenset())
         self.assertEqual(backend.PostgresBackend("postgresql://h/db").__abstractmethods__,
+                         frozenset())
+        self.assertEqual(backend.DynamoBackend("dynamodb://morphdb").__abstractmethods__,
                          frozenset())
 
 
