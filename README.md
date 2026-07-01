@@ -131,9 +131,16 @@ curl -H "$H" "$BASE/objects/user/$U"          # → includes "tasks":[…]
 curl -X PUT $BASE/schema/task -H "$H" -d '{"merge":true,"fields":{"due":"datetime"}}'
 ```
 
-See [`examples/`](examples/) for a gallery of complete, single-file frontends backed
-by MorphDB — a minimal todo plus LinkedIn-, Notion-, Figma-, and Linear-style
-clones. Each ships the `morphdb.schema.json` that defines its data model, so you can
+🎬 **Live demos** (hosted on GitHub Pages, wired to a public cloud MorphDB backend):
+**[gallery →](https://savcab.github.io/morphdb/)** ·
+[todo](https://savcab.github.io/morphdb/todo/) ·
+[LinkedIn](https://savcab.github.io/morphdb/linkedin/) ·
+[Notion](https://savcab.github.io/morphdb/notion/) ·
+[Figma](https://savcab.github.io/morphdb/figma/) ·
+[Linear](https://savcab.github.io/morphdb/linear/)
+
+See [`examples/`](examples/) for the source — complete, single-file frontends backed
+by MorphDB. Each ships the `morphdb.schema.json` that defines its data model, so you can
 stand any of them up on your own MorphDB with `morphdb init` and run it unchanged. They
 all hit the *same* generic endpoints — only the schema differs.
 
