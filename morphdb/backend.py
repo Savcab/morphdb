@@ -1,4 +1,4 @@
-"""Storage backend abstraction — target SQLite or PostgreSQL behind one interface.
+"""Database engine abstraction — target SQLite, PostgreSQL, or DynamoDB.
 
 MorphDB was born talking SQLite directly. This module pulls that coupling into a
 single seam so the engine can persist to either:
@@ -9,7 +9,7 @@ single seam so the engine can persist to either:
     becomes a stateless API tier; the durable state lives in Postgres.
 
 The rest of the codebase keeps writing ONE dialect of SQL — SQLite-flavored:
-``?`` placeholders, ``INSERT OR IGNORE`` — and the backend translates it per
+``?`` placeholders, ``INSERT OR IGNORE`` — and the engine translates it per
 engine at execute time. That works because the data model is vanilla relational
 (a JSON blob per object + a typed EAV index table + an edge table); the only real
 differences are dialect surface:
@@ -38,7 +38,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 
 def is_url(target):
-    """True if ``target`` is a network/cloud backend URL (vs a SQLite path)."""
+    """True if ``target`` is a network/cloud engine URL (vs a SQLite path)."""
     return isinstance(target, str) and (
         target.startswith("postgresql://")
         or target.startswith("postgres://")
@@ -46,7 +46,7 @@ def is_url(target):
 
 
 def from_target(target=None):
-    """Build a backend from a target.
+    """Build a database engine from a target.
 
     ``target`` may be a Postgres URL, a SQLite file path, ``":memory:"``, or
     ``None`` — in which case ``$MORPHDB_DATABASE_URL`` is consulted, else error.
@@ -58,13 +58,13 @@ def from_target(target=None):
                 "No database target given and $MORPHDB_DATABASE_URL is unset.")
     if is_url(target):
         if target.startswith("dynamodb://"):
-            return DynamoBackend(target)
-        return PostgresBackend(target)
-    return SqliteBackend(target)
+            return DynamoEngine(target)
+        return PostgresEngine(target)
+    return SqliteEngine(target)
 
 
 def adapt_params(params):
-    """Normalize bind parameters across backends.
+    """Normalize bind parameters across engines.
 
     MorphDB stores booleans as 0/1 integers (there is no native boolean column),
     so a Python ``bool`` must bind as an ``int`` — required for Postgres' INTEGER
@@ -110,21 +110,22 @@ class _Result:
 
 
 class Connection:
-    """Backend-agnostic connection facade used throughout the engine.
+    """Engine-agnostic connection facade used throughout MorphDB.
 
     ``execute`` / ``executemany`` accept the engine's SQLite-flavored SQL; the
-    backend translates it, parameters are adapted, and every call is serialized
+    engine translates it, parameters are adapted, and every call is serialized
     by the shared reentrant lock so the one underlying DB-API connection is safe
     to use from the server's request threads.
     """
 
-    def __init__(self, backend, raw, lock):
-        self.backend = backend
+    def __init__(self, engine, raw, lock):
+        self.engine = engine
+        self.backend = engine  # backwards-compatible attribute name
         self.raw = raw
         self._lock = lock
 
     def execute(self, sql, params=()):
-        sql2 = self.backend.translate(sql)
+        sql2 = self.engine.translate(sql)
         params2 = adapt_params(params)
         with self._lock:
             cur = self.raw.cursor()
@@ -139,7 +140,7 @@ class Connection:
         seq2 = [adapt_params(p) for p in seq]
         if not seq2:
             return
-        sql2 = self.backend.translate(sql)
+        sql2 = self.engine.translate(sql)
         with self._lock:
             cur = self.raw.cursor()
             try:
@@ -160,18 +161,18 @@ class Connection:
             pass
 
 
-# --- the backend interface ----------------------------------------------------
+# --- the engine interface -----------------------------------------------------
 
 
-class Backend(ABC):
+class DatabaseEngine(ABC):
     """The contract every storage engine must satisfy.
 
-    The rest of MorphDB only ever touches a backend through this interface (plus
+    The rest of MorphDB only ever touches an engine through this interface (plus
     the :class:`Connection` facade), so SQLite, PostgreSQL, and any future engine
     are fully interchangeable: adding one means subclassing this and implementing
     each method — nothing else in the codebase changes. Subclassing also makes the
     contract *enforced*, not just hoped-for: Python refuses to instantiate a
-    backend that leaves any abstract method unimplemented.
+    engine that leaves any abstract method unimplemented.
     """
 
     #: Short engine label ("sqlite" / "postgres"), used in status and logging.
@@ -233,8 +234,8 @@ class Backend(ABC):
 # --- SQLite -------------------------------------------------------------------
 
 
-class SqliteBackend(Backend):
-    """The default, zero-dependency backend: an embedded SQLite file."""
+class SqliteEngine(DatabaseEngine):
+    """The default, zero-dependency engine: an embedded SQLite file."""
 
     name = "sqlite"
 
@@ -302,8 +303,8 @@ class SqliteBackend(Backend):
 # --- PostgreSQL ---------------------------------------------------------------
 
 
-class PostgresBackend(Backend):
-    """Optional backend targeting PostgreSQL via psycopg (v3).
+class PostgresEngine(DatabaseEngine):
+    """Optional engine targeting PostgreSQL via psycopg (v3).
 
     Requires ``pip install morphdb[postgres]``. The same engine SQL is translated
     to the Postgres dialect; identity columns, upserts, versioning, and column
@@ -402,7 +403,7 @@ class PostgresBackend(Backend):
 
 @dataclass
 class DynamoRaw:
-    """Small raw handle for the logical DynamoDB backend."""
+    """Small raw handle for the logical DynamoDB engine."""
 
     resource: object
     client: object
@@ -419,10 +420,10 @@ class DynamoRaw:
         pass
 
 
-class DynamoBackend(Backend):
-    """Optional backend targeting one DynamoDB table via boto3.
+class DynamoEngine(DatabaseEngine):
+    """Optional engine targeting one DynamoDB table via boto3.
 
-    Requires ``pip install morphdb[dynamodb]``. Unlike the SQL backends, the
+    Requires ``pip install morphdb[dynamodb]``. Unlike the SQL engines, the
     engine talks to DynamoDB through :mod:`morphdb.storage`'s logical methods,
     so SQL translation/introspection methods are only present for tooling.
     """
@@ -603,3 +604,10 @@ def _one(query, key):
 
 def _truthy(v):
     return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Backwards-compatible names for callers that imported the older backend terms.
+Backend = DatabaseEngine
+SqliteBackend = SqliteEngine
+PostgresBackend = PostgresEngine
+DynamoBackend = DynamoEngine

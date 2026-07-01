@@ -188,7 +188,7 @@ def _canonicalize_symmetric_edges(c, app, name):
 
 
 def _all_assoc_schemas(app, c=None):
-    return (c or db.storage()).list_association_schemas(app)
+    return (c or db.store()).list_association_schemas(app)
 
 
 def relation_views(app, type_name, c=None):
@@ -295,7 +295,7 @@ def project_relations(app, guids, type_name):
 
     for assoc_name, vs in by_assoc.items():
         rows = sorted(
-            db.storage().list_edges_touching_guids(app, assoc_name, guids),
+            db.store().list_edges_touching_guids(app, assoc_name, guids),
             key=lambda r: (r.get("created_at"), str(r.get("id"))),
         )
         for v in vs:

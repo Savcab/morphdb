@@ -1,4 +1,4 @@
-"""Storage-backend dialect unit tests.
+"""Storage-engine dialect unit tests.
 
 Pure-string / selection logic for :mod:`morphdb.backend` — no database
 connection, so these run everywhere (including CI, which has no Postgres) and
@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from morphdb import backend   # noqa: E402
+from morphdb import backend, storage   # noqa: E402
 
 
 class TestSelection(unittest.TestCase):
@@ -24,11 +24,11 @@ class TestSelection(unittest.TestCase):
         self.assertFalse(backend.is_url(":memory:"))
         self.assertFalse(backend.is_url(None))
 
-    def test_from_target_picks_backend(self):
-        self.assertIsInstance(backend.from_target(":memory:"), backend.SqliteBackend)
-        self.assertIsInstance(backend.from_target("/tmp/x.sqlite3"), backend.SqliteBackend)
-        self.assertIsInstance(backend.from_target("postgresql://h/db"), backend.PostgresBackend)
-        self.assertIsInstance(backend.from_target("dynamodb://morphdb"), backend.DynamoBackend)
+    def test_from_target_picks_engine(self):
+        self.assertIsInstance(backend.from_target(":memory:"), backend.SqliteEngine)
+        self.assertIsInstance(backend.from_target("/tmp/x.sqlite3"), backend.SqliteEngine)
+        self.assertIsInstance(backend.from_target("postgresql://h/db"), backend.PostgresEngine)
+        self.assertIsInstance(backend.from_target("dynamodb://morphdb"), backend.DynamoEngine)
 
     def test_from_target_none_needs_env(self):
         old = os.environ.pop("MORPHDB_DATABASE_URL", None)
@@ -36,9 +36,9 @@ class TestSelection(unittest.TestCase):
             with self.assertRaises(ValueError):
                 backend.from_target(None)
             os.environ["MORPHDB_DATABASE_URL"] = "postgresql://h/db"
-            self.assertIsInstance(backend.from_target(None), backend.PostgresBackend)
+            self.assertIsInstance(backend.from_target(None), backend.PostgresEngine)
             os.environ["MORPHDB_DATABASE_URL"] = "dynamodb://morphdb"
-            self.assertIsInstance(backend.from_target(None), backend.DynamoBackend)
+            self.assertIsInstance(backend.from_target(None), backend.DynamoEngine)
         finally:
             os.environ.pop("MORPHDB_DATABASE_URL", None)
             if old is not None:
@@ -58,7 +58,7 @@ class TestAdaptParams(unittest.TestCase):
 
 class TestSqliteDialect(unittest.TestCase):
     def setUp(self):
-        self.be = backend.SqliteBackend(":memory:")
+        self.be = backend.SqliteEngine(":memory:")
 
     def test_translate_is_identity(self):
         sql = "SELECT * FROM t WHERE a=? AND b=?"
@@ -73,7 +73,7 @@ class TestSqliteDialect(unittest.TestCase):
 
 class TestPostgresDialect(unittest.TestCase):
     def setUp(self):
-        self.be = backend.PostgresBackend("postgresql://user:secret@host:5432/db")
+        self.be = backend.PostgresEngine("postgresql://user:secret@host:5432/db")
 
     def test_placeholders(self):
         self.assertEqual(self.be.translate("SELECT * FROM t WHERE a=? AND b=?"),
@@ -106,41 +106,51 @@ class TestPostgresDialect(unittest.TestCase):
 
 class TestDynamoDialect(unittest.TestCase):
     def test_describe_is_credential_free(self):
-        be = backend.DynamoBackend(
+        be = backend.DynamoEngine(
             "dynamodb://morphdb?region=us-west-2&endpoint_url=http%3A%2F%2Flocalhost%3A8000")
         self.assertEqual(
             be.describe(),
             "dynamodb://morphdb?region=us-west-2&endpoint_url=http://localhost:8000")
 
     def test_create_table_flag(self):
-        be = backend.DynamoBackend("dynamodb://morphdb?create_table=true")
+        be = backend.DynamoEngine("dynamodb://morphdb?create_table=true")
         self.assertTrue(be.create_table_flag)
 
     def test_missing_table_name_rejected(self):
         with self.assertRaises(ValueError):
-            backend.DynamoBackend("dynamodb://")
+            backend.DynamoEngine("dynamodb://")
 
 
 class TestInterface(unittest.TestCase):
-    def test_both_backends_satisfy_the_interface(self):
-        self.assertIsInstance(backend.SqliteBackend(":memory:"), backend.Backend)
-        self.assertIsInstance(backend.PostgresBackend("postgresql://h/db"),
-                              backend.Backend)
-        self.assertIsInstance(backend.DynamoBackend("dynamodb://morphdb"),
-                              backend.Backend)
+    def test_engines_satisfy_the_interface(self):
+        self.assertIsInstance(backend.SqliteEngine(":memory:"), backend.DatabaseEngine)
+        self.assertIsInstance(backend.PostgresEngine("postgresql://h/db"),
+                              backend.DatabaseEngine)
+        self.assertIsInstance(backend.DynamoEngine("dynamodb://morphdb"),
+                              backend.DatabaseEngine)
+
+    def test_old_backend_names_remain_aliases(self):
+        self.assertIs(backend.Backend, backend.DatabaseEngine)
+        self.assertIs(backend.SqliteBackend, backend.SqliteEngine)
+        self.assertIs(backend.PostgresBackend, backend.PostgresEngine)
+        self.assertIs(backend.DynamoBackend, backend.DynamoEngine)
+
+    def test_old_storage_names_remain_aliases(self):
+        self.assertIs(storage.SqlStorage, storage.SqlStore)
+        self.assertIs(storage.DynamoStorage, storage.DynamoStore)
 
     def test_abstract_base_cannot_be_instantiated(self):
         with self.assertRaises(TypeError):
-            backend.Backend()
+            backend.DatabaseEngine()
 
     def test_no_abstract_methods_left_unimplemented(self):
-        # If a backend forgot a method, instantiation raises TypeError; these
+        # If an engine forgot a method, instantiation raises TypeError; these
         # succeed only because both implement the full contract.
-        self.assertEqual(backend.SqliteBackend(":memory:").__abstractmethods__,
+        self.assertEqual(backend.SqliteEngine(":memory:").__abstractmethods__,
                          frozenset())
-        self.assertEqual(backend.PostgresBackend("postgresql://h/db").__abstractmethods__,
+        self.assertEqual(backend.PostgresEngine("postgresql://h/db").__abstractmethods__,
                          frozenset())
-        self.assertEqual(backend.DynamoBackend("dynamodb://morphdb").__abstractmethods__,
+        self.assertEqual(backend.DynamoEngine("dynamodb://morphdb").__abstractmethods__,
                          frozenset())
 
 

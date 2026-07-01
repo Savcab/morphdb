@@ -1,8 +1,8 @@
-"""Storage layer — schema + connection lifecycle over a pluggable backend.
+"""Storage layer — schema + connection lifecycle over a pluggable engine.
 
-The SQL dialect lives in :mod:`morphdb.backend`, while
-:mod:`morphdb.storage` exposes the logical operations used by domain code.
-Backends can target SQLite (default, zero-dependency), PostgreSQL
+The SQL dialect lives in :mod:`morphdb.backend`, while :mod:`morphdb.storage`
+exposes the logical store operations used by domain code. Engines can target
+SQLite (default, zero-dependency), PostgreSQL
 (``pip install morphdb[postgres]``), or DynamoDB
 (``pip install morphdb[dynamodb]``).
 
@@ -42,13 +42,13 @@ of its relationships in one query.
 import threading
 from contextlib import contextmanager
 
-from . import backend as _backend
-from .storage import DynamoStorage, SqlStorage
+from . import backend as _engine_mod
+from .storage import DynamoStore, SqlStore
 
 _LOCK = threading.RLock()
-_CONN = None        # backend.Connection facade (shared, lock-guarded)
-_BACKEND = None     # the active backend (SqliteBackend / PostgresBackend)
-_STORAGE = None     # logical storage facade (SqlStorage / DynamoStorage)
+_CONN = None       # backend.Connection facade (shared, lock-guarded)
+_ENGINE = None     # active DatabaseEngine (SqliteEngine / PostgresEngine / DynamoEngine)
+_STORE = None      # logical store facade (SqlStore / DynamoStore)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS apps (
@@ -141,46 +141,46 @@ def init_db(target):
 
 def _reset_and_init(target):
     """Wipe ``target`` and re-create a clean schema. Test-only helper used to
-    give each test a fresh database on a persistent backend (Postgres)."""
+    give each test a fresh database on a persistent engine (Postgres)."""
     return _open(target, reset=True)
 
 
 def _open(target, reset):
     """Shared open path for :func:`init_db` / :func:`_reset_and_init`.
 
-    Closes any existing connection, opens the backend, optionally wipes it
+    Closes any existing connection, opens the engine, optionally wipes it
     (``reset=True``), creates the schema, runs migrations, and installs the
     result as the process-wide connection.
     """
-    global _CONN, _BACKEND, _STORAGE
+    global _CONN, _ENGINE, _STORE
     with _LOCK:
         if _CONN is not None:
             _CONN.close()
             _CONN = None
-        _STORAGE = None
-        be = _backend.from_target(target)
-        raw = be.connect()
-        if reset and be.name == "dynamodb":
-            be.create_schema(raw, SCHEMA_SQL)
-            be.reset(raw)
+        _STORE = None
+        engine = _engine_mod.from_target(target)
+        raw = engine.connect()
+        if reset and engine.name == "dynamodb":
+            engine.create_schema(raw, SCHEMA_SQL)
+            engine.reset(raw)
         elif reset:
-            be.reset(raw)
-        be.create_schema(raw, SCHEMA_SQL)
-        if be.name == "dynamodb":
+            engine.reset(raw)
+        engine.create_schema(raw, SCHEMA_SQL)
+        if engine.name == "dynamodb":
             conn = None
-            storage = DynamoStorage(raw)
+            store_facade = DynamoStore(raw)
         else:
-            conn = _backend.Connection(be, raw, _LOCK)
-            storage = SqlStorage(conn)
-            _migrate(be, raw, conn)
+            conn = _engine_mod.Connection(engine, raw, _LOCK)
+            store_facade = SqlStore(conn)
+            _migrate(engine, raw, conn)
             raw.commit()
-        _BACKEND = be
+        _ENGINE = engine
         _CONN = conn
-        _STORAGE = storage
-    return _STORAGE if _CONN is None else _CONN
+        _STORE = store_facade
+    return _STORE if _CONN is None else _CONN
 
 
-def _migrate(be, raw, conn):
+def _migrate(engine, raw, conn):
     """Guard against legacy databases and run one-time data migrations.
 
     The legacy guard refuses a database from before the multi-tenant 'app' model:
@@ -190,10 +190,10 @@ def _migrate(be, raw, conn):
 
     field_index (schema version 1) is a derived accelerator added after the
     original schema; it is populated once from existing object blobs, gated by the
-    backend's user-version so it runs exactly once. Purely additive — it never
+    engine's user-version so it runs exactly once. Purely additive — it never
     touches object blobs, so it is safe to run against live data on upgrade.
     """
-    cols = be.table_columns(raw, "object_schemas")
+    cols = engine.table_columns(raw, "object_schemas")
     if cols and "app" not in cols:
         raise RuntimeError(
             "This database predates MorphDB's multi-tenant 'app' model and cannot "
@@ -201,10 +201,10 @@ def _migrate(be, raw, conn):
             "schema."
         )
 
-    if be.get_user_version(raw) < 1:
+    if engine.get_user_version(raw) < 1:
         from . import fieldindex
         fieldindex.backfill(conn)
-        be.set_user_version(raw, 1)
+        engine.set_user_version(raw, 1)
 
 
 @contextmanager
@@ -213,65 +213,80 @@ def transaction():
 
     All multi-statement writes funnel through here so they are atomic with
     respect to each other (e.g. enforce cardinality, then insert). The shared
-    lock is held for the whole block; the backend manages commit/rollback.
+    lock is held for the whole block; the engine manages commit/rollback.
     """
     if _CONN is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     with _LOCK:
-        with _BACKEND.transaction(_CONN.raw):
+        with _ENGINE.transaction(_CONN.raw):
             yield _CONN
 
 
 @contextmanager
-def storage_transaction():
-    """Yield the active logical storage facade inside the backend's write guard.
+def store_transaction():
+    """Yield the active logical store facade inside the engine's write guard.
 
-    SQL backends still get a real database transaction. DynamoDB currently uses
+    SQL engines still get a real database transaction. DynamoDB currently uses
     a process-level lock plus idempotent item writes; request-level atomicity is a
-    future backend optimization rather than part of the public API contract.
+    future store optimization rather than part of the public API contract.
     """
-    if _STORAGE is None:
+    if _STORE is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     with _LOCK:
-        raw = getattr(_CONN, "raw", None) if _CONN is not None else _STORAGE.raw
-        has_log = hasattr(_STORAGE, "begin")
+        raw = getattr(_CONN, "raw", None) if _CONN is not None else _STORE.raw
+        has_log = hasattr(_STORE, "begin")
         if has_log:
-            _STORAGE.begin()
+            _STORE.begin()
         try:
-            with _BACKEND.transaction(raw):
-                yield _STORAGE
+            with _ENGINE.transaction(raw):
+                yield _STORE
         except Exception:
             if has_log:
-                _STORAGE.rollback()
+                _STORE.rollback()
             raise
         else:
             if has_log:
-                _STORAGE.commit()
+                _STORE.commit()
 
 
 def conn():
     if _CONN is None:
-        if _BACKEND is not None and _BACKEND.name == "dynamodb":
+        if _ENGINE is not None and _ENGINE.name == "dynamodb":
             raise RuntimeError(
-                "The active MorphDB backend is DynamoDB, which has no SQL "
-                "connection. Use db.storage() / db.storage_transaction().")
+                "The active MorphDB engine is DynamoDB, which has no SQL "
+                "connection. Use db.store() / db.store_transaction().")
         raise RuntimeError("Database not initialized. Call init_db() first.")
     return _CONN
 
 
-def storage():
-    if _STORAGE is None:
+def store():
+    if _STORE is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
-    return _STORAGE
+    return _STORE
+
+
+def engine():
+    """The active engine (or None before init). Used by tooling that needs to
+    know the engine (e.g. the dashboard / status)."""
+    return _ENGINE
+
+
+def storage_transaction():
+    """Backward-compatible alias for :func:`store_transaction`."""
+    return store_transaction()
+
+
+def storage():
+    """Backward-compatible alias for :func:`store`."""
+    return store()
 
 
 def backend():
-    """The active backend (or None before init). Used by tooling that needs to
-    know the engine (e.g. the dashboard / status)."""
-    return _BACKEND
+    """Backward-compatible alias for :func:`engine`."""
+    return engine()
 
 
 def like_ci():
-    """The backend's case-insensitive LIKE keyword (SQLite ``LIKE`` is already
+    """The engine's case-insensitive LIKE keyword (SQLite ``LIKE`` is already
     case-insensitive; Postgres needs ``ILIKE``) — used by the ``contains`` filter."""
-    return _BACKEND.like_ci() if _BACKEND is not None else "LIKE"
+    return _ENGINE.like_ci() if _ENGINE is not None else "LIKE"

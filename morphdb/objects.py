@@ -88,7 +88,7 @@ def create_object(app, object_type, data):
     fields = schema["fields"]
     guid = new_guid(object_type)
     ts = now_iso()
-    with db.storage_transaction() as s:
+    with db.store_transaction() as s:
         field_part, rel_part = _split_body(app, object_type, data or {}, fields, s)
         clean = validate_against_schema(field_part, fields, partial=False)
         s.insert_object(guid, app, object_type, json.dumps(clean), ts, ts)
@@ -110,7 +110,7 @@ def upsert_object(app, object_type, guid, data, partial=True):
     schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
     ts = now_iso()
-    with db.storage_transaction() as s:
+    with db.store_transaction() as s:
         existing = s.get_object_by_guid_any_app(guid)
         if existing is not None and existing["app"] != app:
             # The guid is owned by another app; from here it simply doesn't exist.
@@ -142,7 +142,7 @@ def upsert_object(app, object_type, guid, data, partial=True):
 
 
 def delete_object(app, guid):
-    with db.storage_transaction() as s:
+    with db.store_transaction() as s:
         row = s.get_object(app, guid)
         if row is None:
             raise not_found(f"No object with guid '{guid}'.")
@@ -156,7 +156,7 @@ def delete_object(app, guid):
 
 
 def get_object(app, guid, object_type=None, include=None):
-    row = db.storage().get_object(app, guid)
+    row = db.store().get_object(app, guid)
     if row is None:
         raise not_found(f"No object with guid '{guid}'.")
     if object_type is not None and row["object_type"] != object_type:
@@ -576,7 +576,7 @@ def _list_objects_storage(app, object_type, filters, limit, offset, sort, order,
                 f"Field '{sort}' is not indexed, so it can't be sorted on. Add "
                 f"\"index\": true to '{sort}' in its schema to sort on it.")
 
-    rows = db.storage().list_objects(app, object_type)
+    rows = db.store().list_objects(app, object_type)
     projected = [_project_fields(r, fields) for r in rows]
     relmap = assoc.project_relations(app, [r["guid"] for r in rows], object_type)
     for p in projected:
@@ -618,7 +618,7 @@ def _list_objects_storage(app, object_type, filters, limit, offset, sort, order,
 
 def list_objects(app, object_type, filters=None, limit=DEFAULT_LIMIT, offset=0,
                  sort=None, order="asc", include=None):
-    if db.backend() is not None and db.backend().name == "dynamodb":
+    if db.engine() is not None and db.engine().name == "dynamodb":
         return _list_objects_storage(
             app, object_type, filters, limit, offset, sort, order, include)
 
@@ -759,9 +759,9 @@ def _fetch_projected(app, object_type, guids):
     if not seen:
         return {}
     fields = get_object_schema(app, object_type, required=True)["fields"]
-    if db.backend() is not None and db.backend().name == "dynamodb":
+    if db.engine() is not None and db.engine().name == "dynamodb":
         rows = []
-        s = db.storage()
+        s = db.store()
         for guid in seen:
             row = s.get_object(app, guid)
             if row is not None and row["object_type"] == object_type:
