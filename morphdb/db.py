@@ -1,11 +1,10 @@
 """Storage layer — schema + connection lifecycle over a pluggable backend.
 
-The actual SQL dialect lives in :mod:`morphdb.backend`, which targets either
-SQLite (default, zero-dependency) or PostgreSQL (``pip install morphdb[postgres]``).
-This module owns the canonical schema, opens/initializes a backend, and exposes
-the two access primitives the rest of the engine uses: :func:`conn` (a shared,
-thread-safe connection facade) and :func:`transaction` (an atomic block). The
-engine writes one SQLite-flavored dialect of SQL; the backend translates it.
+The SQL dialect lives in :mod:`morphdb.backend`, while
+:mod:`morphdb.storage` exposes the logical operations used by domain code.
+Backends can target SQLite (default, zero-dependency), PostgreSQL
+(``pip install morphdb[postgres]``), or DynamoDB
+(``pip install morphdb[dynamodb]``).
 
 A single connection guarded by a reentrant lock serializes all access — simple
 and correct at single-instance scale (see :mod:`morphdb.backend` for the
@@ -44,10 +43,12 @@ import threading
 from contextlib import contextmanager
 
 from . import backend as _backend
+from .storage import DynamoStorage, SqlStorage
 
 _LOCK = threading.RLock()
 _CONN = None        # backend.Connection facade (shared, lock-guarded)
 _BACKEND = None     # the active backend (SqliteBackend / PostgresBackend)
+_STORAGE = None     # logical storage facade (SqlStorage / DynamoStorage)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS apps (
@@ -151,22 +152,32 @@ def _open(target, reset):
     (``reset=True``), creates the schema, runs migrations, and installs the
     result as the process-wide connection.
     """
-    global _CONN, _BACKEND
+    global _CONN, _BACKEND, _STORAGE
     with _LOCK:
         if _CONN is not None:
             _CONN.close()
             _CONN = None
+        _STORAGE = None
         be = _backend.from_target(target)
         raw = be.connect()
-        if reset:
+        if reset and be.name == "dynamodb":
+            be.create_schema(raw, SCHEMA_SQL)
+            be.reset(raw)
+        elif reset:
             be.reset(raw)
         be.create_schema(raw, SCHEMA_SQL)
-        conn = _backend.Connection(be, raw, _LOCK)
-        _migrate(be, raw, conn)
-        raw.commit()
+        if be.name == "dynamodb":
+            conn = None
+            storage = DynamoStorage(raw)
+        else:
+            conn = _backend.Connection(be, raw, _LOCK)
+            storage = SqlStorage(conn)
+            _migrate(be, raw, conn)
+            raw.commit()
         _BACKEND = be
         _CONN = conn
-    return _CONN
+        _STORAGE = storage
+    return _STORAGE if _CONN is None else _CONN
 
 
 def _migrate(be, raw, conn):
@@ -211,10 +222,47 @@ def transaction():
             yield _CONN
 
 
+@contextmanager
+def storage_transaction():
+    """Yield the active logical storage facade inside the backend's write guard.
+
+    SQL backends still get a real database transaction. DynamoDB currently uses
+    a process-level lock plus idempotent item writes; request-level atomicity is a
+    future backend optimization rather than part of the public API contract.
+    """
+    if _STORAGE is None:
+        raise RuntimeError("Database not initialized. Call init_db() first.")
+    with _LOCK:
+        raw = getattr(_CONN, "raw", None) if _CONN is not None else _STORAGE.raw
+        has_log = hasattr(_STORAGE, "begin")
+        if has_log:
+            _STORAGE.begin()
+        try:
+            with _BACKEND.transaction(raw):
+                yield _STORAGE
+        except Exception:
+            if has_log:
+                _STORAGE.rollback()
+            raise
+        else:
+            if has_log:
+                _STORAGE.commit()
+
+
 def conn():
     if _CONN is None:
+        if _BACKEND is not None and _BACKEND.name == "dynamodb":
+            raise RuntimeError(
+                "The active MorphDB backend is DynamoDB, which has no SQL "
+                "connection. Use db.storage() / db.storage_transaction().")
         raise RuntimeError("Database not initialized. Call init_db() first.")
     return _CONN
+
+
+def storage():
+    if _STORAGE is None:
+        raise RuntimeError("Database not initialized. Call init_db() first.")
+    return _STORAGE
 
 
 def backend():

@@ -38,12 +38,12 @@ def validate_app_key(key):
 def register_app(key):
     """Create a new app under ``key``. Rejects (409) if the key already exists."""
     validate_app_key(key)
-    with db.transaction() as c:
-        if c.execute("SELECT 1 FROM apps WHERE key = ?", (key,)).fetchone():
+    with db.storage_transaction() as s:
+        if s.app_exists(key):
             raise conflict(
                 f"App '{key}' already exists. Pick a different, unused key."
             )
-        c.execute("INSERT INTO apps (key, created_at) VALUES (?, ?)", (key, now_iso()))
+        s.create_app(key, now_iso())
     return {"key": key, "created": True}
 
 
@@ -51,17 +51,15 @@ def delete_app(key):
     """Delete an app and (via ON DELETE CASCADE) all of its schemas, objects,
     relationship definitions, and edges. Other apps are untouched.
     """
-    with db.transaction() as c:
-        if c.execute("SELECT 1 FROM apps WHERE key = ?", (key,)).fetchone() is None:
+    with db.storage_transaction() as s:
+        if not s.app_exists(key):
             raise not_found(f"No app '{key}'.")
-        c.execute("DELETE FROM apps WHERE key = ?", (key,))
+        s.delete_app(key)
     return {"deleted": key}
 
 
 def app_exists(key):
-    return db.conn().execute(
-        "SELECT 1 FROM apps WHERE key = ?", (key,)
-    ).fetchone() is not None
+    return db.storage().app_exists(key)
 
 
 def require_app(req):
