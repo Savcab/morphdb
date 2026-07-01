@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from morphdb import backend, storage   # noqa: E402
+from morphdb import backend   # noqa: E402
 
 
 class TestSelection(unittest.TestCase):
@@ -128,16 +128,6 @@ class TestInterface(unittest.TestCase):
                               backend.DatabaseEngine)
         self.assertIsInstance(backend.DynamoEngine("dynamodb://morphdb"),
                               backend.DatabaseEngine)
-
-    def test_old_backend_names_remain_aliases(self):
-        self.assertIs(backend.Backend, backend.DatabaseEngine)
-        self.assertIs(backend.SqliteBackend, backend.SqliteEngine)
-        self.assertIs(backend.PostgresBackend, backend.PostgresEngine)
-        self.assertIs(backend.DynamoBackend, backend.DynamoEngine)
-
-    def test_old_storage_names_remain_aliases(self):
-        self.assertIs(storage.SqlStorage, storage.SqlStore)
-        self.assertIs(storage.DynamoStorage, storage.DynamoStore)
 
     def test_abstract_base_cannot_be_instantiated(self):
         with self.assertRaises(TypeError):

@@ -814,8 +814,3 @@ class DynamoStore:
                (side == "sym" and (r["from_guid"] == neighbor or r["to_guid"] == neighbor)):
                 deletes.append(self._edge_key(app, assoc_name, r["from_guid"], r["to_guid"]))
         self._batch_write(deletes=deletes)
-
-
-# Backwards-compatible names for callers that imported the older storage terms.
-SqlStorage = SqlStore
-DynamoStorage = DynamoStore

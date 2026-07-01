@@ -271,21 +271,6 @@ def engine():
     return _ENGINE
 
 
-def storage_transaction():
-    """Backward-compatible alias for :func:`store_transaction`."""
-    return store_transaction()
-
-
-def storage():
-    """Backward-compatible alias for :func:`store`."""
-    return store()
-
-
-def backend():
-    """Backward-compatible alias for :func:`engine`."""
-    return engine()
-
-
 def like_ci():
     """The engine's case-insensitive LIKE keyword (SQLite ``LIKE`` is already
     case-insensitive; Postgres needs ``ILIKE``) — used by the ``contains`` filter."""

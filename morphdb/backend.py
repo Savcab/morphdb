@@ -120,7 +120,6 @@ class Connection:
 
     def __init__(self, engine, raw, lock):
         self.engine = engine
-        self.backend = engine  # backwards-compatible attribute name
         self.raw = raw
         self._lock = lock
 
@@ -604,10 +603,3 @@ def _one(query, key):
 
 def _truthy(v):
     return str(v).strip().lower() in {"1", "true", "yes", "on"}
-
-
-# Backwards-compatible names for callers that imported the older backend terms.
-Backend = DatabaseEngine
-SqliteBackend = SqliteEngine
-PostgresBackend = PostgresEngine
-DynamoBackend = DynamoEngine
