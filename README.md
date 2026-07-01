@@ -5,8 +5,8 @@
 Reshape the data model as fast as your coding agent iterates — the frontend
 keeps calling the same small set of generic, deterministic endpoints. One
 process hosts many isolated apps (one per site). Zero dependencies on the
-default SQLite engine; point it at PostgreSQL when you want a networked, managed
-database — same API, same code.
+default SQLite engine; point it at PostgreSQL or DynamoDB when you want managed
+persistence — same API, same code.
 
 📖 **[Visual explainer → morphdb.pages.dev](https://morphdb.pages.dev)** — the whole idea (schema-fluid, API-stable), the agent/frontend split, relations, and how Claude plugs in through the `morphdb` CLI, on one page.
 
@@ -33,8 +33,8 @@ morphdb install-skill  # install the MorphDB Claude Code skill (into ~/.claude)
 ```
 
 Data lives in `~/.morphdb/data.sqlite3` (change it with `--db PATH`,
-`--db :memory:`, or a Postgres `--db postgresql://…` URL; move the state dir with
-`$MORPHDB_HOME`). Server flags:
+`--db :memory:`, a Postgres `--db postgresql://...` URL, or a DynamoDB
+`--db dynamodb://table?...` URL; move the state dir with `$MORPHDB_HOME`). Server flags:
 `--host`, `--port`, `--db`. From a source checkout with no install, the
 foreground server is `python3 -m morphdb --port 8787 --db ./app.sqlite3`.
 
@@ -47,7 +47,7 @@ to reload the new code (data in `~/.morphdb` is preserved across `0.1.x`).
 of localhost. It's a client-side setting that names a *backend*, not a database
 connection string.
 
-### Persistence: SQLite (default) or PostgreSQL
+### Persistence: SQLite, PostgreSQL, or DynamoDB
 
 By default MorphDB is an embedded SQLite database — zero dependencies, one file.
 To persist to **PostgreSQL** instead (a managed/networked database — RDS, Neon,
@@ -69,6 +69,38 @@ and dashboard work identically; the engine just talks to Postgres. This makes th
 MorphDB process a **stateless API tier** you can run as a container (or several,
 against one Postgres) with the durable state in your managed database. The core
 stays zero-dependency; `psycopg` is pulled in only for the Postgres backend.
+
+To persist to **DynamoDB**, install the DynamoDB extra and point MorphDB at one
+DynamoDB table:
+
+```bash
+pip install 'morphdb[dynamodb]'        # adds boto3
+
+# production: create/manage the table with IaC, then point MorphDB at it
+export MORPHDB_DATABASE_URL='dynamodb://morphdb-prod?region=us-west-2'
+morphdb start
+
+# local/prototype: let MorphDB create the table on demand
+morphdb start --db 'dynamodb://morphdb-dev?region=us-west-2&create_table=true'
+
+# DynamoDB Local / LocalStack
+morphdb start --db 'dynamodb://morphdb-dev?region=us-west-2&endpoint_url=http://localhost:8000&create_table=true'
+```
+
+DynamoDB credentials come from the normal boto3/AWS chain: environment variables,
+profiles, web identity, EC2/ECS/Lambda roles, and so on. There is no database
+password in the URL. MorphDB-created tables use on-demand billing and a fixed
+single-table layout with two GSIs. For production, prefer creating the table and
+IAM policy outside MorphDB and omit `create_table=true`.
+
+DynamoDB keeps the same public MorphDB API, including exact `total`,
+`limit`/`offset`, sorting, filters, relations, defaults, and includes. Some
+patterns are correct but less efficient on DynamoDB than on SQLite/Postgres:
+large offsets, exact totals on broad filtered reads, `contains`, negative
+relation filters, and sorting/filter combinations that cannot map to one
+DynamoDB access path. For prototype-sized apps this is usually fine; for larger
+apps, prefer selective indexed filters, small offsets, and UI patterns like
+"load more" over jumping directly to page 50.
 
 ## Use it
 
@@ -123,8 +155,9 @@ via a pid file under the state dir.
 | `morphdb --version` | Print the version. |
 
 `start` / `run` accept `--host` (default `127.0.0.1`), `--port` (default `8787`),
-and `--db` (a SQLite path, `:memory:`, or a `postgresql://…` URL; default
-`$MORPHDB_DATABASE_URL` or `~/.morphdb/data.sqlite3`).
+and `--db` (a SQLite path, `:memory:`, a `postgresql://...` URL, or a
+`dynamodb://table?...` URL; default `$MORPHDB_DATABASE_URL` or
+`~/.morphdb/data.sqlite3`).
 `dashboard` accepts `--port` (default `8788`), `--db`, and `--no-open`. Service
 state (pid, log, the default db) lives under `~/.morphdb` — relocate it with
 `$MORPHDB_HOME`.
@@ -347,6 +380,8 @@ from both ends under one shared label.
 **List responses** are shaped `{"objects": [...], "total": <full filtered
 count>, "limit": <int>, "offset": <int>}` — `total` is the count across the
 whole filter, not just the returned page. Default `limit` is 100 (max 1000).
+On DynamoDB this exact parity may require reading and filtering more items
+internally, especially for large offsets or broad filters.
 
 ## API reference
 
@@ -457,12 +492,13 @@ allowed, `413` body too large, `500` internal.
   filter by it, so apps can reuse type names and never see each other's data,
   and deleting an app is a single cascading delete. Type identity is the
   `(app, name)` pair, and relation targets must live in the same app.
-- **Pluggable persistence.** The engine writes one SQLite-flavored dialect of
-  SQL behind a thin backend seam (`morphdb/backend.py`); SQLite (default) and
-  PostgreSQL are both first-class, selected by the `--db` target. All access is
-  serialized through a single connection guarded by a reentrant lock — simple and
-  correct at single-instance scale; threaded request handling stays safe. Run
-  several stateless instances against one Postgres for horizontal scale.
+- **Pluggable persistence.** MorphDB exposes one logical storage interface;
+  SQLite and PostgreSQL implement it with SQL tables, while DynamoDB implements
+  it with native single-table items. The public schema/object API stays the same
+  across backends, selected by the `--db` target. All access is serialized
+  through a reentrant lock in the Python process; threaded request handling
+  stays safe. Run several stateless instances against Postgres or DynamoDB when
+  the durable state lives in managed storage.
 
 ## Limitations
 
@@ -486,10 +522,15 @@ allowed, `413` body too large, `500` internal.
   a plain header — it isolates data between apps but is **not** authentication.
   Anyone who knows a key can use that app; the absence of a list-apps endpoint is
   light obscurity, not a security boundary.
+- **DynamoDB performance parity.** The DynamoDB backend favors MorphDB API
+  correctness over exposing a narrower, DynamoDB-specific API. Broad scans,
+  large offsets, exact totals, `contains`, and some compound filters can be more
+  expensive than their SQLite/Postgres equivalents. Future performance modes may
+  opt out of exact totals or add cursor pagination.
 - **Scale & auth.** With the default SQLite engine it's a localhost-scale tool;
-  with the PostgreSQL backend it can run as one or more stateless instances
-  against a managed database. Either way it ships no built-in authentication or
-  multi-tenant authorization.
+  with the PostgreSQL or DynamoDB backends it can run as one or more stateless
+  instances against managed storage. Either way it ships no built-in
+  authentication or multi-tenant authorization.
 
 ## Development
 
@@ -500,6 +541,11 @@ python3 -m unittest discover -s tests   # full suite on SQLite, zero deps
 pip install 'morphdb[postgres,dev]'
 MORPHDB_TEST_DATABASE_URL=postgresql://localhost/morphdb_test \
     python3 -m pytest tests/          # SQLite-specific tests auto-skip
+
+# DynamoDB integration tests are intended for DynamoDB Local/LocalStack or AWS:
+pip install 'morphdb[dynamodb,dev]'
+MORPHDB_TEST_DATABASE_URL='dynamodb://morphdb-test?region=us-west-2&endpoint_url=http://localhost:8000&create_table=true' \
+    python3 -m pytest tests/
 ```
 
 ## License

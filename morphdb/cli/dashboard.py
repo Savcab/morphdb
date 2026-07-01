@@ -19,6 +19,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .. import backend as _backend
+from ..storage import DynamoStorage
 
 
 def gather(target):
@@ -39,6 +40,13 @@ def gather(target):
         raw = be.connect()
     except Exception as e:
         return {"error": f"cannot open database: {e}", "apps": []}
+    if be.name == "dynamodb":
+        try:
+            return _gather_storage(DynamoStorage(raw))
+        except Exception as e:
+            return {"error": f"cannot read DynamoDB table: {e}", "apps": []}
+        finally:
+            raw.close()
     # A private lock: this is a separate, short-lived inspection connection.
     c = _backend.Connection(be, raw, threading.RLock())
     try:
@@ -78,6 +86,85 @@ def gather(target):
         return {"apps": out, "tables": _gather_tables(c, be, raw)}
     finally:
         raw.close()
+
+
+def _gather_storage(s):
+    """Dashboard snapshot through the logical storage facade.
+
+    Used by DynamoDB, which has MorphDB concepts but no SQL tables to query.
+    The raw table explorer remains SQL-specific; for DynamoDB we expose a compact
+    logical view instead.
+    """
+    out = []
+    for app_row in s.list_apps():
+        app = app_row["key"]
+        types = []
+        for r in s.list_object_schemas(app):
+            fields = []
+            try:
+                for fname, fdef in json.loads(r["fields"]).items():
+                    ftype = fdef.get("type", "?") if isinstance(fdef, dict) else str(fdef)
+                    fields.append({"name": fname, "type": ftype})
+            except Exception:
+                pass
+            types.append({
+                "name": r["name"],
+                "fields": fields,
+                "count": len(s.list_objects(app, r["name"])),
+            })
+        rel_rows = s.list_association_schemas(app)
+        relations = [
+            {"name": r["name"], "from": r["from_type"], "to": r["to_type"],
+             "forward": r["forward_name"], "inverse": r["inverse_name"],
+             "cardinality": r["cardinality"], "symmetric": bool(r["symmetric"])}
+            for r in sorted(rel_rows, key=lambda row: row["name"])
+        ]
+        edges = sum(len(s.list_edges(app, r["name"])) for r in rel_rows)
+        out.append({"app": app, "types": types, "relations": relations, "edges": edges})
+    return {"apps": out, "tables": _gather_logical_tables(s, out)}
+
+
+def _gather_logical_tables(s, apps, cap=250):
+    rows_by_name = {"apps": [], "object_schemas": [], "objects": [],
+                    "association_schemas": [], "associations": []}
+    for app in apps:
+        key = app["app"]
+        rows_by_name["apps"].append([key])
+        for t in s.list_object_schemas(key):
+            rows_by_name["object_schemas"].append([
+                t["app"], t["name"], t["fields"], t["created_at"], t["updated_at"]])
+            for obj in s.list_objects(key, t["name"]):
+                rows_by_name["objects"].append([
+                    obj["guid"], obj["app"], obj["object_type"], obj["data"],
+                    obj["created_at"], obj["updated_at"]])
+        for rel in s.list_association_schemas(key):
+            rows_by_name["association_schemas"].append([
+                rel["app"], rel["name"], rel["from_type"], rel["to_type"],
+                rel["forward_name"], rel["inverse_name"], rel["cardinality"],
+                rel["symmetric"], rel["created_at"], rel["updated_at"]])
+            for edge in s.list_edges(key, rel["name"]):
+                rows_by_name["associations"].append([
+                    edge["id"], key, rel["name"], edge["from_guid"],
+                    edge["to_guid"], edge["created_at"]])
+    cols = {
+        "apps": ["key"],
+        "object_schemas": ["app", "name", "fields", "created_at", "updated_at"],
+        "objects": ["guid", "app", "object_type", "data", "created_at", "updated_at"],
+        "association_schemas": [
+            "app", "name", "from_type", "to_type", "forward_name",
+            "inverse_name", "cardinality", "symmetric", "created_at", "updated_at",
+        ],
+        "associations": ["id", "app", "assoc_name", "from_guid", "to_guid", "created_at"],
+    }
+    tables = []
+    for name in _TABLE_ORDER:
+        if name == "field_index":
+            continue
+        rows = rows_by_name[name]
+        tables.append({"name": f"{name} (logical)", "columns": cols[name],
+                       "rows": rows[:cap], "total": len(rows),
+                       "shown": min(len(rows), cap)})
+    return tables
 
 
 # Per-table row cap for the raw "Tables" explorer — keeps the generated page a

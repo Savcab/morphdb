@@ -267,6 +267,16 @@ ENDPOINT_REFERENCE = {
     "filter_operators": ["eq (default)", "ne", "gt", "gte", "lt", "lte", "contains", "in", "exists"],
     "list_response_shape": {"objects": "[...]", "total": "int (full filtered count)",
                             "limit": "int", "offset": "int"},
+    "backend_notes": {
+        "sqlite": "Default zero-dependency backend. Good for local/prototype use.",
+        "postgres": "Managed/networked SQL backend via morphdb[postgres]; same API.",
+        "dynamodb": (
+            "Optional backend via morphdb[dynamodb]. Same API and exact totals, "
+            "but large offsets, broad filtered reads, contains filters, negative "
+            "relation filters, and broad sorts can require reading/filtering more "
+            "items internally. Prefer selective indexed filters and small offsets."
+        ),
+    },
     "notes": [
         "datetime values are validated as ISO-8601 (or epoch seconds) and normalized.",
         "number fields reject NaN/Infinity.",
