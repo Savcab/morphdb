@@ -45,7 +45,7 @@ def get_object_schema(app, name, required=False):
     Just the stored fields map — relations are resolved separately. This is the
     hot path for object reads/writes.
     """
-    row = db.storage().get_object_schema(app, name)
+    row = db.store().get_object_schema(app, name)
     if row is None:
         if required:
             raise not_found(f"No object type named '{name}'. Define it first.")
@@ -78,7 +78,7 @@ def get_type_doc(app, name, required=False):
 
 
 def list_type_docs(app):
-    names = db.storage().list_object_schema_names(app)
+    names = db.store().list_object_schema_names(app)
     return [get_type_doc(app, name, required=True) for name in names]
 
 
@@ -98,7 +98,7 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
     if relations is not None and not isinstance(relations, dict):
         raise bad_request("'relations' must be an object mapping name -> definition.")
 
-    with db.storage_transaction() as s:
+    with db.store_transaction() as s:
         existing = s.get_object_schema(app, name)
         ts = now_iso()
 
@@ -183,7 +183,7 @@ def delete_type(app, name):
     metadata and the edge rows go. Relations where this type was an endpoint are
     removed from the other types' schemas too. Scoped to ``app``.
     """
-    with db.storage_transaction() as s:
+    with db.store_transaction() as s:
         row = s.get_object_schema(app, name)
         if row is None:
             raise not_found(f"No object type named '{name}'.")

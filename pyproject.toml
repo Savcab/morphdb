@@ -48,7 +48,7 @@ Issues = "https://github.com/Savcab/morphdb/issues"
 [tool.setuptools]
 packages = ["morphdb", "morphdb.cli"]
 
-# Ship the Claude skill (SKILL.md) as package data so `morphdb install-skill`
+# Ship the agent skill (SKILL.md) as package data so `morphdb install-skill`
 # can materialize it from a pip/brew install.
 [tool.setuptools.package-data]
 morphdb = ["skill/SKILL.md"]

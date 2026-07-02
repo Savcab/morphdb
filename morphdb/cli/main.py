@@ -172,10 +172,10 @@ def cmd_install_skill(args):
 
 def cmd_reindex(args):
     from .. import fieldindex
-    from ..db import init_db, storage_transaction
+    from ..db import init_db, store_transaction
     path = service.resolve_target(args.db)
     init_db(path)
-    with storage_transaction() as c:
+    with store_transaction() as c:
         n = fieldindex.backfill(c, app=args.app)
     scope = f" in app '{args.app}'" if args.app else ""
     print(f"Reindexed field_index for {n} object(s){scope}.")
