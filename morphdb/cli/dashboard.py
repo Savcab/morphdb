@@ -1,7 +1,7 @@
 """Read-only admin dashboard: every app and its data model, in one local page.
 
 Operator-facing and local-only — it opens the database directly (through the
-storage backend, SQLite or Postgres) rather than going through the HTTP API, so
+storage engine, SQLite/Postgres/DynamoDB) rather than going through the HTTP API, so
 it can list apps without adding a "list apps" endpoint to the public surface
 (which is intentionally absent).
 
@@ -18,8 +18,8 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .. import backend as _backend
-from ..storage import DynamoStorage
+from .. import backend as _engine_mod
+from ..storage import DynamoStore
 
 
 def gather(target):
@@ -32,23 +32,23 @@ def gather(target):
             edges:     <int edge count>,
         }]}
 
-    Reads through the storage backend (SQLite or Postgres). Tolerates a
+    Reads through the storage engine. Tolerates a
     missing/empty/unreachable database by returning an ``error`` string.
     """
     try:
-        be = _backend.from_target(target)
-        raw = be.connect()
+        engine = _engine_mod.from_target(target)
+        raw = engine.connect()
     except Exception as e:
         return {"error": f"cannot open database: {e}", "apps": []}
-    if be.name == "dynamodb":
+    if engine.name == "dynamodb":
         try:
-            return _gather_storage(DynamoStorage(raw))
+            return _gather_storage(DynamoStore(raw))
         except Exception as e:
             return {"error": f"cannot read DynamoDB table: {e}", "apps": []}
         finally:
             raw.close()
     # A private lock: this is a separate, short-lived inspection connection.
-    c = _backend.Connection(be, raw, threading.RLock())
+    c = _engine_mod.Connection(engine, raw, threading.RLock())
     try:
         try:
             apps = [r["key"] for r in c.execute("SELECT key FROM apps ORDER BY key")]
@@ -83,13 +83,13 @@ def gather(target):
                 "SELECT COUNT(*) AS n FROM associations WHERE app=?", (app,)).fetchone()["n"]
             out.append({"app": app, "types": types,
                         "relations": relations, "edges": edges})
-        return {"apps": out, "tables": _gather_tables(c, be, raw)}
+        return {"apps": out, "tables": _gather_tables(c, engine, raw)}
     finally:
         raw.close()
 
 
 def _gather_storage(s):
-    """Dashboard snapshot through the logical storage facade.
+    """Dashboard snapshot through the logical store facade.
 
     Used by DynamoDB, which has MorphDB concepts but no SQL tables to query.
     The raw table explorer remains SQL-specific; for DynamoDB we expose a compact
@@ -173,25 +173,25 @@ def _gather_logical_tables(s, apps, cap=250):
 _ROW_CAP = 250
 
 # Show the logical tables in dependency order (tenant root first), then anything
-# else the backend reports, so the explorer reads top-down like the data model.
+# else the engine reports, so the explorer reads top-down like the data model.
 _TABLE_ORDER = ["apps", "object_schemas", "objects", "field_index",
                 "association_schemas", "associations"]
 
 
-def _gather_tables(c, be, raw, cap=_ROW_CAP):
+def _gather_tables(c, engine, raw, cap=_ROW_CAP):
     """Every real table in the database with its columns and (capped) rows::
 
         [{name, columns: [str], rows: [[cell, ...]], total: int, shown: int}]
 
-    Lists tables and columns through the backend, so it works on SQLite and
+    Lists tables and columns through the engine, so it works on SQLite and
     Postgres alike.
     """
-    names = be.list_tables(raw)
+    names = engine.list_tables(raw)
     names.sort(key=lambda n: (_TABLE_ORDER.index(n) if n in _TABLE_ORDER
                               else len(_TABLE_ORDER), n))
     tables = []
     for name in names:
-        cols = be.table_columns(raw, name)
+        cols = engine.table_columns(raw, name)
         total = c.execute(f'SELECT COUNT(*) AS n FROM "{name}"').fetchone()["n"]
         rows = [[r[col] for col in cols]
                 for r in c.execute(f'SELECT * FROM "{name}" LIMIT {int(cap)}')]
@@ -939,7 +939,7 @@ _JS = r"""
 
 def serve(target, host="127.0.0.1", port=8788, open_browser=True):
     try:
-        display = _backend.from_target(target).describe()   # masks any credentials
+        display = _engine_mod.from_target(target).describe()   # masks any credentials
     except Exception:
         display = str(target)
 

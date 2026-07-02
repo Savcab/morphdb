@@ -38,7 +38,7 @@ def validate_app_key(key):
 def register_app(key):
     """Create a new app under ``key``. Rejects (409) if the key already exists."""
     validate_app_key(key)
-    with db.storage_transaction() as s:
+    with db.store_transaction() as s:
         if s.app_exists(key):
             raise conflict(
                 f"App '{key}' already exists. Pick a different, unused key."
@@ -51,7 +51,7 @@ def delete_app(key):
     """Delete an app and (via ON DELETE CASCADE) all of its schemas, objects,
     relationship definitions, and edges. Other apps are untouched.
     """
-    with db.storage_transaction() as s:
+    with db.store_transaction() as s:
         if not s.app_exists(key):
             raise not_found(f"No app '{key}'.")
         s.delete_app(key)
@@ -59,7 +59,7 @@ def delete_app(key):
 
 
 def app_exists(key):
-    return db.storage().app_exists(key)
+    return db.store().app_exists(key)
 
 
 def require_app(req):

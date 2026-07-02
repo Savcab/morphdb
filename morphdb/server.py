@@ -174,7 +174,7 @@ def serve(host="127.0.0.1", port=8787, db_path=None):
     target = db_path or os.environ.get("MORPHDB_DATABASE_URL") or "morphdb.sqlite3"
     db.init_db(target)
     httpd = MorphServer((host, port), Handler)
-    engine = db.backend()
+    engine = db.engine()
     where = engine.describe() if engine is not None else target
     sys.stderr.write(
         f"MorphDB v{__import__('morphdb').__version__} listening on "

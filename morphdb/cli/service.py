@@ -249,17 +249,17 @@ def stop(timeout=5.0):
 def app_count(target):
     """Read-only count of registered apps (for status). None if unreadable.
 
-    Handles both a SQLite path and a Postgres URL.
+    Handles SQLite paths and network/cloud engine URLs.
     """
-    from .. import backend as bemod
+    from .. import backend as engine_mod
     try:
-        if bemod.is_url(target):
-            be = bemod.from_target(target)
-            raw = be.connect()
+        if engine_mod.is_url(target):
+            engine = engine_mod.from_target(target)
+            raw = engine.connect()
             try:
-                if be.name == "dynamodb":
-                    from ..storage import DynamoStorage
-                    return len(DynamoStorage(raw).list_apps())
+                if engine.name == "dynamodb":
+                    from ..storage import DynamoStore
+                    return len(DynamoStore(raw).list_apps())
                 cur = raw.cursor()
                 cur.execute("SELECT COUNT(*) AS n FROM apps")
                 return cur.fetchone()["n"]

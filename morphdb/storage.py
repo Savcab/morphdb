@@ -1,7 +1,7 @@
-"""Logical storage interface for MorphDB backends.
+"""Logical store interface for MorphDB engines.
 
 The SQL engines keep the existing relational tables underneath. DynamoDB uses
-backend-native key/value items. Domain code should ask for MorphDB concepts
+engine-native key/value items. Domain code should ask for MorphDB concepts
 (apps, schemas, objects, field-index rows, relation edges) instead of issuing SQL
 directly.
 """
@@ -94,7 +94,7 @@ def edge_id(app, assoc_name, from_guid, to_guid):
     return "\x1f".join((app, assoc_name, from_guid, to_guid))
 
 
-class SqlStorage:
+class SqlStore:
     name = "sql"
 
     def __init__(self, conn):
@@ -354,7 +354,7 @@ class SqlStorage:
             )
 
 
-class DynamoStorage:
+class DynamoStore:
     name = "dynamodb"
 
     def __init__(self, raw):
