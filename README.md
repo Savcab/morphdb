@@ -13,6 +13,7 @@ persistence — same API, same code.
 🧭 **Design specs** (hosted on GitHub Pages, with inline text-anchored comments — highlight any line to weigh in):
 - **[The Gaps →](https://savcab.github.io/morphdb/specs/gaps.html)** — what the generic backend can't do yet, found by building the example clones; the prioritized to-do list.
 - **[MorphRules →](https://savcab.github.io/morphdb/specs/permissions.html)** — a design for per-user authorization enforced inside MorphDB.
+- **[morphdb.js →](https://savcab.github.io/morphdb/specs/frontend-sdk.html)** — a Firebase-style frontend SDK served by the backend itself at `GET /sdk.js`; retires the copy-pasted `db()` helper.
 - **[All specs + example apps →](https://savcab.github.io/morphdb/specs/)**
 
 ## Install

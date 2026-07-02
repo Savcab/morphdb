@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>morphdb.js — the Frontend SDK · Design Spec v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#0f2230; --ground-2:#0b1a26; --ink:#ECE4D2; --ink-2:#b9c6cf; --ink-3:#8aa0ad;
+  --line:#27424f; --line-2:#1c3340;
+  --brass:#E7B24C; --brass-d:#b98a2f;
+  --allow:#54c08a; --allow-bg:#11362b;
+  --deny:#e0664b; --deny-bg:#3a1f1b;
+  --cyan:#73b8d0; --cyan-bg:#10303b;
+  --violet:#c9a0ff;
+  --maxw:1240px; --rail:268px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  margin:0;background:
+    radial-gradient(1100px 620px at 84% -8%, #163140 0%, rgba(22,49,64,0) 60%),
+    radial-gradient(900px 600px at -6% 4%, #11293a 0%, rgba(17,41,58,0) 55%),
+    var(--ground);
+  color:var(--ink);
+  font-family:"Newsreader",Georgia,serif;
+  font-size:18px;line-height:1.62;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px;
+  display:grid;grid-template-columns:var(--rail) minmax(0,1fr);gap:54px;align-items:start}
+
+/* ---------- sidebar ---------- */
+aside{position:sticky;top:0;height:100vh;overflow:auto;padding:30px 0 60px;
+  scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+aside::-webkit-scrollbar{width:7px}aside::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.brand{font-family:"Space Grotesk",sans-serif;font-weight:700;letter-spacing:.02em;
+  font-size:18px;color:var(--ink);display:flex;align-items:center;gap:9px;margin-bottom:3px}
+.brand .key{color:var(--brass)}
+.brand-sub{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:24px}
+nav a{display:block;font-family:"Space Grotesk",sans-serif;font-size:13px;line-height:1.32;
+  color:var(--ink-2);text-decoration:none;padding:5px 12px 5px 13px;border-left:2px solid transparent;
+  transition:color .15s,border-color .15s}
+nav a .n{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);margin-right:9px}
+nav a:hover{color:var(--ink)}
+nav a.active{color:var(--brass);border-left-color:var(--brass)}
+nav a.active .n{color:var(--brass-d)}
+.legend{margin-top:26px;padding:15px 14px;border:1px solid var(--line-2);border-radius:8px;
+  background:rgba(8,20,29,.5)}
+.legend h4{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 11px}
+.legend .row{display:flex;align-items:center;gap:9px;font-family:"Space Grotesk",sans-serif;
+  font-size:12px;color:var(--ink-2);margin:7px 0}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.dot.b{background:var(--brass)}.dot.c{background:var(--cyan)}.dot.d{background:var(--deny)}.dot.a{background:var(--allow)}
+
+/* ---------- main ---------- */
+main{padding:30px 0 140px;min-width:0}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:20px}
+h1{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:clamp(40px,7vw,76px);line-height:.96;
+  letter-spacing:-.02em;margin:0 0 6px}
+h1 .lo{color:var(--ink-3);font-weight:500}
+.tagline{font-size:clamp(20px,2.4vw,26px);line-height:1.4;color:var(--ink);max-width:34ch;margin:14px 0 0;font-weight:400}
+.tagline b{color:var(--brass);font-weight:600}
+.thesis{font-family:"Newsreader",serif;font-style:italic;font-size:21px;line-height:1.5;color:var(--ink-2);
+  border-left:3px solid var(--brass);padding:4px 0 4px 20px;margin:30px 0 8px;max-width:62ch}
+.metarow{display:flex;flex-wrap:wrap;gap:9px;margin:26px 0 4px}
+.tag{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.04em;color:var(--ink-2);
+  border:1px solid var(--line);border-radius:100px;padding:5px 12px}
+.tag b{color:var(--ink);font-weight:600}
+
+section{padding:46px 0 8px;border-top:1px solid var(--line-2);margin-top:18px}
+section:first-of-type{border-top:none}
+.shead{display:flex;align-items:baseline;gap:16px;margin-bottom:18px}
+.snum{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--brass);font-weight:500;
+  border:1px solid var(--brass-d);border-radius:6px;padding:3px 9px;flex:none;margin-top:6px}
+h2{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:clamp(26px,3.4vw,36px);line-height:1.06;
+  letter-spacing:-.015em;margin:0;color:var(--ink)}
+h3{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:20px;letter-spacing:-.01em;
+  margin:34px 0 10px;color:var(--ink)}
+h3 .hn{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--brass-d);margin-right:10px}
+p{margin:0 0 16px;max-width:70ch}
+main a{color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(115,184,208,.32)}
+main a:hover{border-bottom-color:var(--cyan)}
+strong{color:var(--ink);font-weight:600}
+em{color:var(--ink)}
+code,.mono{font-family:"IBM Plex Mono",monospace;font-size:.86em;color:var(--brass);
+  background:rgba(231,178,76,.08);border:1px solid rgba(231,178,76,.16);border-radius:4px;padding:.06em .36em}
+ul,ol{max-width:70ch;margin:0 0 18px;padding-left:22px}
+li{margin:7px 0}
+ul.tight li{margin:3px 0}
+
+pre{font-family:"IBM Plex Mono",monospace;font-size:13.5px;line-height:1.65;color:var(--ink);
+  background:linear-gradient(180deg,#0a1822,#081320);border:1px solid var(--line);
+  border-left:3px solid var(--brass);border-radius:9px;padding:16px 18px;overflow:auto;margin:0 0 18px}
+pre .cap{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+  margin-bottom:9px}
+pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit}
+.t-kw{color:#9fd0e0}.t-op{color:var(--brass)}.t-str{color:#8fd6a8}.t-com{color:var(--ink-3);font-style:italic}.t-num{color:#e0a0b8}
+
+.call{border:1px solid var(--line);border-radius:10px;padding:16px 18px 4px;margin:22px 0;
+  background:rgba(8,20,29,.45);position:relative}
+.call .lab{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.call.decision{border-left:3px solid var(--brass)}.call.decision .lab{color:var(--brass)}
+.call.ceiling{border-left:3px solid var(--deny);background:rgba(58,31,27,.32)}.call.ceiling .lab{color:var(--deny)}
+.call.rec{border-left:3px solid var(--allow)}.call.rec .lab{color:var(--allow)}
+.call.note{border-left:3px solid var(--cyan)}.call.note .lab{color:var(--cyan)}
+.call p{max-width:64ch}
+.call p:last-child{margin-bottom:14px}
+.call ul{margin-bottom:14px}
+
+.tw{overflow:auto;margin:0 0 20px;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-family:"Space Grotesk",sans-serif;font-size:13.5px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-2);vertical-align:top}
+th{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;background:rgba(8,20,29,.5)}
+tr:last-child td{border-bottom:none}
+td code{white-space:nowrap}
+td .wrapcode{white-space:normal}
+
+footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line-2);
+  font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-3);line-height:1.8}
+footer a{color:var(--cyan);text-decoration:none;border-bottom:none}
+footer a:hover{text-decoration:underline}
+
+@media (max-width:980px){
+  .wrap{display:block;padding:0 18px}
+  aside{position:static;height:auto;padding:24px 0 0}
+  nav{display:none}
+  .legend{display:none}
+  main{padding-top:6px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<aside>
+  <div class="brand"><span class="key">⌁</span> morphdb.js</div>
+  <div class="brand-sub">MorphDB · Design Spec</div>
+  <nav id="toc">
+    <a href="#abstract"><span class="n">00</span>Abstract</a>
+    <a href="#problem"><span class="n">01</span>The gap today</a>
+    <a href="#goals"><span class="n">02</span>Goals &amp; non-goals</a>
+    <a href="#priorart"><span class="n">03</span>Prior art</a>
+    <a href="#overview"><span class="n">04</span>Design overview</a>
+    <a href="#client"><span class="n">05</span>The client</a>
+    <a href="#objects"><span class="n">06</span>Objects &amp; queries</a>
+    <a href="#watch"><span class="n">07</span>Live queries — watch()</a>
+    <a href="#bootstrap"><span class="n">08</span>Browser-side init</a>
+    <a href="#errors"><span class="n">09</span>Errors</a>
+    <a href="#dist"><span class="n">10</span>Distribution &amp; versioning</a>
+    <a href="#docs"><span class="n">11</span>SKILL.md &amp; docs impact</a>
+    <a href="#plan"><span class="n">12</span>Implementation plan</a>
+    <a href="#decisions"><span class="n">13</span>Decision log</a>
+    <a href="#open"><span class="n">14</span>Open questions</a>
+    <a href="#refs"><span class="n">15</span>References</a>
+  </nav>
+  <div class="legend">
+    <h4>Callout legend</h4>
+    <div class="row"><span class="dot b"></span> Decision — chosen &amp; logged</div>
+    <div class="row"><span class="dot c"></span> Note / open question</div>
+    <div class="row"><span class="dot d"></span> Known ceiling — honest limit</div>
+    <div class="row"><span class="dot a"></span> Recommendation</div>
+  </div>
+</aside>
+
+<main>
+
+<header class="hero" id="abstract">
+  <div class="eyebrow">MorphDB · Design Spec · Draft v1</div>
+  <h1>morphdb<span class="lo">.js</span></h1>
+  <p class="tagline">The frontend SDK, <b>served by the backend it talks to</b> — one script tag, zero config, zero dependencies.</p>
+  <p class="thesis">Every MorphDB-backed site today ships a hand-pasted <code>db()</code> helper and hand-built query strings. That helper <em>is</em> an SDK — it's just distributed by copy-paste. This spec makes it official: a single ~400-line file the server itself serves at <code>GET /sdk.js</code>, giving every vibe-coded frontend the same Firebase-grade ergonomics without a build step, an npm install, or a version matrix.</p>
+  <div class="metarow">
+    <span class="tag">status <b>draft v1</b></span>
+    <span class="tag">scope <b>data plane only</b></span>
+    <span class="tag">size budget <b>≤ 400 LOC · 0 deps</b></span>
+    <span class="tag">touches gaps <b>#5 · #8</b></span>
+    <span class="tag">date <b>2026-07-02</b></span>
+  </div>
+</header>
+
+<section id="problem">
+  <div class="shead"><span class="snum">01</span><h2>The gap today</h2></div>
+  <p>MorphDB's contract has two planes: the <strong>agent</strong> reshapes the schema through the CLI, and the <strong>frontend</strong> reads and writes objects over plain HTTP. The second plane has no client. The skill file tells every agent to paste a ~45-line <code>fetch</code> wrapper into every site it builds, and then to hand-assemble query strings against it.</p>
+  <p>The demand signal is already in this repo, three times over:</p>
+  <ul>
+    <li><strong><code>SKILL.md §2</code></strong> — the canonical "drop-in FE client" snippet, re-emitted into every generated site.</li>
+    <li><strong><code>examples/linkedin</code>, <code>examples/figma</code></strong> — each carries its own slightly different copy.</li>
+    <li><strong><code>specs/comments.js</code></strong> — the spec-comments widget on this very page hand-rolls a fourth: an <code>api()</code> wrapper <em>plus</em> an <code>ensureBackend()</code> bootstrap that registers the app and merges the schema from the browser.</li>
+  </ul>
+  <p>Copy-paste distribution has real costs, and they land on the primary user — a coding agent mid-build:</p>
+  <ul>
+    <li><strong>Tokens.</strong> ~45 lines of boilerplate re-generated per site, plus hand-built query strings (<code>"/objects/task?done=false&amp;assignee=" + guid + "&amp;sort=priority"</code>) at every call site.</li>
+    <li><strong>A whole bug class.</strong> Un-encoded values, <code>__in</code> lists joined wrong, booleans stringified wrong, the <code>{objects}</code> envelope forgotten. Each is a debug round-trip.</li>
+    <li><strong>Drift.</strong> A fix to the helper ships to zero existing sites. Each copy ages alone.</li>
+    <li><strong>No liveness.</strong> Nothing helps a site show fresh data; every app that wants it hand-rolls polling (the Figma clone does exactly this).</li>
+  </ul>
+  <p>Firebase settled this shape a decade ago: a generic backend plus an <em>official</em> client SDK, so application code speaks the SDK and the wire format is an implementation detail. MorphDB is the same shape backend — it's missing the same shape client. The twist worth designing for: our SDK's main caller is not a human reading docs, it's <strong>an agent generating code</strong>. Optimize for fewest tokens to a correct call, and for error messages that teach the fix.</p>
+</section>
+
+<section id="goals">
+  <div class="shead"><span class="snum">02</span><h2>Goals &amp; non-goals</h2></div>
+  <h3><span class="hn">2.1</span>Goals</h3>
+  <ul>
+    <li><strong>G1 — One-line adoption.</strong> A single <code>&lt;script&gt;</code> tag served by the backend itself. On localhost, zero configuration: the SDK infers the host from the tag that loaded it.</li>
+    <li><strong>G2 — Full object surface, 1:1.</strong> Everything the seven object endpoints do — filters, relation filters, <code>include</code>, sort, pagination — and nothing they don't. No invented semantics.</li>
+    <li><strong>G3 — Agent-first ergonomics.</strong> One options object per call, whose keys are exactly the server's query-string keys. Typed errors that carry the server's teaching messages through verbatim.</li>
+    <li><strong>G4 — Live-ish UI.</strong> <code>watch()</code> — a Firestore-<code>onSnapshot</code>-shaped subscription implemented by polling, with a contract that upgrades to server push later without changing app code.</li>
+    <li><strong>G5 — Portable-app parity.</strong> <code>morphdb.init(schemaDoc)</code> — the browser-side twin of the CLI's <code>morphdb init</code>: register-if-missing, merge-additively, never destructive.</li>
+    <li><strong>G6 — Zero toolchain.</strong> One hand-written ES2020 file inside the Python package. No bundler, no TypeScript compile, no npm publish required. JSDoc for editor/agent IntelliSense.</li>
+  </ul>
+  <h3><span class="hn">2.2</span>Non-goals</h3>
+  <ul>
+    <li><strong>N1 — No offline cache, no optimistic mutations.</strong> That's the ~100&nbsp;KB half of Firebase, built for flaky mobile networks. MorphDB is a localhost-scale dev tool; a request either lands or throws.</li>
+    <li><strong>N2 — No schema editing surface.</strong> The two-plane split is the product: schema belongs to the agent's CLI. The single, deliberate exception is §08's <code>init</code> — additive bootstrap parity, not schema authoring.</li>
+    <li><strong>N3 — No auth.</strong> <a href="./permissions.html">MorphRules</a> owns identity and per-user rules. This SDK reserves the seam (§10, §13-D9) and otherwise stays out.</li>
+    <li><strong>N4 — Not an ORM.</strong> No model classes, no proxies, no change tracking. Objects are the plain JSON the server returns, <code>_guid</code> and all.</li>
+    <li><strong>N5 — No per-app codegen.</strong> No generated types, no schema-derived client. One generic client for every app, like the endpoints it wraps.</li>
+    <li><strong>N6 — No npm package yet.</strong> Deferred until someone actually asks for a bundler workflow (§14). The served file is the distribution.</li>
+  </ul>
+</section>
+
+<section id="priorart">
+  <div class="shead"><span class="snum">03</span><h2>Prior art — what we take, what we leave</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>SDK</th><th>Take</th><th>Leave</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Firebase / Firestore</strong></td>
+        <td>The core bet: app code speaks an official client, never raw wire. The <code>onSnapshot</code> subscription shape — <em>query in, callback of current-state out, unsubscribe function back</em> — is the right liveness API and survives a transport swap.</td>
+        <td>The size (offline cache, sync engine), the config-object ceremony (<code>apiKey</code>, <code>projectId</code>, …), the v9 modular import maze. Firestore needs them; a single-process dev backend doesn't.</td>
+      </tr>
+      <tr>
+        <td><strong>supabase-js</strong></td>
+        <td>Thin-veneer honesty: the client is openly a query-string builder over PostgREST, and returns are the server's shapes. That's our 1:1 rule.</td>
+        <td>The chainable builder (<code>.select().eq().order()</code>). It reads nicely but costs more tokens than one options object and creates order-of-calls trivia an agent can get wrong.</td>
+      </tr>
+      <tr>
+        <td><strong>PocketBase js-sdk</strong></td>
+        <td>The closest cousin — single-binary backend with a first-party one-file SDK, versioned in lockstep with the server. Confirms the "SDK travels with the backend" instinct.</td>
+        <td>Class hierarchy, auth stores, realtime manager — that's PocketBase's production ambition. Ours stays a dev-tool veneer until MorphRules lands.</td>
+      </tr>
+      <tr>
+        <td><strong>In-tree helpers ×3</strong> <span style="color:var(--ink-3)">(SKILL.md · examples · comments.js)</span></td>
+        <td>They are the requirements doc: header injection, JSON errors, 204→null, schema bootstrap, polling refresh — every feature below exists because a copy already hand-rolled it.</td>
+        <td>The copy-paste distribution itself.</td>
+      </tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="overview">
+  <div class="shead"><span class="snum">04</span><h2>Design overview</h2></div>
+  <p>One file, <code>morphdb/sdk.js</code>, shipped inside the Python package and served by every MorphDB — localhost, hosted Lambda, any storage backend — at <code>GET /sdk.js</code>. It defines a single global, <code>morphdb</code>. Everything else hangs off it:</p>
+  <pre><code><span class="cap">hello, whole surface</span><span class="t-com">&lt;!-- one tag, served by your own backend --&gt;</span>
+&lt;script src=<span class="t-str">"http://127.0.0.1:8787/sdk.js"</span>&gt;&lt;/script&gt;
+
+&lt;script type=<span class="t-str">"module"</span>&gt;
+  <span class="t-kw">const</span> db    = <span class="t-op">morphdb</span>(<span class="t-str">"my-cool-site"</span>);   <span class="t-com">// host inferred from the script tag</span>
+  <span class="t-kw">const</span> tasks = db.<span class="t-op">type</span>(<span class="t-str">"task"</span>);
+
+  <span class="t-kw">const</span> ann = <span class="t-kw">await</span> db.<span class="t-op">type</span>(<span class="t-str">"user"</span>).<span class="t-op">create</span>({ name: <span class="t-str">"Ann"</span> });
+  <span class="t-kw">const</span> t   = <span class="t-kw">await</span> tasks.<span class="t-op">create</span>({ title: <span class="t-str">"buy milk"</span>, assignee: ann._guid });
+
+  <span class="t-kw">const</span> { objects, total } = <span class="t-kw">await</span> tasks.<span class="t-op">list</span>({
+    where:   { done: <span class="t-kw">false</span>, assignee: ann._guid },
+    sort:    <span class="t-str">"priority"</span>, order: <span class="t-str">"desc"</span>, limit: <span class="t-num">20</span>,
+    include: <span class="t-str">"assignee"</span>,
+  });
+
+  <span class="t-kw">await</span> tasks.<span class="t-op">update</span>(t._guid, { done: <span class="t-kw">true</span> });   <span class="t-com">// PATCH</span>
+  <span class="t-kw">await</span> tasks.<span class="t-op">delete</span>(t._guid);
+&lt;/script&gt;</code></pre>
+  <p>The design rule that keeps this small and honest: <strong>every SDK method is exactly one HTTP request to an endpoint that already exists</strong> (the two composites, <code>watch</code> and <code>init</code>, are loops over those same requests — §07, §08). The full mapping:</p>
+  <div class="tw"><table>
+    <thead><tr><th>SDK call</th><th>Wire</th></tr></thead>
+    <tbody>
+      <tr><td><code>db.type("task").create(body)</code></td><td><code>POST /objects/task</code></td></tr>
+      <tr><td><code>.get(guid, {include})</code></td><td><code>GET /objects/task/{guid}?include=…</code></td></tr>
+      <tr><td><code>.list({where, sort, order, limit, offset, include})</code></td><td><code>GET /objects/task?…</code></td></tr>
+      <tr><td><code>.first(q)</code></td><td><code>list</code> with <code>limit:1</code> → <code>objects[0] ?? null</code></td></tr>
+      <tr><td><code>.update(guid, patch)</code></td><td><code>PATCH /objects/task/{guid}</code></td></tr>
+      <tr><td><code>.put(guid, body)</code></td><td><code>PUT /objects/task/{guid}</code></td></tr>
+      <tr><td><code>.delete(guid)</code></td><td><code>DELETE /objects/task/{guid}</code></td></tr>
+      <tr><td><code>db.object(guid, {include})</code></td><td><code>GET /object/{guid}?include=…</code></td></tr>
+      <tr><td><code>.watch(q, cb, opts)</code></td><td><code>GET /objects/task?…</code> on an interval (§07)</td></tr>
+      <tr><td><code>morphdb.init(schemaDoc)</code></td><td><code>POST /app</code> (409-tolerant) + <code>PUT /schema/{type}</code> merge, per type (§08)</td></tr>
+      <tr><td><code>db.raw(method, path, body)</code></td><td>any route — the escape hatch</td></tr>
+    </tbody>
+  </table></div>
+  <p>No wrapper types on the way out: what the server returns is what the caller gets — <code>{objects, total, limit, offset}</code> envelopes, plain objects with <code>_guid</code> / <code>_type</code> / <code>_created_at</code> / <code>_updated_at</code>, relations as guids unless <code>include</code> hydrated them. The <a href="https://savcab.github.io/morphdb/">existing docs</a> stay true sentence-for-sentence; the SDK just types the URL for you.</p>
+  <div class="call decision"><div class="lab">Decision</div>
+    <p><strong>The SDK is a veneer, not a layer.</strong> It never caches, never rewrites shapes, never retries writes. Its value is mechanical: correct URLs, correct encoding, correct headers, typed errors, and two carefully-scoped composites (<code>watch</code>, <code>init</code>). Anything smarter waits for a server primitive to exist first.</p>
+  </div>
+</section>
+
+<section id="client">
+  <div class="shead"><span class="snum">05</span><h2>The client &amp; connection</h2></div>
+  <pre><code><span class="cap">constructor</span><span class="t-kw">const</span> db = <span class="t-op">morphdb</span>(appKey, {
+  host,      <span class="t-com">// optional — see resolution order below</span>
+  headers,   <span class="t-com">// optional extra headers on every request (escape hatch)</span>
+  fetch,     <span class="t-com">// optional fetch impl (tests, node) — defaults to globalThis.fetch</span>
+});</code></pre>
+  <p><code>appKey</code> is required and explicit — it's the app's identity and belongs in the app's source, not in ambient globals. <code>host</code> resolves through a chain, first hit wins:</p>
+  <ol>
+    <li><code>opts.host</code> — full URL or bare <code>host:port</code> (same normalization the current helper does).</li>
+    <li><code>window.MORPHDB_HOST</code> — back-compat with the convention every existing site and the hosted deploys already use.</li>
+    <li><strong>The origin of the script tag that loaded the SDK</strong> (<code>document.currentScript.src</code>, captured at load time). This is the trick that makes localhost zero-config: the file came <em>from</em> the backend, so the backend's address is already known. It's also self-correcting for hosted instances — load the SDK from the Lambda URL and you're pointed at the Lambda.</li>
+    <li><code>http://127.0.0.1:8787</code> — the default the whole tool already assumes.</li>
+  </ol>
+  <p>Because app code needs top-level <code>await</code>, samples and SKILL.md put it in a <code>&lt;script type="module"&gt;</code> (or any async function) — the SDK file itself stays a classic script so the global exists everywhere, including <code>file://</code> pages (§13-D1).</p>
+  <p>Three small things ride on the client, all one-liners to implement:</p>
+  <ul>
+    <li><code>db.raw(method, path, body)</code> — the current <code>db()</code> helper, kept as the eject valve. Any endpoint the SDK hasn't wrapped (a future <code>/auth</code>, a debugging poke at <code>/schema</code>) stays reachable without forking the file. Pressure to add wrappers gets pointed here first.</li>
+    <li><code>morphdb.version</code> — the server's version string, stamped into the file at serve time (§10).</li>
+    <li><code>db.type(name)</code> — returns the per-type handle (§06). Handles are stateless and cheap; <code>db.type("task")</code> twice is fine.</li>
+  </ul>
+</section>
+
+<section id="objects">
+  <div class="shead"><span class="snum">06</span><h2>Objects, queries, relations</h2></div>
+  <p>The per-type handle carries the seven verbs from §04's table. The only API with any surface area is <code>list</code>, and its design principle is: <strong>the options object's keys are the server's query-string keys, verbatim</strong>. <code>where</code> keys are field names with the existing double-underscore operators — <code>done</code>, <code>priority__gt</code>, <code>title__contains</code>, <code>assignee__exists</code>. Nothing to translate, so the endpoint docs and the SDK docs are the same docs.</p>
+  <pre><code><span class="cap">what the sdk actually saves you</span><span class="t-com">// before — hand-built, three latent bugs (encoding, joining, envelope)</span>
+<span class="t-kw">const</span> r = <span class="t-kw">await</span> db(<span class="t-str">"GET"</span>, <span class="t-str">"/objects/task?done=false&amp;assignee="</span> + g +
+              <span class="t-str">"&amp;priority__in="</span> + prios.join() + <span class="t-str">"&amp;sort=priority&amp;order=desc"</span>);
+
+<span class="t-com">// after — every value encoded, arrays comma-joined, Dates → ISO-8601</span>
+<span class="t-kw">const</span> { objects } = <span class="t-kw">await</span> tasks.<span class="t-op">list</span>({
+  where: { done: <span class="t-kw">false</span>, assignee: g, priority__in: prios },
+  sort: <span class="t-str">"priority"</span>, order: <span class="t-str">"desc"</span>,
+});</code></pre>
+  <p>Value handling is the whole job, so it's specified exactly:</p>
+  <div class="tw"><table>
+    <thead><tr><th>JS value in <code>where</code> / body</th><th>On the wire</th></tr></thead>
+    <tbody>
+      <tr><td><code>string · number · boolean</code></td><td>stringified, URL-encoded</td></tr>
+      <tr><td><code>Array</code> (for <code>__in</code>)</td><td>comma-joined, each element encoded</td></tr>
+      <tr><td><code>Date</code></td><td><code>.toISOString()</code> — matches the server's ISO-8601 datetime validation</td></tr>
+      <tr><td><code>null · undefined</code> in <code>where</code></td><td>rejected client-side with a pointer to <code>__exists</code> — the classic silent-filter bug, made loud</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Relations get no special API</strong>, exactly like the wire: write a guid or a list of guids as a field value, filter through <code>where</code> (<code>assignee: guid</code>, <code>assignee__exists: false</code>), hydrate with <code>include: "assignee,comments.author"</code>. The SKILL.md modeling rule — links are relations, not id fields — transfers untouched.</p>
+  <p><code>first()</code> exists because <code>(await list({limit:1})).objects[0]</code> is the single most re-typed expression in the example apps, and forgetting the <code>.objects</code> envelope is the single most common generated bug. <code>count</code> stays un-wrapped: <code>(await list({where, limit: 1})).total</code> is already one honest line.</p>
+</section>
+
+<section id="watch">
+  <div class="shead"><span class="snum">07</span><h2>Live queries — watch()</h2></div>
+  <p>The Firebase feature people actually mean when they say "Firebase" is <code>onSnapshot</code>: render a query, and the UI stays true as data changes. <a href="./gaps.html#lim-5">Gap #5</a> records that MorphDB has no realtime story and correctly prices server push as a serious build (SSE/WebSocket infrastructure, per-app fan-out, a changes feed). <code>watch()</code> takes the 80/20 that needs <strong>zero server change</strong>: re-run the query on an interval, diff, and only call back when something actually changed.</p>
+  <pre><code><span class="cap">subscription</span><span class="t-kw">const</span> stop = tasks.<span class="t-op">watch</span>(
+  { where: { done: <span class="t-kw">false</span> }, sort: <span class="t-str">"priority"</span>, order: <span class="t-str">"desc"</span>, limit: <span class="t-num">50</span> },
+  ({ objects, added, updated, removed, initial }) =&gt; render(objects),
+  { interval: <span class="t-num">2000</span>, onError: (e) =&gt; console.warn(e) }   <span class="t-com">// both optional</span>
+);
+<span class="t-com">// later:</span> stop();</code></pre>
+  <p>Semantics, pinned down:</p>
+  <ul>
+    <li>Fires once immediately with the first result (<code>initial: true</code>), then polls at <code>interval</code> (default 2000&nbsp;ms).</li>
+    <li>Diffs against the previous snapshot by <code>_guid</code> + <code>_updated_at</code>; the callback runs <em>only</em> on change, with the full current <code>objects</code> plus <code>added</code> / <code>updated</code> / <code>removed</code> conveniences.</li>
+    <li>Pauses while <code>document.hidden</code>; on tab return, resumes with an immediate poll. Background tabs cost the server nothing.</li>
+    <li>A failed poll calls <code>onError</code> (default: one console warning) and backs off exponentially to a 30&nbsp;s cap; a success resets the interval. A dead backend never busy-loops.</li>
+    <li><code>stop()</code> is idempotent and synchronous.</li>
+  </ul>
+  <div class="call ceiling"><div class="lab">Known ceiling</div>
+    <p>This is polling, and the spec says so out loud: freshness is bounded by <code>interval</code>, and N mounted watchers cost N list queries per tick. At localhost and small-hosted scale that's noise (the Figma clone already polls harder than this by hand, with none of the visibility or backoff behavior). If a real app ever needs sub-second push or hundreds of concurrent watchers, that's the server-push build from gap #5 — not a cleverer client loop.</p>
+  </div>
+  <div class="call decision"><div class="lab">Decision</div>
+    <p><strong>The contract is transport-blind.</strong> Nothing in the signature — query in, snapshot-callback out, <code>stop()</code> back — names polling. When a server events endpoint exists, <code>watch()</code> feature-detects it and switches transport; application code and SKILL.md examples don't change a character. That is the same migration Firestore's <code>onSnapshot</code> has survived twice.</p>
+  </div>
+</section>
+
+<section id="bootstrap">
+  <div class="shead"><span class="snum">08</span><h2>Browser-side init — the portable app file, everywhere</h2></div>
+  <p>MorphDB already has a portable app format: <code>morphdb.schema.json</code> at the repo root (app key + every type), stood up by the idempotent CLI <code>morphdb init</code> — create if missing, <em>merge additively</em> if present, never destructive, with <code>--reset</code> as the only (interactive, CLI-only) wipe path. The SDK ships the browser-side twin:</p>
+  <pre><code><span class="cap">self-provisioning static page</span><span class="t-kw">const</span> schema = <span class="t-kw">await</span> (<span class="t-kw">await</span> fetch(<span class="t-str">"./morphdb.schema.json"</span>)).json();
+<span class="t-kw">const</span> db     = <span class="t-kw">await</span> morphdb.<span class="t-op">init</span>(schema, { host: HOST });
+<span class="t-com">// app registered if missing (409 swallowed), each type PUT with merge:true,</span>
+<span class="t-com">// returns a client already bound to the app key inside the file.</span></code></pre>
+  <p>Same semantics as the CLI, minus the destructive path: <strong>there is no reset from the browser</strong>. A name clash converges the schema and keeps the data, every time.</p>
+  <p>This isn't speculative — it's the pattern this repo already runs in production twice: <code>specs/comments.js</code> hand-rolls exactly this bootstrap so the spec pages can store comments in a cloud MorphDB with no agent in the loop, and every example clone ships a <code>morphdb.schema.json</code> a static deploy could self-provision from. After P2, <code>comments.js</code> deletes its <code>api()</code> + <code>ensureBackend()</code> and becomes the SDK's first dogfood customer (§12).</p>
+  <div class="call note"><div class="lab">Note — abuse surface, honestly</div>
+    <p>Browser-side registration is possible because <code>POST /app</code> is open — which is already true today and already relied on. <code>init</code> adds convenience, not capability. The actual tightening (who may create apps, who may write schema) is MorphRules territory: its two-tier key split turns <code>init</code> from "anyone" into "secret-key holders", and the SDK seam for that is already reserved (§13-D9).</p>
+  </div>
+  <div class="call decision"><div class="lab">Decision</div>
+    <p><strong>Schema stays the agent's plane.</strong> <code>init</code> is deliberately the <em>only</em> schema-touching call in the SDK, it is additive-only, and it takes a whole document produced by <code>morphdb export-schema</code> — not a field-by-field authoring API. The CLI remains the way schemas are made; <code>init</code> is how a finished schema travels.</p>
+  </div>
+</section>
+
+<section id="errors">
+  <div class="shead"><span class="snum">09</span><h2>Errors</h2></div>
+  <p>Every non-2xx throws <code>MorphDBError extends Error</code> with <code>status</code>, <code>code</code>, and any extra fields from the server's envelope (<code>{"error": {"code", "message", …}}</code>). The server's error messages are deliberately didactic — "filter on an un-indexed field → here's the <code>--index</code> command to run" — so the SDK's prime directive is <strong>pass the message through verbatim</strong>. Wrapping or "friendlifying" them would destroy the best agent-teaching surface MorphDB has.</p>
+  <pre><code><span class="cap">typed, branchable</span><span class="t-kw">try</span> {
+  <span class="t-kw">await</span> tasks.<span class="t-op">get</span>(guid);
+} <span class="t-kw">catch</span> (e) {
+  <span class="t-kw">if</span> (e.code === <span class="t-str">"not_found"</span>) showEmptyState();   <span class="t-com">// e.status === 404</span>
+  <span class="t-kw">else throw</span> e;
+}</code></pre>
+  <div class="tw"><table>
+    <thead><tr><th>code</th><th>status</th><th>Typical cause the message will name</th></tr></thead>
+    <tbody>
+      <tr><td><code>bad_request</code></td><td>400</td><td>filter/sort on an un-indexed field · un-declared field in a write · missing <code>X-App-Key</code> · type coercion refusal</td></tr>
+      <tr><td><code>not_found</code></td><td>404</td><td>unknown app key · missing object/type · unmatched route</td></tr>
+      <tr><td><code>conflict</code></td><td>409</td><td>app key already registered (swallowed inside <code>init</code>, surfaced everywhere else)</td></tr>
+      <tr><td><code>method_not_allowed</code></td><td>405</td><td>wrong verb on a real path</td></tr>
+      <tr><td><code>network_error</code></td><td>—</td><td>fetch itself failed — no HTTP happened</td></tr>
+    </tbody>
+  </table></div>
+  <p>The one place the SDK adds words instead of relaying them: a <code>network_error</code> against a loopback host appends <em>"is the backend running? — <code>morphdb status</code> · <code>morphdb start</code> · <code>morphdb logs</code>"</em>. That's SKILL.md's debug tip moved into the failure itself, which is where an agent will actually read it. 204 returns <code>null</code>; no other response is reshaped.</p>
+</section>
+
+<section id="dist">
+  <div class="shead"><span class="snum">10</span><h2>Distribution &amp; versioning</h2></div>
+  <p>The file lives at <code>morphdb/sdk.js</code> as package data and every transport serves it at <code>GET /sdk.js</code> — a meta route like <code>/help</code>: no <code>X-App-Key</code>, no app data, safe to cache. Serving substitutes one <code>__MORPHDB_VERSION__</code> placeholder so <code>morphdb.version</code> always equals the server's <code>__version__</code>, sends <code>ETag</code> (the version string) with <code>Cache-Control: no-cache</code> — browsers revalidate with a cheap 304 and upgrades apply on next load. The Lambda deploy inherits all of this for free since routing is transport-neutral; the file rides inside the zip.</p>
+  <p>This kills the classic SDK versioning problem <em>structurally</em>: the SDK arrives from the server it will talk to, so client and server cannot skew. There is no CDN pin to bump, no compatibility matrix, no "works with servers ≥ 0.4". One MorphDB, one matching SDK, always.</p>
+  <p>Types without a toolchain: the file opens with JSDoc <code>@typedef</code>s (<code>ListOptions</code>, <code>ListResult</code>, <code>WatchEvent</code>, <code>MorphDBError</code>). VS Code and TS-aware agents get IntelliSense from the raw file; an agent can also just <code>curl /sdk.js</code> and read the header — the SDK is self-documenting the way <code>/help</code> is.</p>
+  <div class="call decision"><div class="lab">Decision</div>
+    <p><strong>Classic script over ESM, for now.</strong> Generated sites are overwhelmingly single-file HTML opened from disk or static hosting; <code>&lt;script src&gt;</code> + a global works in 100% of them, including <code>file://</code>. App code that wants top-level <code>await</code> wraps itself in <code>&lt;script type="module"&gt;</code> and uses the global. A dual ESM build adds a packaging step for a consumer that doesn't exist yet — deferred with npm (§14).</p>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="shead"><span class="snum">11</span><h2>SKILL.md &amp; docs impact — where the payoff lands</h2></div>
+  <p>The SDK's leverage is only realized when the skill stops teaching the paste. SKILL.md §2 currently emits ~45 lines of client per site; it becomes:</p>
+  <pre><code><span class="cap">skill.md §2, after</span>&lt;script src=<span class="t-str">"http://127.0.0.1:8787/sdk.js"</span>&gt;&lt;/script&gt;  <span class="t-com">&lt;!-- or your MORPHDB_HOST --&gt;</span>
+&lt;script type=<span class="t-str">"module"</span>&gt;
+  <span class="t-kw">const</span> db = <span class="t-op">morphdb</span>(<span class="t-str">"my-cool-site"</span>);
+  <span class="t-com">// db.type(t): create / get / list / first / update / put / delete / watch</span>
+&lt;/script&gt;</code></pre>
+  <p>plus a short verb cheat-table replacing the long example block. Net effect per generated site: the boilerplate drops from ~45 pasted lines to 3, every call site sheds its string-assembly, and helper bugfixes ship to all future sites by upgrading one file in the package. The marker-comment convention gains one line (<code>Data: morphdb.js SDK from /sdk.js</code>) so later sessions know the site speaks SDK, not raw fetch.</p>
+  <p>Also updated in the same pass: README's frontend section (script-tag first, raw <code>fetch</code> demoted to "under the hood"), and the visual explainer's code snippet. The examples keep working untouched — raw fetch remains a supported wire forever; one clone migrates in P2 as the showcase diff (<em>"−60 lines, −3 bug classes"</em>).</p>
+</section>
+
+<section id="plan">
+  <div class="shead"><span class="snum">12</span><h2>Implementation plan</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>Phase</th><th>Ships</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>P1 — core</strong></td>
+        <td><code>morphdb/sdk.js</code> (client, host chain, 7 verbs, encoding rules, <code>MorphDBError</code>, <code>raw</code>, JSDoc) · <code>GET /sdk.js</code> route with version stamp + ETag · SKILL.md §2 rewrite · README touch</td>
+        <td>~250 LOC of JS, ~25 of Python. Tests: pytest — route serves, version matches <code>__version__</code>, 304 on ETag; node smoke test (below).</td>
+      </tr>
+      <tr>
+        <td><strong>P2 — composites</strong></td>
+        <td><code>watch()</code> · <code>morphdb.init()</code> · migrate <code>specs/comments.js</code> onto the SDK (deletes its hand-rolled <code>api()</code>/<code>ensureBackend()</code>) · migrate one example clone</td>
+        <td>~120 LOC. comments.js is the dogfood gate: if the SDK can't replace it cleanly, the design is wrong.</td>
+      </tr>
+      <tr>
+        <td><strong>P3 — blocked on others</strong></td>
+        <td><code>db.auth.*</code> + <code>Authorization</code> header once <a href="./permissions.html">MorphRules</a> lands · <code>watch()</code> SSE transport once a server events endpoint exists</td>
+        <td>Both slot into reserved seams (§13-D9, §07); neither moves app-facing API.</td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p><strong>Testing shape.</strong> The SDK's logic is encoding + error mapping + two loops, so: (1) pytest asserts the serving contract; (2) a single <code>tests/sdk_smoke.mjs</code>, run by pytest via <code>node</code> against a live test server (skipped with a warning when node is absent), drives the real file end-to-end — create/list/filter/include/update/delete, a 400's code and message passthrough, <code>watch</code> seeing an external write, <code>init</code> converging twice. No JS test framework; plain <code>assert</code>.</p>
+  <div class="call rec"><div class="lab">Recommendation</div>
+    <p>Hold the line on the size budget: <strong>≤ 400 lines, zero dependencies, one file</strong>. The moment sdk.js wants a second file or a build step, something from §02's non-goals is sneaking back in. The eject valve for scope pressure is <code>db.raw()</code>, not growth.</p>
+  </div>
+</section>
+
+<section id="decisions">
+  <div class="shead"><span class="snum">13</span><h2>Decision log</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>Chose</th><th>Over</th><th>Because</th></tr></thead>
+    <tbody>
+      <tr><td>D1</td><td>Classic script, one global</td><td>ESM / dual build</td><td>Works in every generated site including <code>file://</code>; modules can still consume the global. No consumer for an ESM build exists yet.</td></tr>
+      <tr><td>D2</td><td>Served by the backend at <code>/sdk.js</code></td><td>npm / CDN</td><td>Lockstep versioning by construction; zero install; hosted instances serve their own matching client.</td></tr>
+      <tr><td>D3</td><td>Host inferred from the script tag</td><td>Required config object</td><td>The file's origin <em>is</em> the backend. Kills Firebase-style config ceremony; chain still honors <code>MORPHDB_HOST</code> and an explicit option.</td></tr>
+      <tr><td>D4</td><td>Explicit <code>appKey</code> argument</td><td>Reading <code>window.MORPHDB_APP</code></td><td>Identity belongs in app source, not ambient globals. (Host may fall back — an address is environment; a key is identity.)</td></tr>
+      <tr><td>D5</td><td>One options object; <code>where</code> keys = wire keys (<code>__gt</code>, <code>__in</code>, …)</td><td>Chainable builder / nested operator objects</td><td>Zero translation between endpoint docs and SDK docs; fewest tokens to a correct call; no call-order trivia.</td></tr>
+      <tr><td>D6</td><td><code>watch()</code> by polling, transport-blind contract</td><td>Server push now / nothing</td><td>Zero server change for 80% of the value; the signature survives the SSE upgrade untouched (gap #5 stays open, honestly).</td></tr>
+      <tr><td>D7</td><td>Data plane only, with <code>init</code> as the lone additive exception</td><td>Full schema API in the browser</td><td>The agent-CLI / frontend-HTTP split is MorphDB's core design; <code>init</code> only moves finished schemas (CLI parity, never destructive).</td></tr>
+      <tr><td>D8</td><td>Server error messages passed through verbatim</td><td>SDK-authored "friendly" errors</td><td>The server's errors already teach the fix (index this field, declare that one); rewording them for agents is strictly worse.</td></tr>
+      <tr><td>D9</td><td>Reserve an auth seam (<code>headers</code> option now, <code>db.auth</code> later)</td><td>Building login into v1</td><td>MorphRules owns identity; the SDK pre-commits only to <em>where</em> it will plug in, so P3 is additive.</td></tr>
+      <tr><td>D10</td><td>No offline cache, no optimistic writes, no retries on writes</td><td>Firebase-style sync engine</td><td>Localhost-scale tool, honest failure model; a retried write against a live backend is a duplicate-object generator.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="open">
+  <div class="shead"><span class="snum">14</span><h2>Open questions</h2></div>
+  <div class="call note"><div class="lab">Open</div>
+    <ul class="tight">
+      <li><strong>npm + ESM:</strong> publish <code>@morphdb/sdk</code> once a bundler-based consumer actually appears, or never? (Leaning: wait for the second real request.)</li>
+      <li><strong>Node usage:</strong> the file is pure <code>fetch</code> and would run in Node ≥ 18 if exported; worth a <code>globalThis</code> guard + documented <code>import</code> path now, or is that the npm question in disguise?</li>
+      <li><strong>Pagination sugar:</strong> an async iterator (<code>for await (const t of tasks.iter(q))</code>) is ~10 lines and matches how agents write loops — v1.1 or YAGNI?</li>
+      <li><strong>Watch multiplexing:</strong> if one page mounts many watchers, coalescing same-type polls is possible client-side — but is that ever hit before server push should exist instead?</li>
+      <li><strong>Served types:</strong> also serve a <code>/sdk.d.ts</code> generated-by-hand alongside, or is JSDoc-in-file enough for the editors that matter?</li>
+    </ul>
+  </div>
+</section>
+
+<section id="refs">
+  <div class="shead"><span class="snum">15</span><h2>References</h2></div>
+  <ul class="tight">
+    <li><a href="./gaps.html#lim-5">The Gaps — #5 No realtime / subscriptions</a> · <a href="./gaps.html#lim-8">#8 App keys are namespaces, not identity</a></li>
+    <li><a href="./permissions.html">MorphRules — per-user authorization</a> (the auth seam this SDK reserves)</li>
+    <li><code>morphdb/skill/SKILL.md</code> — the drop-in client + querying conventions this SDK absorbs</li>
+    <li><code>specs/comments.js</code> — the in-repo hand-rolled client + bootstrap; P2's dogfood target</li>
+    <li>Firebase <code>onSnapshot</code>, supabase-js, PocketBase js-sdk — prior art detailed in §03</li>
+  </ul>
+</section>
+
+<footer>
+  morphdb.js — design spec draft v1 · 2026-07-02 &nbsp;·&nbsp;
+  <a href="./index.html">all specs</a> &nbsp;·&nbsp;
+  <a href="https://github.com/Savcab/morphdb">repo</a> &nbsp;·&nbsp;
+  highlight any text to comment
+</footer>
+
+</main>
+</div>
+
+<script>
+// scrollspy
+(() => {
+  const links = [...document.querySelectorAll("#toc a")];
+  const byId = Object.fromEntries(links.map(a => [a.getAttribute("href").slice(1), a]));
+  const secs = [...document.querySelectorAll("main section[id], main header[id]")];
+  const spy = () => {
+    let cur = secs[0];
+    for (const s of secs) if (s.getBoundingClientRect().top < 120) cur = s;
+    links.forEach(a => a.classList.toggle("active", a === byId[cur.id]));
+  };
+  document.addEventListener("scroll", spy, { passive: true });
+  spy();
+})();
+</script>
+<!-- Reader comments: one inline thread per section, stored in cloud MorphDB. -->
+<script>window.SPEC_COMMENTS = { slug: "frontend-sdk" };</script>
+<script src="comments.js"></script>
+</body>
+</html>

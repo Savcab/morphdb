@@ -62,6 +62,12 @@ footer a:hover{text-decoration:underline}
       <p>A design for per-end-user permissions enforced inside MorphDB: a two-tier key split, real end-users with stdlib auth, and a rule model where the rule <em>is</em> the index-backed <code style="color:var(--brass)">WHERE</code> clause — portable across SQLite and Postgres. Closes gap #8.</p>
       <div class="go">Read the spec &rarr;</div>
     </a>
+    <a class="card" href="./frontend-sdk.html">
+      <div class="k">Design Spec <span class="st">draft v1</span></div>
+      <h2>morphdb.js — the frontend SDK</h2>
+      <p>A Firebase-style client SDK <em>served by the backend itself</em> at <code style="color:var(--brass)">GET /sdk.js</code> — one zero-dependency script, host inferred from the script tag, typed errors, polling-based <code style="color:var(--brass)">watch()</code> live queries, and a browser-side <code style="color:var(--brass)">init</code> for the portable schema file. Retires the copy-pasted <code style="color:var(--brass)">db()</code> helper.</p>
+      <div class="go">Read the spec &rarr;</div>
+    </a>
   </div>
 
   <footer>
