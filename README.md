@@ -14,6 +14,7 @@ persistence — same API, same code.
 - **[The Gaps →](https://savcab.github.io/morphdb/specs/gaps.html)** — what the generic backend can't do yet, found by building the example clones; the prioritized to-do list.
 - **[MorphRules →](https://savcab.github.io/morphdb/specs/permissions.html)** — a design for per-user authorization enforced inside MorphDB.
 - **[morphdb.js →](https://savcab.github.io/morphdb/specs/frontend-sdk.html)** — a Firebase-style frontend SDK served by the backend itself at `GET /sdk.js`; retires the copy-pasted `db()` helper.
+- **[Live queries →](https://savcab.github.io/morphdb/specs/streaming.html)** — streaming over SSE: subscribe to the same query you already run (`GET /stream/{type}`), get whole fresh results or per-object deltas as writes land. Closes gap #5.
 - **[All specs + example apps →](https://savcab.github.io/morphdb/specs/)**
 
 ## Install

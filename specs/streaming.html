@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live queries — the MorphDB change feed · Design Spec v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#0f2230; --ground-2:#0b1a26; --ink:#ECE4D2; --ink-2:#b9c6cf; --ink-3:#8aa0ad;
+  --line:#27424f; --line-2:#1c3340;
+  --brass:#E7B24C; --brass-d:#b98a2f;
+  --allow:#54c08a; --allow-bg:#11362b;
+  --deny:#e0664b; --deny-bg:#3a1f1b;
+  --cyan:#73b8d0; --cyan-bg:#10303b;
+  --violet:#c9a0ff;
+  --maxw:1240px; --rail:268px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  margin:0;background:
+    radial-gradient(1100px 620px at 84% -8%, #163140 0%, rgba(22,49,64,0) 60%),
+    radial-gradient(900px 600px at -6% 4%, #11293a 0%, rgba(17,41,58,0) 55%),
+    var(--ground);
+  color:var(--ink);
+  font-family:"Newsreader",Georgia,serif;
+  font-size:18px;line-height:1.62;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px;
+  display:grid;grid-template-columns:var(--rail) minmax(0,1fr);gap:54px;align-items:start}
+
+/* ---------- sidebar ---------- */
+aside{position:sticky;top:0;height:100vh;overflow:auto;padding:30px 0 60px;
+  scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+aside::-webkit-scrollbar{width:7px}aside::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.brand{font-family:"Space Grotesk",sans-serif;font-weight:700;letter-spacing:.02em;
+  font-size:18px;color:var(--ink);display:flex;align-items:center;gap:9px;margin-bottom:3px}
+.brand .key{color:var(--brass)}
+.brand-sub{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:24px}
+nav a{display:block;font-family:"Space Grotesk",sans-serif;font-size:13px;line-height:1.32;
+  color:var(--ink-2);text-decoration:none;padding:5px 12px 5px 13px;border-left:2px solid transparent;
+  transition:color .15s,border-color .15s}
+nav a .n{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);margin-right:9px}
+nav a:hover{color:var(--ink)}
+nav a.active{color:var(--brass);border-left-color:var(--brass)}
+nav a.active .n{color:var(--brass-d)}
+.legend{margin-top:26px;padding:15px 14px;border:1px solid var(--line-2);border-radius:8px;
+  background:rgba(8,20,29,.5)}
+.legend h4{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 11px}
+.legend .row{display:flex;align-items:center;gap:9px;font-family:"Space Grotesk",sans-serif;
+  font-size:12px;color:var(--ink-2);margin:7px 0}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.dot.b{background:var(--brass)}.dot.c{background:var(--cyan)}.dot.d{background:var(--deny)}.dot.a{background:var(--allow)}
+
+/* ---------- main ---------- */
+main{padding:30px 0 140px;min-width:0}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:20px}
+h1{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:clamp(40px,7vw,76px);line-height:.96;
+  letter-spacing:-.02em;margin:0 0 6px}
+h1 .lo{color:var(--ink-3);font-weight:500}
+.tagline{font-size:clamp(20px,2.4vw,26px);line-height:1.4;color:var(--ink);max-width:34ch;margin:14px 0 0;font-weight:400}
+.tagline b{color:var(--brass);font-weight:600}
+.thesis{font-family:"Newsreader",serif;font-style:italic;font-size:21px;line-height:1.5;color:var(--ink-2);
+  border-left:3px solid var(--brass);padding:4px 0 4px 20px;margin:30px 0 8px;max-width:62ch}
+.metarow{display:flex;flex-wrap:wrap;gap:9px;margin:26px 0 4px}
+.tag{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.04em;color:var(--ink-2);
+  border:1px solid var(--line);border-radius:100px;padding:5px 12px}
+.tag b{color:var(--ink);font-weight:600}
+
+section{padding:46px 0 8px;border-top:1px solid var(--line-2);margin-top:18px}
+section:first-of-type{border-top:none}
+.shead{display:flex;align-items:baseline;gap:16px;margin-bottom:18px}
+.snum{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--brass);font-weight:500;
+  border:1px solid var(--brass-d);border-radius:6px;padding:3px 9px;flex:none;margin-top:6px}
+h2{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:clamp(26px,3.4vw,36px);line-height:1.06;
+  letter-spacing:-.015em;margin:0;color:var(--ink)}
+h3{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:20px;letter-spacing:-.01em;
+  margin:34px 0 10px;color:var(--ink)}
+h3 .hn{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--brass-d);margin-right:10px}
+p{margin:0 0 16px;max-width:70ch}
+main a{color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(115,184,208,.32)}
+main a:hover{border-bottom-color:var(--cyan)}
+strong{color:var(--ink);font-weight:600}
+em{color:var(--ink)}
+code,.mono{font-family:"IBM Plex Mono",monospace;font-size:.86em;color:var(--brass);
+  background:rgba(231,178,76,.08);border:1px solid rgba(231,178,76,.16);border-radius:4px;padding:.06em .36em}
+ul,ol{max-width:70ch;margin:0 0 18px;padding-left:22px}
+li{margin:7px 0}
+ul.tight li{margin:3px 0}
+
+pre{font-family:"IBM Plex Mono",monospace;font-size:13.5px;line-height:1.65;color:var(--ink);
+  background:linear-gradient(180deg,#0a1822,#081320);border:1px solid var(--line);
+  border-left:3px solid var(--brass);border-radius:9px;padding:16px 18px;overflow:auto;margin:0 0 18px}
+pre .cap{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+  margin-bottom:9px}
+pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit}
+.t-kw{color:#9fd0e0}.t-op{color:var(--brass)}.t-str{color:#8fd6a8}.t-com{color:var(--ink-3);font-style:italic}.t-num{color:#e0a0b8}
+
+.call{border:1px solid var(--line);border-radius:10px;padding:16px 18px 4px;margin:22px 0;
+  background:rgba(8,20,29,.45);position:relative}
+.call .lab{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.call.decision{border-left:3px solid var(--brass)}.call.decision .lab{color:var(--brass)}
+.call.ceiling{border-left:3px solid var(--deny);background:rgba(58,31,27,.32)}.call.ceiling .lab{color:var(--deny)}
+.call.rec{border-left:3px solid var(--allow)}.call.rec .lab{color:var(--allow)}
+.call.note{border-left:3px solid var(--cyan)}.call.note .lab{color:var(--cyan)}
+.call p{max-width:64ch}
+.call p:last-child{margin-bottom:14px}
+.call ul{margin-bottom:14px}
+
+.tw{overflow:auto;margin:0 0 20px;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-family:"Space Grotesk",sans-serif;font-size:13.5px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-2);vertical-align:top}
+th{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;background:rgba(8,20,29,.5)}
+tr:last-child td{border-bottom:none}
+td code{white-space:nowrap}
+td .wrapcode{white-space:normal}
+
+footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line-2);
+  font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-3);line-height:1.8}
+footer a{color:var(--cyan);text-decoration:none;border-bottom:none}
+footer a:hover{text-decoration:underline}
+
+@media (max-width:980px){
+  .wrap{display:block;padding:0 18px}
+  aside{position:static;height:auto;padding:24px 0 0}
+  nav{display:none}
+  .legend{display:none}
+  main{padding-top:6px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<aside>
+  <div class="brand"><span class="key">⌁</span> live queries</div>
+  <div class="brand-sub">MorphDB · Design Spec</div>
+  <nav id="toc">
+    <a href="#abstract"><span class="n">00</span>Abstract</a>
+    <a href="#problem"><span class="n">01</span>The gap today</a>
+    <a href="#goals"><span class="n">02</span>Goals &amp; non-goals</a>
+    <a href="#survey"><span class="n">03</span>How everyone else streams</a>
+    <a href="#interface"><span class="n">04</span>The interface</a>
+    <a href="#semantics"><span class="n">05</span>Semantics, pinned down</a>
+    <a href="#architecture"><span class="n">06</span>Architecture</a>
+    <a href="#performance"><span class="n">07</span>Performance</a>
+    <a href="#sdk"><span class="n">08</span>morphdb.js upgrade</a>
+    <a href="#plan"><span class="n">09</span>Implementation plan</a>
+    <a href="#decisions"><span class="n">10</span>Decision log</a>
+    <a href="#open"><span class="n">11</span>Open questions</a>
+    <a href="#refs"><span class="n">12</span>References</a>
+  </nav>
+  <div class="legend">
+    <h4>Callout legend</h4>
+    <div class="row"><span class="dot b"></span> Decision — chosen &amp; logged</div>
+    <div class="row"><span class="dot c"></span> Note / open question</div>
+    <div class="row"><span class="dot d"></span> Known ceiling — honest limit</div>
+    <div class="row"><span class="dot a"></span> Recommendation</div>
+  </div>
+</aside>
+
+<main>
+
+<header class="hero" id="abstract">
+  <div class="eyebrow">MorphDB · Design Spec · Draft v1</div>
+  <h1>Live <span class="lo">queries</span></h1>
+  <p class="tagline">Subscribe to the <b>same query you already run</b> — and be told when its answer changes.</p>
+  <p class="thesis">Today every MorphDB read is a snapshot that starts rotting the moment it returns; two tabs never see each other. This spec adds one endpoint — <code>GET /stream/{type}</code>, Server-Sent Events, taking <em>exactly</em> the list endpoint's query grammar — that pushes either fresh whole results (<code>snapshot</code> mode) or per-object deltas (<code>delta</code> mode) whenever a write changes what the query would return. It closes gap&nbsp;#5 and lights up <code>watch()</code> without changing a line of app code.</p>
+  <div class="metarow">
+    <span class="tag">status <b>draft v1</b></span>
+    <span class="tag">transport <b>SSE · zero deps</b></span>
+    <span class="tag">closes gap <b>#5 (blocker)</b></span>
+    <span class="tag">upgrades <b>watch() §07 / D6</b></span>
+    <span class="tag">date <b>2026-07-15</b></span>
+  </div>
+</header>
+
+<section id="problem">
+  <div class="shead"><span class="snum">01</span><h2>The gap today</h2></div>
+  <p>MorphDB's read plane is request/response only. <a href="./gaps.html#lim-5">Gap #5</a> calls it the <strong>keystone blocker</strong>: two tabs or two users never see each other's edits without a reload, the Figma clone's header says "synced" while it isn't, and every app that wants freshness hand-rolls a polling loop. The <a href="./frontend-sdk.html#watch">morphdb.js spec</a> shipped the honest 80/20 — <code>watch()</code> re-runs a query on an interval and diffs — and logged the ceiling out loud: freshness is bounded by the interval, N watchers cost N list queries per tick <em>whether or not anything changed</em>, and its own decision D6 promises a transport swap "once a server events endpoint exists."</p>
+  <p>This spec is that endpoint. The design question is not "can we push bytes" — it's <strong>what is the unit of subscription?</strong> Firebase-class systems answer: <em>the query itself</em>. You don't subscribe to a table or a topic; you subscribe to "the answer to this question," and the server keeps the answer true. That is the contract <code>watch()</code> already exposes to app code, so it is the contract the wire should speak.</p>
+  <p>Two properties make MorphDB unusually well positioned to build this correctly and cheaply:</p>
+  <ul>
+    <li><strong>Every write already flows through one choke point.</strong> All mutations enter via <code>objects.create_object / upsert_object / delete_object</code> (plus schema and app ops), inside one process, serialized by the storage lock. There is no out-of-band writer to capture — no WAL decoding, no oplog tailing, no CDC infrastructure. A change feed is a function call after commit.</li>
+    <li><strong>The query semantics already exist in memory.</strong> The DynamoDB backend evaluates the full filter grammar (<code>eq/ne/gt/gte/lt/lte/contains/in/exists</code>, relation filters, defaults-aware) in pure Python — <code>objects._matches_value</code> / <code>_matches_relation</code> / <code>_filter_specs</code>. The delta engine reuses that battle-tested matcher instead of inventing a second predicate language.</li>
+  </ul>
+</section>
+
+<section id="goals">
+  <div class="shead"><span class="snum">02</span><h2>Goals &amp; non-goals</h2></div>
+  <h3><span class="hn">2.1</span>Goals</h3>
+  <ul>
+    <li><strong>G1 — The query is the subscription.</strong> <code>GET /stream/{type}?done=false&amp;sort=priority</code> accepts the list endpoint's grammar verbatim — filters, relation filters, sort, and (in snapshot mode) <code>limit</code>/<code>offset</code>/<code>include</code>. Nothing new to learn; the endpoint docs are the stream docs.</li>
+    <li><strong>G2 — Whole-result or delta, caller's choice.</strong> <code>mode=snapshot</code> (default) pushes the full, fresh result after relevant writes. <code>mode=delta</code> pushes <code>enter</code>/<code>update</code>/<code>leave</code> per object. Snapshot is general by construction; delta is the economy option.</li>
+    <li><strong>G3 — Correct by construction, not by cleverness.</strong> Snapshot mode literally re-runs <code>list_objects</code> — it can never disagree with what a fresh GET would return. Delta mode reuses the existing in-memory matcher — it can never disagree with the DynamoDB list path's semantics.</li>
+    <li><strong>G4 — Zero new dependencies, zero new infra.</strong> SSE is plain HTTP; the stdlib <code>ThreadingHTTPServer</code> already holds one thread per connection. No websocket library, no broker, no sidecar.</li>
+    <li><strong>G5 — Bounded cost, stated bounds.</strong> Per-write work is gated to zero when nobody listens; refreshes are coalesced per query and debounced with backend-aware clamps; per-connection queues are capped with a self-healing overflow path. §07 does the arithmetic, including the hostile cases.</li>
+    <li><strong>G6 — <code>watch()</code> upgrades invisibly.</strong> The SDK feature-detects the endpoint and swaps transport; app code, SKILL.md examples, and the callback shape don't change a character (the migration D6 pre-reserved).</li>
+  </ul>
+  <h3><span class="hn">2.2</span>Non-goals</h3>
+  <ul>
+    <li><strong>N1 — No WebSocket.</strong> This is server→client data flow; the client already has a write path (plain HTTP). SSE gives auto-reconnect and CORS for free, and the Python stdlib has an HTTP server but no websocket server — a hand-rolled frame/handshake implementation would burn the zero-dependency budget on bidirectionality nobody asked for.</li>
+    <li><strong>N2 — No persisted change log, no replay.</strong> The bus is in-memory and ephemeral. Reconnect gets a fresh <code>init</code> snapshot, which is strictly simpler and always correct. (A durable op log is what webhooks will want — §11.)</li>
+    <li><strong>N3 — No presence, cursors, or broadcast messaging.</strong> Those are gap-list section B; different primitive (ephemeral pub/sub, not query subscription).</li>
+    <li><strong>N4 — No incremental view maintenance.</strong> We do not differentiate queries through a dataflow engine (Materialize/Zero territory). Two modes — re-run, or set-membership deltas — cover MorphDB-scale apps at a fraction of the machinery.</li>
+    <li><strong>N5 — No cross-instance fan-out in v1.</strong> Streams see writes that enter <em>this process</em>. Single instance — the default deployment — is fully correct; multi-instance is a documented ceiling with named upgrade paths (§06.5).</li>
+    <li><strong>N6 — No auth beyond the app key.</strong> Per-user rules are <a href="./permissions.html">MorphRules</a>; when it lands, its check slots into stream attach exactly where it slots into list.</li>
+  </ul>
+</section>
+
+<section id="survey">
+  <div class="shead"><span class="snum">03</span><h2>How everyone else streams — the deep dive</h2></div>
+  <p>Every system that lets a client "listen to a query" picks from the same four architectures. The differences are where the work happens (per write vs. per interval), what travels (deltas vs. whole results), and how ruthlessly the query grammar is restricted to keep the first two affordable.</p>
+
+  <h3><span class="hn">3.1</span>The four families</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Family</th><th>Mechanism</th><th>Who</th><th>Cost shape</th><th>Failure mode</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>A · Poll &amp; diff</strong></td>
+        <td>Re-run the query on an interval; diff; notify on change.</td>
+        <td>Meteor's poll-and-diff engine · Hasura live queries (server-side, multiplexed) · morphdb.js <code>watch()</code> today</td>
+        <td>rate × query cost — <em>independent of write rate</em>; pays even when idle</td>
+        <td>Staleness = interval; idle polls burn money at scale</td>
+      </tr>
+      <tr>
+        <td><strong>B · Change-matching push</strong></td>
+        <td>Capture each write; test it against every subscription's predicate; push matching deltas.</td>
+        <td>Supabase Realtime <code>postgres_changes</code> (WAL → Elixir fan-out) · RethinkDB changefeeds · Meteor oplog tailing · Firestore listeners</td>
+        <td>writes × subscriptions predicate tests; payload ∝ change size</td>
+        <td>The W×S quadratic wall; restricted predicates; ordered/limited windows need server state</td>
+      </tr>
+      <tr>
+        <td><strong>C · Invalidate &amp; re-run</strong></td>
+        <td>Track what each query read; when a write overlaps, re-run it and push the whole fresh result.</td>
+        <td>Convex (read-set tracking, deterministic re-run) · Hasura's diffing layer on top of A</td>
+        <td>invalidations × query cost; payload ∝ result size</td>
+        <td>Refresh storms on hot data — must coalesce/debounce; result-sized payloads</td>
+      </tr>
+      <tr>
+        <td><strong>D · Incremental view maintenance</strong></td>
+        <td>Compile the query into a dataflow that updates its result incrementally per write.</td>
+        <td>Materialize/Feldera · Rocicorp Zero (ZQL) · ElectricSQL shapes (restricted form)</td>
+        <td>Near-optimal per write</td>
+        <td>An order of magnitude more machinery; joins/aggregates are research-grade</td>
+      </tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="hn">3.2</span>What each system teaches</h3>
+  <p><strong>Supabase Realtime</strong> decodes Postgres WAL in an Elixir server and fans row changes out over websocket channels. The instructive parts are the <em>restrictions</em>: <code>postgres_changes</code> filters are a single column with a small operator set (<code>eq/neq/gt/gte/lt/lte/in</code>) — no joins, no OR, no computed predicates — because every committed change must be tested against every subscription's filter, and with row-level security enabled the check runs per <em>subscriber</em>. Their docs warn that delivery degrades as changes×subscriptions grows, guarantee no replay of messages missed while disconnected (the guidance is: refetch on reconnect), and increasingly steer scale-sensitive users toward plain Broadcast — i.e. away from the general primitive toward a narrower one. Lesson: <strong>a delta feed over a rich query grammar is a trap; restrict the grammar or restrict the promise.</strong></p>
+  <p><strong>Firestore</strong> is the contract gold standard: <code>onSnapshot</code> fires once with the initial result, then again with the full current result plus <code>docChanges()</code> — typed <code>added</code>/<code>modified</code>/<code>removed</code> entries, where a document that stops matching the query is reported as <code>removed</code> <em>from that query's perspective</em>. That per-query membership view (not raw row events) is what makes client code trivial, and it's exactly the shape <code>watch()</code> already exposes. Firestore also prices the model honestly: every listener's delivered document counts as a billed read — push is metered like the reads it replaces.</p>
+  <p><strong>RethinkDB changefeeds</strong> went furthest on generality-with-deltas: <code>.changes()</code> attached to filtered queries and even to <code>orderBy.limit(n)</code> windows, with the server maintaining each window's membership and emitting old/new value pairs; <code>includeInitial</code> prepended the starting result, <code>includeStates</code> signaled readiness, and <code>squash</code> coalesced bursts server-side. The price: every shard tested every changefeed's predicate on every write, and ordered-window feeds carried real per-subscription server state. Lesson: window maintenance is the expensive 5% — <strong>we refuse limited windows in delta mode and route them to snapshot mode instead</strong>, and we adopt their <code>squash</code> insight as our snapshot debounce.</p>
+  <p><strong>Meteor</strong> is the cautionary tale that validates having <em>two</em> engines. Its livequery watched MongoDB's replication oplog and evaluated every observed query's predicate against every op — sub-second updates until a write flood or an unmatchable query forced fallback to poll-and-diff (re-run every ~10s or on own-writes), whose N-observers × re-run CPU cost famously melted servers. The community's scaling folklore (reuse identical observers! avoid high-churn collections!) is our §07 knobs, learned the hard way. Lesson: <strong>keep both engines, choose per query, dedupe identical subscriptions.</strong></p>
+  <p><strong>Hasura live queries</strong> proved family C scales farther than intuition suggests: subscriptions are parameterized GraphQL queries; identical shapes are <em>multiplexed</em> into one batched SQL query polled at a fixed interval (default 1s), results are diffed server-side, and only changed subscribers get pushed. Their published benchmark ran on the order of a million concurrent live queries against Postgres this way. Lesson: <strong>re-running is fine if you coalesce aggressively</strong> — the unit of server work should be the distinct query, not the connection. (Their newer streaming subscriptions — cursor-forward row streams — are a different, append-log-shaped primitive.)</p>
+  <p><strong>Convex</strong> makes family C airtight: queries are deterministic functions whose read sets are recorded; any overlapping write invalidates and re-runs them, pushing the complete new result at a consistent timestamp. No deltas on the wire at all — their bet is that whole-result push plus caching is the correctness sweet spot. Lesson: <strong>whole-result push is a feature, not a fallback</strong> — clients that replace state can't drift. Our snapshot mode is Convex's bet with a coarser invalidation index (type-level instead of read-range-level).</p>
+  <p><strong>ElectricSQL and Zero</strong> mark the far shore: Electric syncs "shapes" (table + where-clause subsets) via an offset-addressed shape log over HTTP long-polling — restricted enough to be CDN-cacheable; Zero incrementally maintains ZQL queries server-side (family D). Both are sync engines with client stores, solving a bigger problem than MorphDB has. Noted and left.</p>
+
+  <h3><span class="hn">3.3</span>What MorphDB takes</h3>
+  <ul>
+    <li><strong>From Firestore:</strong> the event contract — init result, then per-query membership changes (<code>enter/update/leave</code>), never raw row noise.</li>
+    <li><strong>From Convex:</strong> snapshot mode as the default and the correctness anchor; invalidate-and-rerun over cleverness.</li>
+    <li><strong>From Hasura:</strong> coalesce by distinct query and debounce refreshes — with one deliberate simplification: Hasura diffs server-side to suppress unchanged pushes, we push the whole result and let <code>watch()</code> diff client-side, keeping the server stateless per snapshot-subscriber (a no-op refresh costs one redundant frame, not a stored copy of every subscriber's last result).</li>
+    <li><strong>From RethinkDB:</strong> <code>squash</code>-style burst coalescing; the warning about ordered/limited windows (delta mode refuses them).</li>
+    <li><strong>From Supabase:</strong> restrict the delta grammar honestly and say so in a 400, rather than shipping a general promise that collapses at load.</li>
+    <li><strong>From Meteor:</strong> two engines behind one interface, and observer dedup as a first-class cost control.</li>
+  </ul>
+  <div class="call decision"><div class="lab">Decision</div>
+    <p><strong>MorphDB ships families C + B behind one endpoint — snapshot mode (C) as the general default, delta mode (B) as the restricted economy tier — with family A remaining as the SDK's fallback transport.</strong> Family D is explicitly rejected (N4). This is the same landing zone the industry converged on from three different directions.</p>
+  </div>
+</section>
+
+<section id="interface">
+  <div class="shead"><span class="snum">04</span><h2>The interface</h2></div>
+  <h3><span class="hn">4.1</span>The endpoint</h3>
+  <pre><code><span class="cap">one new route</span>GET /stream/{type}?«any list-endpoint query»&amp;mode=snapshot|delta&amp;refresh=«ms»&amp;app_key=«key»
+Accept: text/event-stream</code></pre>
+  <p>Everything before <code>mode</code> is the existing list grammar, unchanged and verbatim: field filters (<code>done=false</code>, <code>priority__gte=3</code>, <code>title__contains=buy</code>, <code>status__in=open,blocked</code>), relation filters (<code>assignee=&lt;guid&gt;</code>, <code>assignee__exists=true</code>), <code>sort</code>, <code>order</code>, and — in snapshot mode — <code>limit</code>, <code>offset</code>, <code>include</code>. A stream is <em>defined</em> as: the answer to this GET, kept true over time.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Param</th><th>Values</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>mode</code></td><td><code>snapshot</code> (default) · <code>delta</code></td><td>What travels after <code>init</code>: whole results, or per-object membership events.</td></tr>
+      <tr><td><code>refresh</code></td><td>ms, snapshot mode only</td><td>Debounce window for re-runs. Default 200&nbsp;ms (SQLite/Postgres), 1000&nbsp;ms (DynamoDB); clamped to [50, 60000] ([500, 60000] on DynamoDB). One knob, backend-aware defaults — §07.3.</td></tr>
+      <tr><td><code>app_key</code></td><td>the app's key</td><td>Alternative to the <code>X-App-Key</code> header, because browser <code>EventSource</code> cannot set headers. App keys are namespaces, not secrets (README), so a query param leaks nothing a URL doesn't already.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="hn">4.2</span>The event grammar</h3>
+  <pre><code><span class="cap">what actually comes down the wire (delta mode)</span>retry: 3000
+
+event: init
+id: 1
+data: {"seq":1,"mode":"delta","objects":[{"_guid":"task_a1","title":"ship","done":false,…}],"total":1}
+
+: hb                                          <span class="t-com">← comment heartbeat, every 20 s</span>
+
+event: enter                                  <span class="t-com">← a write made task_b2 match the query</span>
+id: 2
+data: {"seq":2,"object":{"_guid":"task_b2","title":"buy milk","done":false,…}}
+
+event: update                                 <span class="t-com">← a member changed but still matches</span>
+id: 3
+data: {"seq":3,"object":{"_guid":"task_a1","title":"ship it","done":false,…}}
+
+event: leave                                  <span class="t-com">← done=true now, or deleted — same thing to this query</span>
+id: 4
+data: {"seq":4,"guid":"task_a1"}</code></pre>
+  <div class="tw"><table>
+    <thead><tr><th>Event</th><th>Payload</th><th>Sent when</th></tr></thead>
+    <tbody>
+      <tr><td><code>init</code></td><td><code>{seq, mode, objects, total, limit?, offset?}</code></td><td>Once on attach — the full current result, exactly what the equivalent list GET returns. Also re-sent by the server after an internal recovery (queue overflow, §06.4); clients simply replace state.</td></tr>
+      <tr><td><code>snapshot</code></td><td><code>{seq, objects, total, limit?, offset?}</code></td><td>Snapshot mode only: the debounced re-run after relevant writes. Same shape as <code>init</code>.</td></tr>
+      <tr><td><code>enter</code></td><td><code>{seq, object}</code></td><td>Delta mode: an object joined the result set — created matching, updated into matching, or linked/unlinked into matching via a relation.</td></tr>
+      <tr><td><code>update</code></td><td><code>{seq, object}</code></td><td>Delta mode: a member changed and still matches (including sort-field changes — client re-sorts).</td></tr>
+      <tr><td><code>leave</code></td><td><code>{seq, guid}</code></td><td>Delta mode: a member stopped matching, or was deleted. One event for both — to this query they are the same fact.</td></tr>
+      <tr><td><code>error</code></td><td><code>{error:{code, message}}</code>, then the server closes</td><td>The stream can't continue truthfully: app or type deleted, a schema morph invalidated the query (§05.6), or shutdown.</td></tr>
+      <tr><td><code>: hb</code></td><td>comment line</td><td>Every 20 s of silence — keeps intermediaries (ALB idle 60 s, nginx 60 s) from reaping the connection.</td></tr>
+    </tbody>
+  </table></div>
+  <p><code>id:</code> carries a per-connection monotonic <code>seq</code>. <code>Last-Event-ID</code> on reconnect is deliberately ignored: with no replay log (N2), a fresh <code>init</code> is both simpler and strictly more correct than any resume protocol. The stream never ends from the server side except via <code>error</code>; the response has no <code>Content-Length</code> and is terminated by connection close.</p>
+
+  <h3><span class="hn">4.3</span>Three clients, same stream</h3>
+  <pre><code><span class="cap">curl — debugging</span>curl -N "http://127.0.0.1:8787/stream/task?done=false&amp;sort=priority&amp;order=desc&amp;mode=delta&amp;app_key=my-site"</code></pre>
+  <pre><code><span class="cap">raw EventSource — no SDK</span><span class="t-kw">const</span> es = <span class="t-kw">new</span> <span class="t-op">EventSource</span>(<span class="t-str">"http://127.0.0.1:8787/stream/task?done=false&amp;mode=snapshot&amp;app_key=my-site"</span>);
+es.<span class="t-op">addEventListener</span>(<span class="t-str">"init"</span>,     e =&gt; render(JSON.parse(e.data).objects));
+es.<span class="t-op">addEventListener</span>(<span class="t-str">"snapshot"</span>, e =&gt; render(JSON.parse(e.data).objects));
+<span class="t-com">// EventSource auto-reconnects; every (re)attach starts with a fresh init.</span></code></pre>
+  <pre><code><span class="cap">morphdb.js — the code that does not change</span><span class="t-kw">const</span> stop = tasks.<span class="t-op">watch</span>(
+  { where: { done: <span class="t-kw">false</span> }, sort: <span class="t-str">"priority"</span>, order: <span class="t-str">"desc"</span> },
+  ({ objects, added, updated, removed, initial }) =&gt; render(objects)
+);
+<span class="t-com">// identical call, identical callback — the SDK just stopped polling (§08)</span></code></pre>
+
+  <h3><span class="hn">4.4</span>Errors &amp; feature detection</h3>
+  <ul>
+    <li>Attach-time validation is the list endpoint's, verbatim: unknown app 404, unknown type 404, un-indexed filter field 400 with the same didactic message. A bad stream request fails <em>before</em> any event flows, as a normal JSON error response — which <code>EventSource</code> surfaces as a terminal error instead of retrying forever.</li>
+    <li>Delta-ineligible queries (§05.4) get a 400 that names the fix: <em>"<code>include</code> is not supported in delta mode — use mode=snapshot, or drop include."</em></li>
+    <li><code>GET /</code> gains <code>"streaming": true|false</code> — the transport capability flag. The stdlib server sets it; the Lambda adapter leaves it false and serves <code>GET /stream/*</code> as <code>501 not_implemented</code> with a teaching message ("this deployment is request/response — watch() falls back to polling"). <code>GET /help</code> documents the route either way.</li>
+  </ul>
+  <div class="call decision"><div class="lab">Decision</div>
+    <p><strong>SSE over WebSocket.</strong> The data flow is one-directional (writes already have a perfectly good path), <code>EventSource</code> ships reconnection and CORS handling in the platform, SSE traverses plain HTTP infrastructure, and — decisively for a zero-dependency project — the Python stdlib can serve SSE with <code>wfile.write()</code> but has no websocket server at all. A hand-rolled RFC 6455 implementation would be ~200 lines of frame/handshake code purchasing nothing this design needs.</p>
+  </div>
+  <div class="call note"><div class="lab">Note — browser connection budget</div>
+    <p>Over HTTP/1.1 browsers allow ~6 connections per origin, and each stream is one connection. A page holding many simultaneous watches on a plain-HTTP localhost backend can exhaust that (the 7th stream queues). At MorphDB scale (a page watches 1–3 queries) this is headroom, not a wall; HTTP/2 termination (any reverse proxy) lifts it entirely. If it ever pinches, the answer is multiplexing several queries onto one stream — parked in §11, not built speculatively.</p>
+  </div>
+</section>
+
+<section id="semantics">
+  <div class="shead"><span class="snum">05</span><h2>Semantics, pinned down</h2></div>
+  <h3><span class="hn">5.1</span>Attach is linearized with writes</h3>
+  <p>On attach the server, <em>under the same storage lock that serializes every write</em>: (1) validates the query, (2) registers the subscription, (3) runs the initial query. No write can interleave between registration and the initial read, so the <code>init</code> snapshot plus the subsequent event stream is gapless and duplicate-free by construction — no MVCC, no resume tokens, just the lock MorphDB already holds for every mutation.</p>
+  <h3><span class="hn">5.2</span>Delta events are per-query membership, decided by a membership set</h3>
+  <p>Each delta subscription keeps the set of guids currently in its result (seeded by the initial query). When a committed write produces object <code>O</code> of a subscribed type, the server evaluates the query's predicates against <code>O</code>'s new body (the same projected body the write handler already computed to return to the writer — no extra read) and consults the set:</p>
+  <div class="tw"><table>
+    <thead><tr><th>Predicate on new body</th><th>guid ∈ set?</th><th>Event</th><th>Set op</th></tr></thead>
+    <tbody>
+      <tr><td>matches</td><td>no</td><td><code>enter</code></td><td>add</td></tr>
+      <tr><td>matches</td><td>yes</td><td><code>update</code></td><td>—</td></tr>
+      <tr><td>doesn't match</td><td>yes</td><td><code>leave</code></td><td>remove</td></tr>
+      <tr><td>doesn't match</td><td>no</td><td><em>silence</em></td><td>—</td></tr>
+      <tr><td colspan="2">object deleted &amp; guid ∈ set</td><td><code>leave</code></td><td>remove</td></tr>
+    </tbody>
+  </table></div>
+  <p>This is Firestore's <code>added/modified/removed</code> and RethinkDB's changefeed semantics, implemented with one set and one predicate call — <strong>no old-body capture, no write-path reads</strong>. The predicate evaluator is the existing <code>_matches_value</code>/<code>_matches_relation</code> pair, so filter semantics (type coercion, defaults, relation ops) are shared with the read path by construction, not by discipline.</p>
+  <h3><span class="hn">5.3</span>Relation writes touch both ends</h3>
+  <p>Writing <code>task.assignee</code> changes <em>two</em> objects' projected bodies: the task, and the user whose <code>tasks</code> list gained or lost a guid. The change record therefore carries the written object <em>plus</em> the set of neighbor guids whose edges changed (both old and new neighbors — the write handler has both sets in hand). For each touched neighbor with subscriptions on its type, the server re-reads that neighbor once (shared across all its subscriptions) and runs the same §5.2 evaluation. This is what makes <code>?assignee__exists=true</code> and <code>?assignee=&lt;guid&gt;</code> streams correct — the classic hole in naive per-table CDC.</p>
+  <h3><span class="hn">5.4</span>Mode eligibility</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Query feature</th><th>snapshot</th><th>delta</th><th>Why delta refuses</th></tr></thead>
+    <tbody>
+      <tr><td>field filters (all ops)</td><td>✓</td><td>✓</td><td>—</td></tr>
+      <tr><td>relation filters (<code>eq/ne/in/exists</code>)</td><td>✓</td><td>✓</td><td>—</td></tr>
+      <tr><td><code>sort</code> / <code>order</code></td><td>✓ (server-ordered)</td><td>✓ (client re-sorts)</td><td>—</td></tr>
+      <tr><td><code>limit</code> / <code>offset</code></td><td>✓</td><td>✗ 400</td><td>A bounded window needs server-side order maintenance: one <code>leave</code> inside the window means knowing which object <em>outside</em> it slides in — RethinkDB paid real complexity for this; we route windows to snapshot mode instead.</td></tr>
+      <tr><td><code>include</code></td><td>✓</td><td>✗ 400</td><td>A hydrated neighbor's change would demand deep-graph invalidation per event; snapshot mode re-hydrates wholesale and stays correct.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Because delta mode forbids windows, a delta client's local set <em>is</em> the entire result: <code>total</code> is just <code>objects.length</code>, maintained for free. Snapshot mode's trigger is deliberately coarse: any committed change on a <strong>trigger type</strong> — the streamed type, plus every type reachable through the query's relation filters and <code>include</code> paths (computed once at attach) — marks the query dirty for the next debounced refresh. Coarse means occasional no-op refreshes; it also means never missing an edge-of-graph update. Correctness first; §11 sketches the predicate-gated skip.</p>
+  <h3><span class="hn">5.5</span>Ordering &amp; delivery</h3>
+  <ul>
+    <li>Writes are serialized by the storage lock; publications happen in commit order; each connection's queue preserves it. <code>seq</code> is per-connection, monotonic, gapless until an <code>init</code> resets context.</li>
+    <li>Within a connection: exactly-once per committed change (delta) or at-least-fresh (snapshot — intervening states may coalesce into one refresh; the final state always arrives).</li>
+    <li>Across reconnects: at-most-once with a fresh <code>init</code> re-anchor. No replay (N2). Clients that need every intermediate state are building an audit log, not a UI — different tool.</li>
+  </ul>
+  <h3><span class="hn">5.6</span>Schema morphs under a live stream</h3>
+  <p>MorphDB's whole premise is that the schema changes constantly, so streams must survive it. On any schema write for an app: snapshot subscriptions on affected types are marked dirty (their next refresh simply reflects the new projection — lazy invalidation applies to streams the same way it applies to reads). Delta subscriptions rebuild their compiled filter specs against the new schema; if the query is no longer legal (its filter field was dropped or un-indexed, its relation deleted), the stream ends with the same didactic 400 the list endpoint would now give, delivered as an <code>error</code> event. Type deleted → <code>error</code> on its streams; app deleted → <code>error</code> on all of the app's streams.</p>
+</section>
+
+<section id="architecture">
+  <div class="shead"><span class="snum">06</span><h2>Architecture</h2></div>
+  <h3><span class="hn">6.1</span>One new module, three small hooks</h3>
+  <pre><code><span class="cap">the whole machine</span>write handler (objects.py / schema.py / apps.py)
+   │  inside the storage lock: commit
+   │  after commit: streams.publish(record)          <span class="t-com">← gated: free when nobody listens</span>
+   ▼
+ChangeBus (morphdb/streams.py)
+   │  record = {app, type, guid, verb, new_body|None, touched:[(type,guid),…], schema_op?}
+   │
+   ├─ delta subs on (app, type ∈ triggers):  evaluate §5.2 → enqueue enter/update/leave
+   └─ snapshot subs on (app, type ∈ triggers): mark query-hash dirty → arm debounce timer
+                                    │
+                        dispatcher thread (one, daemon)
+                        re-runs each dirty query ONCE per debounce window
+                        → enqueues the same `snapshot` frame to every subscriber of that hash
+   ▼
+per-connection SSE writer (the request's own thread)
+   queue.get(timeout=20) → write frame + flush   |   timeout → ": hb"   |   EPIPE → unregister</code></pre>
+  <ul>
+    <li><strong><code>morphdb/streams.py</code></strong> — the registry (<code>{(app, type): [subscription]}</code>), the publish/evaluate path, the debounce timers, the dispatcher thread, SSE frame encoding. Everything stream-shaped lives here.</li>
+    <li><strong>Write-path hooks</strong> — one <code>streams.publish(…)</code> call at the end of <code>create_object</code> / <code>upsert_object</code> / <code>delete_object</code> (the record reuses the body the handler already built, plus the edge-neighbor guids it already knows), and one each in schema upsert/delete and app delete. Guarded by <code>streams.interested(app, type)</code> — a dict lookup — so the write path cost is <em>one hash probe</em> when streaming is idle.</li>
+    <li><strong>Transport</strong> — <code>server.py</code> recognizes <code>GET /stream/…</code> before generic dispatch and hands the socket to the stream writer: status 200, <code>Content-Type: text/event-stream</code>, <code>Cache-Control: no-cache</code>, <code>X-Accel-Buffering: no</code>, CORS headers, no <code>Content-Length</code>, flush per frame, <code>disable_nagle_algorithm</code> on. <code>routes.py</code> keeps a transport-neutral fallback handler for the same path that returns the 501 teaching error — which is exactly what the Lambda adapter serves.</li>
+  </ul>
+  <h3><span class="hn">6.2</span>Publish after commit, evaluate off the write path</h3>
+  <p>Publication happens after the transaction commits — a subscriber can never observe a rolled-back write. The publishing thread only appends the record to the bus queue; predicate evaluation, neighbor re-reads, and re-runs all happen on the dispatcher thread. A write's latency gains one queue append, ~microseconds, even under heavy streaming.</p>
+  <h3><span class="hn">6.3</span>Coalescing is the load-bearing wall</h3>
+  <p>Snapshot subscriptions are grouped by <strong>query hash</strong> — the canonicalized (type, filters, sort, order, limit, offset, include) tuple. A hundred tabs watching the same todo list are one dirty flag, one re-run per debounce window, one result serialized once and fanned out a hundred times. This is Hasura's multiplexing insight applied at MorphDB scale, and it converts the worst realistic load pattern (many viewers of the same thing) into the cheapest one.</p>
+  <h3><span class="hn">6.4</span>Backpressure: the slow-client rule</h3>
+  <p>Each connection has a bounded queue (64 events). A client that can't drain it — mobile tab in a tunnel, laptop lid closed mid-frame — gets its queue cleared and replaced with a single fresh <code>init</code> (the current full result). The stream self-heals to truth instead of buffering unboundedly or silently dropping deltas mid-sequence. Memory per connection is therefore capped: queue ceiling + one result. The same collapse rule handles the dispatcher falling behind: dirty flags coalesce by nature, so pending work is bounded by the number of distinct live queries, never by write volume.</p>
+  <h3><span class="hn">6.5</span>Deployment reality</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Deployment</th><th>Streams?</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>morphdb start</code> (stdlib server, SQLite) — the default</td><td><strong>Fully correct</strong></td><td>Single process sees every write. The primary target, and it gets the complete feature.</td></tr>
+      <tr><td>One container / VM against Postgres or DynamoDB</td><td><strong>Fully correct</strong></td><td>Still one process; the bus still sees every write.</td></tr>
+      <tr><td>Several stateless instances behind a balancer</td><td>Per-instance only</td><td>A stream attached to instance A misses writes that land on instance B. Honest ceiling — see below.</td></tr>
+      <tr><td>Lambda Function URL (the hosted-demo deploy)</td><td>No — explicit 501</td><td>Request/response compute cannot hold a connection open (Python Lambda has no response streaming). <code>watch()</code> polling covers it, automatically, via the capability flag.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="call ceiling"><div class="lab">Known ceiling — multi-instance</div>
+    <p>v1's bus is in-process (N5). Running N instances gives each stream a 1/N view of writes. The upgrade paths are known and additive, in cost order: <strong>sticky-route by app key</strong> at the balancer (zero code — an app's writers and watchers land on one instance); <strong>Postgres <code>LISTEN/NOTIFY</code></strong> as a cross-instance bus (~40 lines, same record JSON); <strong>DynamoDB Streams</strong> as the bus for the Dynamo backend — which would also capture out-of-band table writers, the one writer class the in-process bus can never see. None of these change the client contract, which is the point of speccing the interface now.</p>
+  </div>
+</section>
+
+<section id="performance">
+  <div class="shead"><span class="snum">07</span><h2>Performance — where a generic interface gets expensive</h2></div>
+  <p>A subscription interface this general has two structural costs that no implementation cleverness removes — they can only be <em>bounded and priced</em>. This section does the arithmetic, worst cases included, because "generalizable" is exactly where streaming systems go quadratic and die (§03's scar tissue: Meteor's observer melt, Supabase's changes×subscriptions warning, RethinkDB's per-shard predicate tax).</p>
+
+  <h3><span class="hn">7.1</span>The cost anatomy of one write</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Step</th><th>Cost</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>interested-gate</td><td>1 dict probe, ~0.1 µs</td><td>every write — <strong>the total cost when nothing is streaming</strong></td></tr>
+      <tr><td>publish</td><td>1 queue append, ~1 µs</td><td>subscribers exist for the app+type</td></tr>
+      <tr><td>delta evaluation</td><td>~1–5 µs per delta sub (pure-Python predicate over a dict)</td><td>per delta sub on trigger types</td></tr>
+      <tr><td>neighbor re-read</td><td>1 object get per touched neighbor, shared across subs</td><td>relation writes only</td></tr>
+      <tr><td>delta fan-out</td><td>~0.3–1 KB per matching sub (one object + SSE framing)</td><td>per matching sub</td></tr>
+      <tr><td>snapshot refresh</td><td><strong>1 full list query per distinct dirty query-hash per debounce window</strong> + result-sized frame per subscriber</td><td>snapshot subs on trigger types</td></tr>
+    </tbody>
+  </table></div>
+  <p>Delta mode's marginal cost per write is microseconds of CPU and a kilobyte of egress per matching watcher — it stays flat as data grows. Snapshot mode's marginal cost is <em>a query plus a result-sized payload</em>, which inherits the backend's economics. That asymmetry drives every default below.</p>
+
+  <h3><span class="hn">7.2</span>The two walls</h3>
+  <p><strong>Wall 1 — W×S predicate work (delta).</strong> Every write tests every delta subscription on its trigger types. 100 writes/s against 500 delta subs on one hot type = 50k evaluations/s ≈ 50–250 ms of CPU per second — noticeable, survivable. 1000 writes/s × 5000 subs = 5M evals/s — not survivable in Python. The bound: this is a per-<em>type</em> product, subscriptions are capped (§7.3), and MorphDB's stated scale (small hosted apps) sits 2–3 orders of magnitude below the cliff. Stated, not hidden.</p>
+  <p><strong>Wall 2 — refresh × result-size (snapshot).</strong> The hostile case, worked honestly. A hot type holds 5,000 objects (~1 KB each, ~5 MB per full read); 20 writes/s arrive steadily; 200 snapshot streams watch it with <em>200 distinct</em> query hashes (worst case: zero coalescing win):</p>
+  <ul>
+    <li><strong>SQLite/Postgres, refresh=200 ms:</strong> every window, all 200 hashes are dirty → a theoretical 1,000 re-runs/s. The sequential dispatcher is the structural governor: at 2–10 ms per indexed query it sustains ~100–500 re-runs/s, and dirty flags coalesce while it's busy — so the system degrades to <em>staleness</em> (refreshes arrive every 0.4–2 s instead of 0.2 s), never to collapse. Egress is the real bill: if results average 50 objects (~50 KB), 200 pushes/s ≈ 10 MB/s. That saturates links before CPU. Mitigation ladder: delta mode (→ ~20 KB/s for the same scenario, a 500× reduction), smaller <code>limit</code>, longer <code>refresh</code>.</li>
+    <li><strong>DynamoDB, same scenario, naïve settings:</strong> one refresh reads the whole type partition — ~5 MB ≈ 640 eventually-consistent RCU. 1,000 re-runs/s would be ~640k RCU/s ≈ <strong>$14,000/day</strong> at on-demand pricing. This is the "generic interface gets really bad" case, and it is why the knobs are not optional: the DynamoDB refresh floor (500 ms), the backend-aware default (1 s), per-app stream caps, and the sequential dispatcher (whose ~50–200 ms Dynamo query latency self-throttles it to ~5–20 refreshes/s total ≈ 3–13k RCU/s ≈ $65–280/day worst-case, still worth an alarm) turn a bankruptcy bug into a bounded, observable cost. The honest recommendation on DynamoDB is delta mode, where a write costs microseconds regardless of type size.</li>
+  </ul>
+  <div class="call ceiling"><div class="lab">Known ceiling — snapshot mode on DynamoDB</div>
+    <p>MorphDB's DynamoDB list path reads the whole type to answer a filtered query (documented API-parity trade-off), so a snapshot refresh costs O(type size) RCUs no matter how narrow the filter. Streams don't create this cost — they <em>multiply</em> it by refresh rate. The defaults clamp the multiplier; they cannot fix the base. Hot-type + DynamoDB + snapshot streams is the one configuration this spec actively steers away from (the SDK prefers delta whenever the query is eligible — §08).</p>
+  </div>
+
+  <h3><span class="hn">7.3</span>The knobs, and why each exists</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Knob</th><th>Default</th><th>Bound</th><th>What it prevents</th></tr></thead>
+    <tbody>
+      <tr><td>query-hash coalescing</td><td>always on</td><td>—</td><td>N identical watchers costing N re-runs (Hasura's lesson; the common case becomes the cheap case)</td></tr>
+      <tr><td><code>refresh</code> debounce</td><td>200 ms · 1000 ms (DynamoDB)</td><td>clamp [50, 60000] · [500, 60000] (DynamoDB)</td><td>write bursts translating 1:1 into re-runs (RethinkDB's <code>squash</code>, applied server-side)</td></tr>
+      <tr><td>sequential dispatcher</td><td>1 thread</td><td>structural</td><td>refresh storms competing with writes for the storage lock; overload degrades to staleness, not failure</td></tr>
+      <tr><td>per-connection queue</td><td>64 events</td><td>overflow → collapse to fresh <code>init</code></td><td>slow clients holding server memory hostage; self-heals to truth</td></tr>
+      <tr><td>streams per app / per process</td><td>100 / 500</td><td>attach → 429 with teaching message</td><td>the W×S wall and the thread ceiling, reached by accident</td></tr>
+      <tr><td>heartbeat</td><td>20 s</td><td>fixed</td><td>idle reaps by ALB/nginx (60 s defaults); dead-peer detection within one interval</td></tr>
+      <tr><td><code>interested()</code> gate</td><td>always on</td><td>—</td><td>any write-path cost for the 99% of MorphDB processes with zero streams open</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="hn">7.4</span>Worked scenarios</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Scenario</th><th>Load</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>A — localhost dev</strong> (the default user)</td>
+        <td>3 tabs × 2 watches, ~1 write/s, SQLite</td>
+        <td>~6 threads, &lt;1 ms CPU/s, kilobytes/s. Indistinguishable from idle; strictly cheaper than today's polling (which issues 3 queries/s at all times).</td>
+      </tr>
+      <tr>
+        <td><strong>B — small hosted app</strong> (the design target)</td>
+        <td>50 users × 3 delta watches = 150 streams, 10 writes/s hot type, Postgres container</td>
+        <td>1.5k predicate evals/s (~5 ms CPU/s); fan-out if every write matches all 150 watchers: 150 KB/s egress. 150 threads ≈ tens of MB RSS. Comfortable; the balance favors delta by design.</td>
+      </tr>
+      <tr>
+        <td><strong>C — hostile</strong> (the case Felix asked about)</td>
+        <td>200 distinct snapshot queries on a 5k-object hot type, 20 writes/s</td>
+        <td>Degrades to bounded staleness on SQL backends (worked math §7.2); on DynamoDB, survivable only because of clamps + steering to delta. This scenario is the reason mode choice, refresh clamps, and caps are in the interface rather than in a tuning guide.</td>
+      </tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="hn">7.5</span>Latency, threads, memory</h3>
+  <ul>
+    <li><strong>Push latency:</strong> delta — commit → evaluate → queue → flush, single-digit ms on localhost (no debounce on deltas; they're already cheap). Snapshot — debounce dominates: default worst-case freshness ≈ <code>refresh</code> + query time. Both beat the 2,000 ms polling default by 10–100×, while sending traffic only when something changed.</li>
+    <li><strong>Threads:</strong> one per open stream (the stdlib server's model, unchanged) + one dispatcher. CPython threads cost ~50–100 KB touched stack; 500 streams ≈ 25–50 MB and negligible scheduler load at these event rates. The 500-stream process cap keeps us an order of magnitude inside that envelope. Beyond it lies an asyncio transport — a rewrite this spec deliberately does not buy (scope: small-scale developer tool).</li>
+    <li><strong>Memory per stream:</strong> bounded queue (≤64 × ~1 KB) + membership set (delta: 8 bytes-ish per member guid ref) + compiled specs. ~10–100 KB typical; worst case capped by the overflow collapse.</li>
+    <li><strong>Storage-lock coupling:</strong> refreshes take the same global lock as writes. The sequential dispatcher means at most <em>one</em> refresh competes with writers at a time — a deliberate throughput ceiling that buys write-latency protection. On SQLite this mirrors the engine's own serialization; on Postgres/DynamoDB it is conservative (§11 considers loosening).</li>
+    <li><strong>DynamoDB read consistency:</strong> refreshes use the same eventually-consistent reads as the list endpoint; a refresh racing its triggering write can miss it. The debounce delay usually absorbs propagation; if not, the next write's refresh converges. Delta mode is immune (it pushes the body the write itself produced). Noted, not hidden.</li>
+  </ul>
+  <div class="call rec"><div class="lab">Recommendation</div>
+    <p><strong>Defaults do the steering.</strong> The SDK picks delta automatically whenever the query is eligible and falls back to snapshot only for windows/includes; raw-HTTP users get snapshot's correctness by default and read one table (§5.4) to opt into economy. Nobody should need this section to use the feature safely — it exists so the bounds are <em>chosen</em>, not discovered.</p>
+  </div>
+</section>
+
+<section id="sdk">
+  <div class="shead"><span class="snum">08</span><h2>morphdb.js — the transport swap watch() reserved</h2></div>
+  <p>The SDK spec's D6 froze the <code>watch()</code> contract precisely so this moment costs app code nothing. The upgrade, in full:</p>
+  <ul>
+    <li><strong>Detect once:</strong> first <code>watch()</code> fetches <code>GET /</code> (cached) and reads <code>"streaming"</code>. False → today's polling loop, unchanged (Lambda deploys land here automatically).</li>
+    <li><strong>Choose mode:</strong> eligible per §5.4 → <code>mode=delta</code>; the SDK maintains the result set from <code>enter/update/leave</code>, re-sorting locally with the same comparator semantics the server uses (nulls-first-asc, <code>_guid</code> tiebreak — one function, ~15 lines). Windows or <code>include</code> → <code>mode=snapshot</code>; each frame replaces the set wholesale.</li>
+    <li><strong>Same callback:</strong> the SDK still delivers <code>{objects, added, updated, removed, initial}</code> — in delta mode the conveniences are literal event translations; in snapshot mode they come from the existing diff-by-<code>_guid</code>+<code>_updated_at</code>. App code cannot tell the transport changed except by its freshness.</li>
+    <li><strong>Auth &amp; lifecycle:</strong> <code>EventSource</code> with <code>app_key</code> as a query param; browser-native auto-reconnect (every attach re-inits, so reconnection is semantically free); <code>document.hidden</code> tears the stream down and re-attaches on return, same as polling's pause; a terminal error (proxy that buffers SSE, corporate middlebox) flips that watcher to polling permanently — the ladder always ends at a working transport.</li>
+  </ul>
+  <p>Estimated cost: ~60 lines in <code>sdk.js</code>, inside the seam P3 already reserved.</p>
+</section>
+
+<section id="plan">
+  <div class="shead"><span class="snum">09</span><h2>Implementation plan</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>Phase</th><th>Ships</th><th>Size / notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>P1 — snapshot mode, end to end</strong></td>
+        <td><code>morphdb/streams.py</code> (registry, bus, dispatcher, debounce, SSE framing) · write-path publish hooks · <code>server.py</code> SSE transport + nagle-off · <code>routes.py</code> 501 fallback + <code>streaming</code> capability flag + <code>/help</code> entry · caps &amp; heartbeats</td>
+        <td>~220 LOC new module, ~30 LOC touched elsewhere. <strong>P1 alone closes gap #5</strong>: every legal list query becomes streamable with full generality; delta is an optimization, not a prerequisite.</td>
+      </tr>
+      <tr>
+        <td><strong>P2 — delta mode</strong></td>
+        <td>Eligibility 400s · compiled specs via <code>_filter_specs</code> · membership sets · neighbor-touch handling · schema-morph rebuild/close</td>
+        <td>~120 LOC, almost all in <code>streams.py</code>; the matcher itself is reused, not written.</td>
+      </tr>
+      <tr>
+        <td><strong>P3 — SDK transport</strong></td>
+        <td><code>watch()</code> feature-detect + EventSource + local merge/sort + polling fallback · SKILL.md note · migrate one example clone as the showcase ("two tabs, live")</td>
+        <td>~60 LOC of JS in the reserved seam.</td>
+      </tr>
+      <tr>
+        <td><strong>P4 — deferred, interface-stable</strong></td>
+        <td>Cross-instance bus (LISTEN/NOTIFY · DynamoDB Streams) · multi-query multiplexing · webhooks off the same bus</td>
+        <td>All additive behind the same client contract; built when a deployment actually needs them.</td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p><strong>Testing shape.</strong> The stdlib test harness gains a ~30-line SSE reader (raw socket, parses frames with a deadline). Then, against a live threaded server: attach → <code>init</code> matches the equivalent GET; write from a second client → <code>snapshot</code>/<code>enter</code>/<code>update</code>/<code>leave</code> arrive with correct payloads and seq; relation write → both-ends events (the §5.3 case, including <code>__exists</code> flips); enter-vs-update-vs-leave truth table (§5.2) driven through defaults and retypes; ineligible-delta 400s; queue overflow → single fresh <code>init</code>; debounce coalescing (3 rapid writes → 1 snapshot); schema morph → rebuild or didactic close; app/type delete → <code>error</code>; caps → 429; heartbeat cadence; Lambda dispatch path → 501 + <code>streaming:false</code>. The matcher needs no new semantic tests — it is the already-tested DynamoDB list matcher.</p>
+</section>
+
+<section id="decisions">
+  <div class="shead"><span class="snum">10</span><h2>Decision log</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>Chose</th><th>Over</th><th>Because</th></tr></thead>
+    <tbody>
+      <tr><td>D1</td><td>SSE</td><td>WebSocket · long-polling</td><td>Unidirectional data, platform-native reconnect + CORS, plain HTTP infra, and the stdlib can serve it with zero dependencies (it has no websocket server at all).</td></tr>
+      <tr><td>D2</td><td>The list query grammar, verbatim, as the subscription language</td><td>A new subscription DSL · channels/topics</td><td>G1. The docs, the mental model, and the validation code already exist; "the query is the subscription" is the entire feature.</td></tr>
+      <tr><td>D3</td><td>Two modes behind one endpoint; snapshot default</td><td>Delta-only (Supabase-shaped) · snapshot-only (Convex-shaped)</td><td>Snapshot buys correctness-by-construction for <em>every</em> query; delta buys economy for the common flat query. Each covers the other's weakness; the SDK chooses so users don't have to.</td></tr>
+      <tr><td>D4</td><td>Membership-set delta semantics (evaluate new body against per-sub guid set)</td><td>Old/new body capture and predicate pairing</td><td>Same events, no write-path reads, no old-body plumbing through three write handlers; the set also yields free <code>total</code>. (§5.2)</td></tr>
+      <tr><td>D5</td><td>Ephemeral in-process bus; reconnect = fresh <code>init</code></td><td>Persisted change log with replay offsets</td><td>No compaction problem, no unbounded storage, no resume-token protocol; a UI wants current truth, and <code>init</code> is current truth. Webhooks can motivate a durable log later (§11).</td></tr>
+      <tr><td>D6</td><td>Publish after commit, evaluate on the dispatcher thread, behind an <code>interested()</code> gate</td><td>Inline evaluation in write handlers</td><td>Writes pay one dict probe when idle and one queue append when not; a rollback can never leak an event.</td></tr>
+      <tr><td>D7</td><td>Coarse type-level triggers + query-hash coalescing + debounce</td><td>Convex-style read-set tracking</td><td>Type-level is trivially correct with edge-awareness (§5.3) and cheap to maintain; the false-refresh cost it admits is exactly what coalescing + debounce absorb. Read sets are D-family sophistication MorphDB-scale apps don't need.</td></tr>
+      <tr><td>D8</td><td>Didactic 400 for delta-ineligible queries</td><td>Silent server-side fallback to snapshot</td><td>House rule: teach, don't surprise. A caller who asked for deltas and silently got 50 KB frames would discover it in a bandwidth bill. The SDK does the graceful choosing instead, above the wire.</td></tr>
+      <tr><td>D9</td><td><code>app_key</code> query param on this endpoint</td><td>Header-only auth · cookies</td><td><code>EventSource</code> cannot set headers; app keys are namespaces, not secrets (README); the SDK's fetch-based paths keep using the header everywhere else.</td></tr>
+      <tr><td>D10</td><td>Overflow collapses to a server-sent fresh <code>init</code></td><td>Client-visible <code>resync</code>-and-reconnect event</td><td>One recovery path (replace state on <code>init</code>) instead of two; the client never orchestrates its own repair.</td></tr>
+      <tr><td>D11</td><td>Backend-aware refresh clamps; caps that 429</td><td>One-size defaults · unbounded attach</td><td>§7.2's DynamoDB arithmetic: the same knob value that's generous on SQLite is a four-figure daily bill on Dynamo. Limits that explain themselves beat outages that don't.</td></tr>
+      <tr><td>D12</td><td>Lambda serves an explicit 501 + <code>streaming:false</code></td><td>Pretending (buffered "SSE") · silence</td><td>A buffered event stream is a lie that times out; the capability flag routes the SDK to polling, which genuinely works there.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="open">
+  <div class="shead"><span class="snum">11</span><h2>Open questions</h2></div>
+  <div class="call note"><div class="lab">Open</div>
+    <ul class="tight">
+      <li><strong>Predicate-gated snapshot refresh:</strong> for filter-only snapshot queries, run the delta matcher as a <em>pre-filter</em> to skip refreshes no write could have affected. Free correctness (it's the same matcher) — worth it when a hot type carries many cold queries. v1.1 candidate.</li>
+      <li><strong>Delta burst squash:</strong> a <code>squash=ms</code> knob coalescing rapid updates to the same guid (RethinkDB precedent). YAGNI until a real chat-shaped app hits it.</li>
+      <li><strong>Multi-query multiplexing:</strong> one stream carrying several subscriptions (solves the HTTP/1.1 6-connection budget). Interface sketch: <code>POST /stream</code> with a query list → one SSE with per-query event prefixes. Build when a page legitimately needs &gt;5 watches.</li>
+      <li><strong>Webhooks:</strong> the bus already carries exactly what a webhook dispatcher needs; a durable log + at-least-once delivery is the missing half (revisits D5). Gap #5 predicted this pairing.</li>
+      <li><strong>Parallel refresh on managed backends:</strong> the sequential dispatcher is right for SQLite's lock; Postgres/DynamoDB could run 2–4 refresh workers safely. Measure before adding threads.</li>
+      <li><strong>MorphRules interaction:</strong> when per-user auth lands, a stream must re-validate on rule change (close-and-reattach is probably enough). Reserve the hook in attach.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="refs">
+  <div class="shead"><span class="snum">12</span><h2>References</h2></div>
+  <ul class="tight">
+    <li><a href="./gaps.html#lim-5">The Gaps — #5 No realtime / subscriptions</a> (the blocker this closes) · <a href="./gaps.html#arch-b">section B — realtime &amp; collab</a> (explicitly out of scope here)</li>
+    <li><a href="./frontend-sdk.html#watch">morphdb.js §07 — watch()</a> and decision D6 (the transport-blind contract this spec fulfills)</li>
+    <li><a href="./permissions.html">MorphRules</a> (the auth seam reserved at attach)</li>
+    <li>Supabase Realtime — postgres_changes architecture, filter grammar &amp; scaling guidance (supabase.com/docs/guides/realtime)</li>
+    <li>Firestore <code>onSnapshot</code> / <code>docChanges()</code> — listener semantics and per-read billing (firebase.google.com/docs/firestore/query-data/listen)</li>
+    <li>RethinkDB changefeeds — <code>include_initial</code>, <code>squash</code>, ordered-window feeds (rethinkdb.com/docs/changefeeds)</li>
+    <li>Hasura — "Scaling to 1 million active GraphQL subscriptions" (multiplexed poll + diff) and streaming subscriptions docs</li>
+    <li>Convex — deterministic queries, read-set invalidation, whole-result reactivity (docs.convex.dev / stack.convex.dev "How Convex Works")</li>
+    <li>Meteor livequery — oplog tailing vs. poll-and-diff, observer reuse (Meteor guide &amp; community scaling lore)</li>
+    <li>ElectricSQL shapes &amp; Rocicorp Zero — the sync-engine / IVM far shore, surveyed and deliberately not entered</li>
+    <li>WHATWG HTML spec §9.2 Server-Sent Events; MDN <code>EventSource</code> (reconnect, <code>Last-Event-ID</code>, header limitation)</li>
+  </ul>
+</section>
+
+<footer>
+  live queries — design spec draft v1 · 2026-07-15 &nbsp;·&nbsp;
+  <a href="./index.html">all specs</a> &nbsp;·&nbsp;
+  <a href="https://github.com/Savcab/morphdb">repo</a> &nbsp;·&nbsp;
+  highlight any text to comment
+</footer>
+
+</main>
+</div>
+
+<script>
+// scrollspy
+(() => {
+  const links = [...document.querySelectorAll("#toc a")];
+  const byId = Object.fromEntries(links.map(a => [a.getAttribute("href").slice(1), a]));
+  const secs = [...document.querySelectorAll("main section[id], main header[id]")];
+  const spy = () => {
+    let cur = secs[0];
+    for (const s of secs) if (s.getBoundingClientRect().top < 120) cur = s;
+    links.forEach(a => a.classList.toggle("active", a === byId[cur.id]));
+  };
+  document.addEventListener("scroll", spy, { passive: true });
+  spy();
+})();
+</script>
+<!-- Reader comments: one inline thread per section, stored in cloud MorphDB. -->
+<script>window.SPEC_COMMENTS = { slug: "streaming" };</script>
+<script src="comments.js"></script>
+</body>
+</html>
