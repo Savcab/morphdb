@@ -139,6 +139,30 @@ class TestSnapshotHttp(HttpBase):
         self.assertEqual(es.status, 404)
 
 
+class TestDeltaHttp(HttpBase):
+    def test_delta_enter_leave_over_the_wire(self):
+        es = SSE("/stream/task?app_key=s&done=false&mode=delta")
+        self.addCleanup(es.close)
+        self.assertEqual(es.status, 200)
+        ev, data, seq = es.event()
+        self.assertEqual(ev, "init")
+        self.assertIn('"mode": "delta"', data)
+        obj = self.create({"title": "x", "done": False})
+        ev, data, _ = es.event()
+        self.assertEqual(ev, "enter")
+        self.assertIn(obj["_guid"], data)
+        harness.req("PATCH", f"/objects/task/{obj['_guid']}",
+                    {"done": True}, app="s")
+        ev, data, _ = es.event()
+        self.assertEqual(ev, "leave")
+        self.assertIn(obj["_guid"], data)
+
+    def test_delta_include_is_400(self):
+        es = SSE("/stream/task?app_key=s&mode=delta&include=assignee")
+        self.addCleanup(es.close)
+        self.assertEqual(es.status, 400)
+
+
 class TestCapability(HttpBase):
     def test_root_reports_streaming_true(self):
         st, b, _ = harness.req("GET", "/", app=None)

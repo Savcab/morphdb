@@ -179,8 +179,9 @@ class Handler(BaseHTTPRequestHandler):
         mode = q.pop("mode", "snapshot")
         refresh = q.pop("refresh", None)
         q.pop("app_key", None)
-        from .objects import DEFAULT_LIMIT
-        limit = q.pop("limit", DEFAULT_LIMIT)
+        # None (not the list default) means "unset", so delta can reject a
+        # supplied limit/offset while snapshot falls back to the default.
+        limit = q.pop("limit", None)
         offset = q.pop("offset", 0)
         sort = q.pop("sort", None)
         order = q.pop("order", "asc")
