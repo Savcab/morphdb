@@ -55,6 +55,13 @@ def delete_app(key):
         if not s.app_exists(key):
             raise not_found(f"No app '{key}'.")
         s.delete_app(key)
+        # Every stream under this app ends (§5.6). Empty affected_types means
+        # "all of the app's types" to the streaming consumer.
+        if db.interested(key):
+            db.stage_change({
+                "app": key,
+                "schema_op": {"op": "delete_app", "affected_types": []},
+            })
     return {"deleted": key}
 
 

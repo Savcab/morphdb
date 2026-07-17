@@ -50,6 +50,18 @@ _CONN = None       # backend.Connection facade (shared, lock-guarded)
 _ENGINE = None     # active DatabaseEngine (SqliteEngine / PostgresEngine / DynamoEngine)
 _STORE = None      # logical store facade (SqlStore / DynamoStore)
 
+# --- change-publish seam (consumed by morphdb.streams) ------------------------
+# Write handlers assemble change records inside their transaction and stage them
+# via stage_change(); store_transaction publishes the batch post-commit, while
+# the storage lock is still held, so records reach the consumer in commit order
+# and a rolled-back write never publishes. db never imports streams — the
+# consumer installs itself with set_publish_hook().
+_PUBLISH_HOOK = None   # fn(records), called post-commit under _LOCK
+_INTERESTED = None     # fn(app, types) -> bool; handlers gate assembly on it
+_CHANGE_SEQ = 0        # global change counter; incremented under _LOCK
+_TXN_DEPTH = 0         # store_transaction nesting depth (publish at outermost)
+_STAGED = []           # records staged by the current outermost transaction
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS apps (
     key        TEXT PRIMARY KEY,
@@ -158,6 +170,10 @@ def _open(target, reset):
             _CONN.close()
             _CONN = None
         _STORE = None
+        global _TXN_DEPTH, _CHANGE_SEQ
+        _TXN_DEPTH = 0
+        _CHANGE_SEQ = 0
+        _STAGED.clear()
         engine = _engine_mod.from_target(target)
         raw = engine.connect()
         if reset and engine.name == "dynamodb":
@@ -229,24 +245,123 @@ def store_transaction():
     SQL engines still get a real database transaction. DynamoDB currently uses
     a process-level lock plus idempotent item writes; request-level atomicity is a
     future store optimization rather than part of the public API contract.
+
+    Staged change records are published after a successful commit, at the
+    outermost transaction exit only, while the storage lock is still held — so
+    publication order is commit order. A failed transaction publishes no object
+    records; if anything had been staged, a single synthetic dirty-only record
+    replaces it so streaming readers heal whatever a rollback left visible.
     """
+    global _TXN_DEPTH
     if _STORE is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     with _LOCK:
         raw = getattr(_CONN, "raw", None) if _CONN is not None else _STORE.raw
         has_log = hasattr(_STORE, "begin")
-        if has_log:
-            _STORE.begin()
+        _TXN_DEPTH += 1
         try:
-            with _ENGINE.transaction(raw):
-                yield _STORE
-        except Exception:
             if has_log:
-                _STORE.rollback()
+                _STORE.begin()
+            try:
+                with _ENGINE.transaction(raw):
+                    yield _STORE
+            except Exception:
+                if has_log:
+                    _STORE.rollback()
+                raise
+            else:
+                if has_log:
+                    _STORE.commit()
+        except Exception:
+            if _TXN_DEPTH == 1 and _STAGED:
+                addresses = sorted(_addresses(_STAGED))
+                _STAGED.clear()
+                _publish([{"dirty": [list(a) for a in addresses]}])
             raise
         else:
-            if has_log:
-                _STORE.commit()
+            if _TXN_DEPTH == 1 and _STAGED:
+                records = _STAGED[:]
+                _STAGED.clear()
+                _publish(records)
+        finally:
+            _TXN_DEPTH -= 1
+
+
+def set_publish_hook(fn, interested=None):
+    """Install (or clear, with ``fn=None``) the post-commit change consumer.
+
+    ``fn(records)`` runs after each successful outermost commit, under the
+    storage lock. ``interested(app, types)`` lets write handlers skip record
+    assembly entirely when nothing streams any of ``types``; absent, any
+    installed hook receives every record.
+    """
+    global _PUBLISH_HOOK, _INTERESTED
+    with _LOCK:
+        _PUBLISH_HOOK = fn
+        _INTERESTED = interested if fn is not None else None
+        _STAGED.clear()
+
+
+def publishing():
+    """True when a publish hook is installed (the cheapest write-path gate)."""
+    return _PUBLISH_HOOK is not None
+
+
+def interested(app, *types):
+    """Should a write handler assemble a change record touching ``types``?"""
+    if _PUBLISH_HOOK is None:
+        return False
+    if _INTERESTED is None:
+        return True
+    return _INTERESTED(app, types)
+
+
+def stage_change(record):
+    """Queue a change record for post-commit publication (no-op without a hook).
+
+    Must be called inside a store_transaction block. Records are dicts shaped:
+      object write  {app, type, guid, verb, new_body|None, touched: [[type, guid]]}
+      schema/app op {app, schema_op: {op, affected_types}}
+    ``seq`` is stamped at publish time, in commit order.
+    """
+    if _PUBLISH_HOOK is None:
+        return
+    _STAGED.append(record)
+
+
+def current_change_seq():
+    """The last published change seq — the attach fence (§5.1 of the spec)."""
+    with _LOCK:
+        return _CHANGE_SEQ
+
+
+def _addresses(records):
+    """The (app, type) pairs a batch of records can affect: each record's own
+    type plus every touched/affected type — the dirty-record address set."""
+    out = set()
+    for r in records:
+        app = r.get("app")
+        if "schema_op" in r:
+            for t in r["schema_op"].get("affected_types", []):
+                out.add((app, t))
+        elif "type" in r:
+            out.add((app, r["type"]))
+            for t, _g in r.get("touched", []):
+                out.add((app, t))
+    return out
+
+
+def _publish(records):
+    global _CHANGE_SEQ
+    for r in records:
+        _CHANGE_SEQ += 1
+        r["seq"] = _CHANGE_SEQ
+    try:
+        _PUBLISH_HOOK(records)
+    except Exception:
+        # A streaming consumer must never break a committed write.
+        import traceback
+        traceback.print_exc()
 
 
 def conn():
