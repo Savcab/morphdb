@@ -8,13 +8,16 @@ in :mod:`morphdb.db`, so threaded request handling is safe.
 
 import json
 import os
+import socket
 import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from . import apps
 from . import db
-from .errors import ApiError
+from . import streams
+from .errors import ApiError, bad_request, not_found
 from .routes import dispatch
 
 MAX_BODY = 16 * 1024 * 1024  # 16 MB cap to avoid runaway memory on bad input
@@ -135,6 +138,12 @@ class Handler(BaseHTTPRequestHandler):
             for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
         }
 
+        # SSE streaming is served here, off the request/response path, because it
+        # holds the socket open. Everything else goes through dispatch().
+        if self.command == "GET" and path.startswith("/stream/"):
+            self._stream(path[len("/stream/"):], query)
+            return
+
         try:
             body = self._parse_body(raw) if self.command in _BODY_METHODS else {}
             status, payload = dispatch(self.command, path, query, body, self.headers)
@@ -148,6 +157,85 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 500, {"error": {"code": "internal_error", "message": str(e)}}
             )
+
+    # -- SSE streaming --------------------------------------------------------
+
+    def _resolve_app(self, query):
+        """App key for a stream: ?app_key= (EventSource can't set headers) or the
+        X-App-Key header. Same validation/errors as require_app."""
+        key = query.get("app_key") or self.headers.get("X-App-Key")
+        if key is None or not key.strip():
+            raise bad_request(
+                "Missing app key. Pass ?app_key=<key> (EventSource cannot set "
+                "headers) or the X-App-Key header.")
+        key = key.strip()
+        apps.validate_app_key(key)
+        if not apps.app_exists(key):
+            raise not_found(f"Unknown app '{key}'. Register it first with POST /app.")
+        return key
+
+    def _stream(self, type_name, query):
+        q = dict(query)
+        mode = q.pop("mode", "snapshot")
+        refresh = q.pop("refresh", None)
+        q.pop("app_key", None)
+        from .objects import DEFAULT_LIMIT
+        limit = q.pop("limit", DEFAULT_LIMIT)
+        offset = q.pop("offset", 0)
+        sort = q.pop("sort", None)
+        order = q.pop("order", "asc")
+        include = q.pop("include", None)
+        # everything left in q is a field/relation filter
+        try:
+            app = self._resolve_app(query)
+            sub = streams.attach(app, type_name, filters=q, limit=limit,
+                                 offset=offset, sort=sort, order=order,
+                                 include=include, mode=mode, refresh=refresh)
+        except ApiError as e:
+            # Fails before any event flows, as a normal JSON error — EventSource
+            # surfaces it as a terminal error instead of retrying forever.
+            self._send_json(e.status, e.to_dict())
+            return
+        self._pump(sub)
+
+    def _pump(self, sub):
+        """Drive one subscription's frames to the socket until it closes or the
+        peer goes away. Nagle off (SSE frames are the small-write pattern it
+        penalizes); a per-socket send timeout reaps black-holed peers."""
+        self.close_connection = True     # close-delimited; no keep-alive reuse
+        # The whole pump, INCLUDING header emission, is inside the try/finally
+        # that owns detach — a peer that drops during the header write must not
+        # leak the already-registered subscription (and its cap slot).
+        try:
+            try:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                self.connection.settimeout(streams.KNOBS.send_timeout)
+            except OSError:
+                pass
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self._set_cors()
+            self.end_headers()
+            self.wfile.write(streams._RETRY_FRAME)
+            self.wfile.flush()
+            while True:
+                frame, terminal = sub.next_frame(streams.KNOBS.heartbeat)
+                if frame is streams.HEARTBEAT:
+                    self.wfile.write(streams.HEARTBEAT_FRAME)
+                elif frame is streams.CLOSED:
+                    break
+                else:
+                    self.wfile.write(frame)
+                self.wfile.flush()
+                if terminal:
+                    break
+        except (BrokenPipeError, ConnectionResetError, socket.timeout, OSError):
+            pass
+        finally:
+            streams.detach(sub)
 
     do_GET = _dispatch
     do_POST = _dispatch
@@ -173,6 +261,11 @@ def serve(host="127.0.0.1", port=8787, db_path=None):
     # URL or a path), then a local SQLite file. init_db routes path vs URL.
     target = db_path or os.environ.get("MORPHDB_DATABASE_URL") or "morphdb.sqlite3"
     db.init_db(target)
+    # This transport can hold connections open, so it opts into streaming: the
+    # capability flag flips true and the stream workers start. Lambda/embedders
+    # that go through dispatch() never do, and honestly report streaming:false.
+    streams.STREAMING = True
+    streams.start()
     httpd = MorphServer((host, port), Handler)
     engine = db.engine()
     where = engine.describe() if engine is not None else target
@@ -186,4 +279,5 @@ def serve(host="127.0.0.1", port=8787, db_path=None):
     except KeyboardInterrupt:
         sys.stderr.write("\n[morphdb] shutting down\n")
     finally:
+        streams.stop()
         httpd.server_close()

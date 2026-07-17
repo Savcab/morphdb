@@ -65,11 +65,16 @@ def _obj_body(req):
 
 @router.route("GET", "/")
 def root(req):
+    from . import streams
     return {
         "name": "MorphDB",
         "version": __import__("morphdb").__version__,
         "description": "Coding-agent-friendly, multi-tenant backend for vibe-coded websites.",
         "docs": "GET /help for the full endpoint reference.",
+        # Transport capability: true only on a transport that can hold SSE
+        # connections open (the stdlib server). Request/response deploys (Lambda)
+        # report false; the SDK reads this to decide stream vs poll.
+        "streaming": streams.STREAMING,
     }
 
 
@@ -211,6 +216,21 @@ def get_object_by_guid(req):
     return objs.get_object(app, req.params["guid"], include=req.query.get("include"))
 
 
+# --- streaming (served by the stdlib transport; 501 everywhere else) ----------
+
+
+@router.route("GET", "/stream/{type}")
+def stream(req):
+    # The stdlib server intercepts /stream/ before dispatch and serves SSE. This
+    # handler is only reached through the request/response path (Lambda,
+    # embedders), which cannot hold a connection open — so it teaches the fix.
+    raise ApiError(
+        501, "not_implemented",
+        "This deployment is request/response and cannot stream. Use the stdlib "
+        "server (morphdb start) for live queries; watch() falls back to polling "
+        "here automatically.")
+
+
 # --- self-documenting reference (served at GET /help) -------------------------
 
 ENDPOINT_REFERENCE = {
@@ -240,6 +260,14 @@ ENDPOINT_REFERENCE = {
     "object endpoints (your frontend — read/write data)": {
         "POST /objects/{type}": "Create an object. Body: field + relation values. Returns it with _guid.",
         "GET /objects/{type}": "List/query. Query: field filters on INDEXED fields (field, field__gt, field__contains, field__in, ...), relation filters (rel=<guid>, rel__in, rel__ne, rel__exists), limit, offset, sort (indexed field), order, include.",
+        "GET /stream/{type}": (
+            "Live query over Server-Sent Events (text/event-stream). Same query "
+            "grammar as the list endpoint, plus mode=snapshot|delta, refresh=<ms> "
+            "(snapshot), and app_key=<key> (EventSource can't set headers). "
+            "Emits init, then snapshot (whole result) — enter/update/leave deltas "
+            "arrive in delta mode. Only on the stdlib server; 501 on "
+            "request/response deploys (see GET / \"streaming\")."
+        ),
         "GET /objects/{type}/{guid}": "Read one object (fields + relation guids). ?include=<paths> hydrates relations into nested objects.",
         "GET /object/{guid}": "Read one object by guid alone. Supports ?include=<paths>.",
         "PUT /objects/{type}/{guid}": "Replace an object's fields (create if absent). Relations present in the body are set.",
