@@ -364,6 +364,18 @@ def _publish(records):
         traceback.print_exc()
 
 
+@contextmanager
+def storage_lock():
+    """Hold the global storage lock without opening a transaction.
+
+    Streaming attaches capture the change-seq fence and run their seed read
+    under this lock so no write can interleave (§5.1). The lock is reentrant, so
+    store()/conn() calls inside compose fine.
+    """
+    with _LOCK:
+        yield
+
+
 def conn():
     if _CONN is None:
         if _ENGINE is not None and _ENGINE.name == "dynamodb":
