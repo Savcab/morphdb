@@ -140,6 +140,7 @@ guid for to-one, a list of guids for to-many). Use `morphdb query` only when
 | --- | --- |
 | `POST /objects/{type}` | Create. Body = field + relation values. Returns the object with `_guid`. |
 | `GET /objects/{type}` | List/query. Field filters `?field=…` (`__gt/gte/lt/lte/ne/contains/in/exists`, **indexed fields only**); **relation filters** `?rel=<guid>` (`rel__in/__ne/__exists`); **`include`** to nest relations; `sort`, `order`, `limit`, `offset`. |
+| `GET /stream/{type}` | **Live query** over Server-Sent Events. Same query grammar, plus `mode=snapshot\|delta`, `refresh=<ms>` (snapshot), `app_key=<key>` (EventSource can't set headers). See below. |
 | `GET /objects/{type}/{guid}` | Read one (type-checked). `?include=…` nests relations. |
 | `GET /object/{guid}` | Read one by guid alone. Supports `?include=…`. |
 | `PATCH /objects/{type}/{guid}` | Merge fields; set any relations present (create if absent). |
@@ -157,6 +158,37 @@ or list of guids (to-many). Add `?include=<rel>,<rel>.<subrel>` to replace those
 with the full neighbor object(s), nested Prisma-style — `?include=author,comments.author`
 (comma-separated paths, dots go deeper). Read-only, depth ≤ 4, batched (no N+1).
 Writes stay flat: create/update with guids, never nested objects.
+
+### Live queries — `GET /stream/{type}`
+
+A stream is the answer to a list query, **kept true over time** over Server-Sent
+Events. Same query grammar as `GET /objects/{type}`, plus:
+
+- `mode=snapshot` (default) — pushes the whole fresh result (`snapshot` events)
+  after any relevant write, debounced by `refresh=<ms>`. Supports everything the
+  list endpoint does, including `limit`/`offset`/`include`.
+- `mode=delta` — pushes per-object `enter`/`update`/`leave` events as membership
+  changes; the client maintains the set. Forbids `limit`/`offset`/`include` (a
+  windowed/hydrated stream would need order maintenance — use snapshot for that).
+- `app_key=<key>` — the app key as a query param, because browser `EventSource`
+  can't set the `X-App-Key` header.
+
+Every stream opens with an `init` event (the full current result), then the
+events above; `end` means the stream stopped truthfully (type/app deleted, query
+went illegal). Only the stdlib server streams — request/response deploys (Lambda)
+answer `/stream` with `501`; `GET /` reports `"streaming": true|false` so a
+client can choose stream vs poll. The drop-in `watch()` client
+(`examples/live-todo/morphdb-stream.js`) does exactly that, falling back to
+polling automatically — see that folder for a two-tabs-live demo.
+
+```js
+// raw EventSource, no client library:
+const es = new EventSource(`${HOST}/stream/task?done__eq=false&mode=delta&app_key=${APP}`);
+es.addEventListener("init",  e => replaceAll(JSON.parse(e.data).objects));
+es.addEventListener("enter", e => add(JSON.parse(e.data).object));
+es.addEventListener("update",e => upsert(JSON.parse(e.data).object));
+es.addEventListener("leave", e => remove(JSON.parse(e.data).guid));
+```
 
 ### A drop-in FE client
 
