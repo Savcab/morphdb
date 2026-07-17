@@ -142,6 +142,10 @@ class Subscription:
         dropping the init would livelock the re-seed)."""
         if self._closed:
             return
+        # A collapsing sub drops further deltas — the pending re-init re-anchors
+        # it, so piling frames on would just overflow again.
+        if self._want_init and event != "init":
+            return
         frame = _Frame(event, data)
         if event == "init":
             self._queue.clear()
@@ -158,6 +162,12 @@ class Subscription:
             self._want_init = True
             if self.group is not None:
                 self.group.mark_dirty()   # executor re-inits this sub
+
+    def emit_delta_init(self, objects):
+        with self._cond:
+            self._enqueue("init", {"mode": "delta", "objects": objects,
+                                   "total": len(objects)})
+            self._cond.notify()
 
     def emit_init(self, result):
         # Clear want_init and enqueue the init atomically, so no concurrent frame
@@ -218,6 +228,16 @@ def _init_payload(mode, result):
 
 # --- query groups (coalescing) ------------------------------------------------
 
+# The atomically-swapped membership reference for a delta group (§6.5). The
+# dispatcher mutates .members in place (single writer); a re-seed builds a fresh
+# _State and assigns group.state — a record mid-evaluation against the old
+# reference mutates only the doomed set, harmless by construction. ``fence`` is
+# carried in the reference so the dispatcher reads it and .members as one atomic
+# unit: a record judged against a state is judged against that state's fence.
+_State = collections.namedtuple(
+    "_State", ("specs", "members", "fields", "rel_views", "fence"))
+
+
 class Group:
     """All subscribers of one canonicalized query. One re-run per debounce
     window, one result, fanned to every subscriber (§6.3)."""
@@ -237,6 +257,8 @@ class Group:
         self.trigger_types = trigger_types
         self.fence = fence
         self.subs = set()
+        self.state = None            # delta only: the membership reference
+        self.frozen = False          # delta only: morphed, awaiting re-seed (§5.6)
         # debounce state, owned by the refresh executor
         self.deadline = None
         self.last_run = None
@@ -367,16 +389,81 @@ class _Dispatcher(threading.Thread):
             addrs.add((app, t))
         for qh in self._groups_for(addrs):
             g = _GROUPS.get(qh)
-            if g is None or g.fence >= record["seq"]:
+            if g is None:
                 continue
             if g.mode == "snapshot":
+                if g.fence >= record["seq"]:
+                    continue
                 g.mark_dirty()
-            # delta routing: PR4
+            else:
+                self._route_delta(g, record)
+
+    def _route_delta(self, g, record):
+        """Membership evaluation for one delta group (§5.2/§5.3). The dispatcher
+        is the set's only mutator, so no lock guards the in-place transition."""
+        # A morphed group is frozen until its re-seed swaps in fresh state — its
+        # pre-morph specs cannot judge post-morph records (§5.6).
+        if g.frozen:
+            return
+        st = g.state
+        if st is None or st.fence >= record["seq"]:
+            return                       # fence + members read as one reference
+        seq = record["seq"]
+        seen = set()
+        # The written object itself, if it is the streamed type — evaluate its
+        # new body directly, no re-read (§5.2).
+        if record["type"] == g.object_type:
+            seen.add(record["guid"])
+            self._delta_eval(g, st, record["guid"], seq,
+                             record.get("new_body")
+                             if record["verb"] != "delete" else None)
+        # Touched neighbors of the streamed type reach the stream only through a
+        # re-read (§5.3) — a user write that re-points a task's project changes
+        # task bodies without writing them.
+        for t, guid in record.get("touched", []):
+            if t == g.object_type and guid not in seen:
+                seen.add(guid)
+                with db.storage_lock():
+                    body = _read_body(record["app"], g.object_type, guid,
+                                      st.fields)
+                self._delta_eval(g, st, guid, seq, body)
+
+    def _delta_eval(self, g, st, guid, seq, body):
+        matches = body is not None and _matches(st.specs, body)
+        in_set = guid in st.members
+        if matches and not in_set:
+            if len(st.members) >= KNOBS.member_cap:
+                self._end_group(
+                    g, "too_many_members",
+                    f"This delta query crossed {KNOBS.member_cap} live members. "
+                    "Narrow the filter, or use mode=snapshot.")
+                return
+            st.members.add(guid)
+            self._emit_all(g, "enter", {"object": body}, seq)
+        elif matches and in_set:
+            self._emit_all(g, "update", {"object": body}, seq)
+        elif not matches and in_set:
+            st.members.discard(guid)
+            self._emit_all(g, "leave", {"guid": guid}, seq)
+        # not matches, not in set → silence
+
+    @staticmethod
+    def _emit_all(g, event, data, seq):
+        with _REG_LOCK:
+            subs = list(g.subs)
+        # A late subscriber's own fence hides changes already in its per-connection
+        # seed (§5.2) — the group set is shared, but each sub was seeded at its own
+        # fence, so skip records it has already absorbed.
+        for s in subs:
+            if s.fence < seq:
+                s.emit(event, data)
 
     def _dirty_addresses(self, addrs):
         for qh in self._groups_for(addrs):
             g = _GROUPS.get(qh)
-            if g is not None and g.mode == "snapshot":
+            if g is not None:
+                # Snapshot re-runs; delta re-seeds — the rollback may have left
+                # transient state a lock-free read saw, so rebuild from truth.
                 g.mark_dirty()
 
     def _route_schema_op(self, record):
@@ -406,8 +493,9 @@ class _Dispatcher(threading.Thread):
                 self._remorph_group(grp)
 
     def _remorph_group(self, g):
-        """Recompute a snapshot group's trigger set against the new schema and
-        mark it dirty. If the query went illegal, end it on the next refresh."""
+        """A schema morph touched this group. Recompute its trigger set against
+        the new schema; snapshot marks dirty, delta collapses to a fresh re-seed
+        (§5.6). If the query went illegal, end it."""
         try:
             new_triggers = _compute_triggers(
                 g.app, g.object_type, g.filters, g.include)
@@ -419,8 +507,13 @@ class _Dispatcher(threading.Thread):
         with _REG_LOCK:
             _reindex_triggers(g, new_triggers)
             g.trigger_types = new_triggers
-        if g.mode == "snapshot":
-            g.mark_dirty()
+        # Both modes re-run: a re-pointed relation changes what the query
+        # returns with no object write to correct it. Delta additionally freezes
+        # (no evaluation against stale specs until the re-seed swaps state — the
+        # re-seed is the unfreeze) and rebuilds membership from scratch.
+        if g.mode == "delta":
+            g.frozen = True
+        g.mark_dirty()
 
     def _end_group(self, g, code, message):
         with _REG_LOCK:
@@ -443,9 +536,10 @@ class _Dispatcher(threading.Thread):
                 addrs.add((app, t))
         for qh in self._groups_for(addrs):
             g = _GROUPS.get(qh)
-            if g is not None and g.mode == "snapshot":
+            if g is not None:
+                # Snapshot re-runs; delta re-seeds — a dropped record's
+                # membership transition is lost, not just its frame (§6.2).
                 g.mark_dirty()
-            # delta collapse: PR4
 
     @staticmethod
     def _groups_for(addrs):
@@ -514,10 +608,16 @@ class _Executor(threading.Thread):
         if not subs:
             return
         try:
-            result = _run_query(group)
+            if group.mode == "delta":
+                self._reseed_delta(group, subs)
+            else:
+                result = _run_query(group)
+                for s in subs:
+                    s.emit_result(result)
         except ApiError as e:
+            code = getattr(e, "code", None) or "query_illegal"
             for s in subs:
-                s.end(e.code if hasattr(e, "code") else "query_illegal", str(e))
+                s.end(code, str(e))
                 _detach(s)
             return
         except Exception:
@@ -526,13 +626,35 @@ class _Executor(threading.Thread):
             self._rearm(group)           # one bounded retry via re-arm
             return
         group.last_run = time.monotonic()
-        for s in subs:
-            s.emit_result(result)
         # Re-arm if re-dirtied during the run (trailing edge).
         with self._cond:
             if group.dirty and group not in self._deadlines:
                 self._deadlines[group] = group.last_run + group.min_refresh() / 1000.0
                 self._cond.notify()
+
+    def _reseed_delta(self, group, subs):
+        """Rebuild a delta group's membership from storage and re-init every
+        subscriber (§5.6 morph re-seed / §6.4 collapse). Recompiles specs against
+        the current schema; an illegal query raises and ends the group.
+
+        The swap AND the init enqueue happen under the storage lock: while it is
+        held no write can commit past the fence, so a post-fence change cannot be
+        delivered before the init (which would then wipe it). The swap is the
+        unfreeze."""
+        with db.storage_lock():
+            specs, fields, _rv = _compile(group.app, group.object_type,
+                                          group.filters)
+            members, bodies = _delta_seed(group.app, group.object_type, specs,
+                                          fields)
+            fence = db.current_change_seq()
+            rel_views = {v["key"]: v
+                         for v in assoc.relation_views(group.app, group.object_type)}
+            group.state = _State(specs, members, fields, rel_views, fence)
+            group.fence = fence          # queued pre-seed records die on the fence
+            group.frozen = False         # the swap is the unfreeze
+            for s in subs:
+                s.fence = fence          # each sub re-anchored to the new seed
+                s.emit_delta_init(bodies)
 
     def _rearm(self, group):
         with self._cond:
@@ -618,6 +740,84 @@ def _run_query(group):
         order=group.order, include=group.include)
 
 
+# --- delta evaluation ---------------------------------------------------------
+
+def _matches(specs, body):
+    """Does a projected body satisfy every compiled spec? The same matcher that
+    serves DynamoDB list reads (§5.2), so delta semantics equal read semantics."""
+    for kind, name, op, expected in specs:
+        if kind == "field":
+            if not objs._matches_value(body.get(name), op, expected):
+                return False
+        else:
+            if not objs._matches_relation(body.get(name), op, expected):
+                return False
+    return True
+
+
+def _compile(app, object_type, filters):
+    """(compiled specs, fields, rel_views) for a delta query. Raises the list
+    endpoint's didactic 400s for bad filters."""
+    fields = get_object_schema(app, object_type, required=True)["fields"]
+    rel_views = {v["key"]: v for v in assoc.relation_views(app, object_type)}
+    specs = objs._filter_specs(app, object_type, filters, fields, rel_views)
+    return specs, fields, rel_views
+
+
+def _delta_seed(app, object_type, specs, fields):
+    """Unpaginated matcher seed (§5.4): the whole result, not a page. Returns
+    (member guid set, ordered body list). Enforces the member ceiling."""
+    rows = db.store().list_objects(app, object_type)
+    guids = [r["guid"] for r in rows]
+    projected = [objs._project_fields(r, fields) for r in rows]
+    relmap = assoc.project_relations(app, guids, object_type)
+    members, bodies = set(), []
+    for p in projected:
+        p.update(relmap[p["_guid"]])
+        if _matches(specs, p):
+            if len(members) >= KNOBS.member_cap:
+                from .errors import bad_request
+                raise bad_request(
+                    f"This delta query has more than {KNOBS.member_cap} live "
+                    "members. Narrow the filter, or use mode=snapshot with "
+                    "pagination.")
+            members.add(p["_guid"])
+            bodies.append(p)
+    return members, bodies
+
+
+def _read_body(app, object_type, guid, fields):
+    """Re-read one neighbor as a projected body of ``object_type``; None if it is
+    gone or now a different type (§5.3)."""
+    row = db.store().get_object(app, guid)
+    if row is None or row["object_type"] != object_type:
+        return None
+    p = objs._project_fields(row, fields)
+    p.update(assoc.project_relations(app, [guid], object_type)[guid])
+    return p
+
+
+def _check_delta_eligible(limit_given, offset, include):
+    """Delta forbids windows and hydration (§5.4). Raises the didactic 400.
+
+    An explicit offset=0 (int or the "0" string off the query) is not a window,
+    so it is allowed — only a real positive offset is a window."""
+    from .errors import bad_request
+    if include:
+        raise bad_request(
+            "include is not supported in delta mode — use mode=snapshot, or "
+            "drop include.")
+    try:
+        offset_n = int(offset) if offset not in (None, "") else 0
+    except (TypeError, ValueError):
+        offset_n = 0
+    if limit_given is not None or offset_n:
+        raise bad_request(
+            "limit/offset are not supported in delta mode (a bounded window "
+            "needs server-side order maintenance) — use mode=snapshot for a "
+            "paginated window.")
+
+
 def _refresh_bounds():
     eng = db.engine()
     name = eng.name if eng is not None else "sqlite"
@@ -641,46 +841,79 @@ def resolve_refresh(raw):
 
 # --- attach / detach ----------------------------------------------------------
 
-def attach(app, object_type, filters=None, limit=objs.DEFAULT_LIMIT, offset=0,
+def attach(app, object_type, filters=None, limit=None, offset=0,
            sort=None, order="asc", include=None, mode="snapshot", refresh=None):
     """Open a stream. Validates like the list endpoint, registers under the
     storage lock with the change-seq fence, seeds the init, and returns a
     Subscription whose queue the SSE writer drains. Raises ApiError on bad
-    query, unknown app/type, or a crossed cap."""
+    query, unknown app/type, delta ineligibility, or a crossed cap.
+
+    ``limit=None`` means unset; snapshot falls back to the list default, delta
+    rejects a supplied limit (§5.4)."""
+    from .errors import bad_request
     if mode not in ("snapshot", "delta"):
-        from .errors import bad_request
-        raise bad_request("mode must be 'snapshot' or 'delta'.")
-    if mode == "delta":
-        from .errors import bad_request
-        raise bad_request("delta mode is not yet available; use mode=snapshot.")
-
+        raise bad_request(
+            f"mode is reserved on this route; it must be 'snapshot' or 'delta', "
+            f"not '{mode}'. To filter a field named 'mode', use mode__eq=.")
     filters = filters or {}
-    refresh_ms = resolve_refresh(refresh)
 
-    # Validate + seed + register, all under the storage lock so the fence and the
-    # seed read are linearized with writes (§5.1).
+    if mode == "delta":
+        if refresh is not None:
+            raise bad_request(
+                "refresh applies to snapshot mode only — deltas push "
+                "immediately. Drop refresh, or use mode=snapshot.")
+        _check_delta_eligible(limit, offset, include)
+        return _attach_delta(app, object_type, filters, sort, order)
+    return _attach_snapshot(app, object_type, filters,
+                            limit if limit is not None else objs.DEFAULT_LIMIT,
+                            offset, sort, order, include, refresh)
+
+
+def _attach_snapshot(app, object_type, filters, limit, offset, sort, order,
+                     include, refresh):
+    refresh_ms = resolve_refresh(refresh)
+    # Validate + seed + register under the storage lock so the fence and the seed
+    # read are linearized with writes (§5.1).
     with db.storage_lock():
         fields = get_object_schema(app, object_type, required=True)["fields"]
         rel_views = {v["key"]: v for v in assoc.relation_views(app, object_type)}
-        # Reuse the list endpoint's validation by running the seed query; it
-        # raises the same didactic 400s for bad filters/sort.
         result = objs.list_objects(
             app, object_type, filters=filters, limit=limit, offset=offset,
             sort=sort, order=order, include=include)
         qhash = _canonical_hash(app, object_type, filters, limit, offset, sort,
-                                order, include, mode, fields, rel_views)
+                                order, include, "snapshot", fields, rel_views)
         triggers = _compute_triggers(app, object_type, filters, include)
         fence = db.current_change_seq()
-
         sub = Subscription(app, object_type, filters, limit, offset, sort, order,
-                           include, mode, refresh_ms, qhash, triggers)
-        _register(sub, fence)
-
-    sub.emit_init(result)
+                           include, "snapshot", refresh_ms, qhash, triggers)
+        _register(sub, fence, state=None)
+        # Init enqueued under the lock: a debounced refresh can't race ahead of
+        # the seed and leave the client on stale state (init re-anchors).
+        sub.emit_init(result)
     return sub
 
 
-def _register(sub, fence):
+def _attach_delta(app, object_type, filters, sort, order):
+    with db.storage_lock():
+        specs, fields, rel_views = _compile(app, object_type, filters)
+        # Every delta attach seeds its own init (per-connection, §5.2); the seed
+        # of the group's first subscriber also becomes the shared membership set.
+        members, bodies = _delta_seed(app, object_type, specs, fields)
+        qhash = _canonical_hash(app, object_type, filters, None, 0, sort, order,
+                                None, "delta", fields, rel_views)
+        triggers = _compute_triggers(app, object_type, filters, None)
+        fence = db.current_change_seq()
+        sub = Subscription(app, object_type, filters, None, 0, sort, order,
+                           None, "delta", resolve_refresh(None), qhash, triggers)
+        state = _State(specs, members, fields, rel_views, fence)
+        _register(sub, fence, state=state)
+        # Enqueue the init while the storage lock is still held: no post-fence
+        # write can commit and be fanned to this sub before its seed (§5.2/§6).
+        sub.emit_delta_init(bodies)
+    return sub
+
+
+def _register(sub, fence, state=None):
     global _TOTAL
     sub.fence = fence
     with _REG_LOCK:
@@ -695,9 +928,11 @@ def _register(sub, fence):
             group = Group(sub.qhash, sub.app, sub.object_type, sub.filters,
                           sub.limit, sub.offset, sub.sort, sub.order,
                           sub.include, sub.mode, sub.trigger_types, fence)
+            group.state = state          # delta: the shared membership set
             _GROUPS[sub.qhash] = group
             for t in sub.trigger_types:
                 _BY_TRIGGER.setdefault((sub.app, t), set()).add(sub.qhash)
+        # A late attach to an existing delta group never touches its set (§5.2).
         group.subs.add(sub)
         sub.group = group
 
