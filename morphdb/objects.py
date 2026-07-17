@@ -83,6 +83,20 @@ def _split_body(app, object_type, body, fields, c=None):
 # --- writes -------------------------------------------------------------------
 
 
+def _stage_object_change(app, object_type, guid, verb, new_body, touched):
+    """Stage a change record for this write (§6.1 of the streaming spec).
+
+    Gated on interest so an idle process pays a few dict probes; the probe set
+    is the written type plus every type whose projected body this write touched.
+    """
+    if not db.interested(app, object_type, *{t for t, _g in touched}):
+        return
+    db.stage_change({
+        "app": app, "type": object_type, "guid": guid, "verb": verb,
+        "new_body": new_body, "touched": [list(t) for t in touched],
+    })
+
+
 def create_object(app, object_type, data):
     schema = get_object_schema(app, object_type, required=True)
     fields = schema["fields"]
@@ -93,10 +107,15 @@ def create_object(app, object_type, data):
         clean = validate_against_schema(field_part, fields, partial=False)
         s.insert_object(guid, app, object_type, json.dumps(clean), ts, ts)
         fieldindex.apply_index_writes(s, app, object_type, guid, clean, fields)
+        touched = []
         if rel_part:
-            assoc.apply_relation_writes(s, app, guid, object_type, rel_part)
+            touched = assoc.apply_relation_writes(s, app, guid, object_type, rel_part)
         row = s.get_object(app, guid)
-    return _project_full(app, row, fields, object_type)
+        # Projection happens inside the transaction (the lock is reentrant) so
+        # the change record can carry the same body the writer gets back.
+        body = _project_full(app, row, fields, object_type)
+        _stage_object_change(app, object_type, guid, "create", body, touched)
+    return body
 
 
 def upsert_object(app, object_type, guid, data, partial=True):
@@ -135,10 +154,15 @@ def upsert_object(app, object_type, guid, data, partial=True):
         # Rebuild this object's index rows from its full stored blob, in the same
         # transaction as the blob write (delete-then-insert inside apply_index_writes).
         fieldindex.apply_index_writes(s, app, object_type, guid, stored, fields)
+        touched = []
         if rel_part:
-            assoc.apply_relation_writes(s, app, guid, object_type, rel_part)
+            touched = assoc.apply_relation_writes(s, app, guid, object_type, rel_part)
         row = s.get_object(app, guid)
-    return _project_full(app, row, fields, object_type)
+        body = _project_full(app, row, fields, object_type)
+        _stage_object_change(app, object_type, guid,
+                             "create" if existing is None else "update",
+                             body, touched)
+    return body
 
 
 def delete_object(app, guid):
@@ -146,9 +170,16 @@ def delete_object(app, guid):
         row = s.get_object(app, guid)
         if row is None:
             raise not_found(f"No object with guid '{guid}'.")
+        object_type = row["object_type"]
+        touched = []
+        if db.publishing():
+            # Enumerate the other ends before the edges vanish — the delete
+            # silently rewrites every neighbor's projected body (§5.3).
+            touched = assoc.neighbors_touching_object(s, app, guid, object_type)
         s.delete_field_index_for_object(guid)
         s.delete_edges_touching_object(app, guid)
         s.delete_object(app, guid)
+        _stage_object_change(app, object_type, guid, "delete", None, touched)
     return {"deleted": guid}
 
 

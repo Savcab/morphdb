@@ -124,12 +124,21 @@ def normalize_relation_def(from_type, key, raw):
     }
 
 
+# Columns that define a relationship's meaning; a re-PUT that changes none of
+# them is idempotent and must not count as a schema change (§5.6 of the
+# streaming spec: boot-pattern re-PUTs reset nothing).
+_DEF_COLS = ("from_type", "to_type", "forward_name", "inverse_name",
+             "cardinality", "forward_description", "inverse_description")
+
+
 def upsert_relation(c, app, from_type, key, raw):
     """Create or update one relationship declared on ``from_type`` in ``app``.
 
     Runs inside the caller's transaction cursor ``c``. The ``to`` type must
     already exist in the same app. Symmetric edges are canonicalized if the flag
-    is (re)set.
+    is (re)set. Returns ``(definition, changed, old_endpoints)`` — ``changed`` is
+    False for an idempotent re-PUT; ``old_endpoints`` names the prior from/to
+    types so a re-pointed relation resets the old neighbor's streams too (§5.6).
     """
     d = normalize_relation_def(from_type, key, raw)
     # The neighbor type must exist (in this app) so traversal/validation works.
@@ -138,34 +147,49 @@ def upsert_relation(c, app, from_type, key, raw):
             f"Relation '{key}' points to unknown type '{d['to_type']}'. Define it first."
         )
     ts = now_iso()
-    exists = c.get_association_schema(app, d["name"]) is not None
-    c.put_association_schema(app, d, ts, exists)
+    existing = c.get_association_schema(app, d["name"])
+    changed = (
+        existing is None
+        or bool(existing["symmetric"]) != d["symmetric"]
+        or any(existing[k] != d[k] for k in _DEF_COLS)
+    )
+    old_endpoints = (set() if existing is None
+                     else {existing["from_type"], existing["to_type"]})
+    c.put_association_schema(app, d, ts, existing is not None)
     if d["symmetric"]:
         _canonicalize_symmetric_edges(c, app, d["name"])
-    return d
+    return d, changed, old_endpoints
 
 
 def prune_forward_relations(c, app, from_type, keep_keys):
     """On a replace (merge=false), drop relations authored on ``from_type`` that
     are no longer listed — along with their edges. Inverse relations (authored on
-    the other type) are never touched here.
+    the other type) are never touched here. Returns the endpoint types of every
+    dropped relation (both sides — dropping one rewires both projected bodies).
     """
+    endpoints = set()
     rows = c.list_association_schemas_from_type(app, from_type)
     for r in rows:
         if r["forward_name"] not in keep_keys:
             c.delete_edges_for_assoc(app, r["name"])
             c.delete_association_schema(app, r["name"])
+            endpoints.update((r["from_type"], r["to_type"]))
+    return endpoints
 
 
 def delete_relations_touching_type(c, app, type_name):
     """Delete every relationship (and its edges) in ``app`` where ``type_name``
     is an endpoint. Used when a whole object type is deleted. Neighbor objects on
     the other side are NOT removed by this — only the relationship metadata + edges.
+    Returns the endpoint types of every deleted relationship.
     """
+    endpoints = set()
     rows = c.list_association_schemas_touching_type(app, type_name)
     for r in rows:
         c.delete_edges_for_assoc(app, r["name"])
+        endpoints.update((r["from_type"], r["to_type"]))
     c.delete_association_schemas_touching_type(app, type_name)
+    return endpoints
 
 
 def _canonicalize_symmetric_edges(c, app, name):
@@ -182,6 +206,21 @@ def _canonicalize_symmetric_edges(c, app, name):
     c.delete_edges_for_assoc(app, name)
     for (a, b), created in canon.items():
         c.insert_edge_ignore(app, name, a, b, created)
+
+
+def neighbors_touching_object(c, app, obj_guid, type_name):
+    """Every neighbor sharing an edge with ``obj_guid``, as ``(type, guid)``
+    pairs. Called before a delete removes those edges, so the change record can
+    name the objects whose projected bodies the delete silently rewrites (§5.3
+    of the streaming spec)."""
+    pairs = set()
+    for r in c.list_association_schemas_touching_type(app, type_name):
+        for e in c.list_edges_touching_guids(app, r["name"], [obj_guid]):
+            if e["from_guid"] == obj_guid:
+                pairs.add((r["to_type"], e["to_guid"]))
+            if e["to_guid"] == obj_guid:
+                pairs.add((r["from_type"], e["from_guid"]))
+    return sorted(pairs)
 
 
 # --- relation "views" (one per relation a type exposes) -----------------------
@@ -332,12 +371,18 @@ def apply_relation_writes(c, app, obj_guid, type_name, rel_part):
     ``rel_part`` maps relation keys to their desired value (a guid / list of
     guids, or null/[] to clear). Only listed relations are touched; others are
     left as-is. Set semantics: the listed value becomes the relation's full set.
+
+    Returns the neighbors whose edges actually changed, as ``(type, guid)``
+    pairs — (old ∖ new) ∪ (new ∖ old); a neighbor merely re-listed is excluded.
+    Streaming's §5.3 both-ends rule rides on this.
     """
     views = {v["key"]: v for v in relation_views(app, type_name, c)}
+    touched = []
     for key, value in rel_part.items():
         view = views[key]
         desired = _desired_guids(key, view, value)
-        _set_relation(c, app, obj_guid, view, desired)
+        touched.extend(_set_relation(c, app, obj_guid, view, desired, type_name))
+    return touched
 
 
 def _desired_guids(key, view, value):
@@ -368,7 +413,7 @@ def _desired_guids(key, view, value):
     return out
 
 
-def _set_relation(c, app, obj_guid, view, desired):
+def _set_relation(c, app, obj_guid, view, desired, type_name):
     name = view["assoc_name"]
     side = view["side"]
 
@@ -392,16 +437,24 @@ def _set_relation(c, app, obj_guid, view, desired):
 
     other_mult = _mult(view["cardinality"], "to" if side == "from" else "from")
     ts = now_iso()
+    evicted = []
     for nb in desired:
         if nb in current:
             continue
         _validate_target(c, app, view, obj_guid, nb)
         # Last-write-wins: if the neighbor's slot on the other side is single and
-        # already taken, steal it (delete the conflicting edge).
+        # already taken, steal it. Enumerate the evicted holder before deleting
+        # so its projected body change reaches its stream (§5.3): the holder sits
+        # on obj's side of the edge, so it is of obj's own type.
         if other_mult == "one":
-            _free_target_slot(c, app, name, side, nb)
+            evicted.extend(_free_target_slot(c, app, name, side, nb, obj_guid))
         fg, tg = _edge_endpoints(side, obj_guid, nb)
         c.insert_edge_ignore(app, name, fg, tg, ts)
+
+    ntype = view["neighbor_type"]
+    return ([(ntype, nb) for nb in current if nb not in desired_set]
+            + [(ntype, nb) for nb in desired if nb not in current]
+            + [(type_name, e) for e in evicted])
 
 
 def _edge_endpoints(side, obj_guid, neighbor):
@@ -412,8 +465,24 @@ def _edge_endpoints(side, obj_guid, neighbor):
     return tuple(sorted((obj_guid, neighbor)))   # symmetric: canonical order
 
 
-def _free_target_slot(c, app, name, side, neighbor):
+def _free_target_slot(c, app, name, side, neighbor, writer):
+    """Delete edges occupying ``neighbor``'s single slot on the other side, and
+    return the guids of the holders being evicted (excluding ``writer``, which is
+    (re)linking, not losing a link). Enumerate before the blind delete."""
+    holders = []
+    for r in c.list_edges_touching_guids(app, name, [neighbor]):
+        if side == "from" and r["to_guid"] == neighbor:
+            h = r["from_guid"]
+        elif side == "to" and r["from_guid"] == neighbor:
+            h = r["to_guid"]
+        elif side == "sym" and neighbor in (r["from_guid"], r["to_guid"]):
+            h = r["to_guid"] if r["from_guid"] == neighbor else r["from_guid"]
+        else:
+            continue
+        if h != writer:
+            holders.append(h)
     c.delete_edges_for_target_slot(app, name, side, neighbor)
+    return holders
 
 
 def _validate_target(c, app, view, obj_guid, neighbor):

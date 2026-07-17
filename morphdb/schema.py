@@ -101,6 +101,10 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
     with db.store_transaction() as s:
         existing = s.get_object_schema(app, name)
         ts = now_iso()
+        # Types whose effective schema this write actually changed — feeds one
+        # schema_op change record. An idempotent re-PUT (the boot pattern)
+        # changes nothing and stages nothing (§5.6 of the streaming spec).
+        affected = set()
 
         # --- fields ---
         if fields is not None:
@@ -125,6 +129,8 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
         # ordinary edits stay O(1). Enabling backfills that one field once;
         # disabling, or dropping the field, deletes its rows.
         old_fields = json.loads(existing["fields"]) if existing else {}
+        if existing is None or final != old_fields:
+            affected.add(name)
         for fname, fdef in final.items():
             new_idx = bool(fdef.get("index"))
             old = old_fields.get(fname)
@@ -142,15 +148,32 @@ def upsert_type(app, name, fields=None, relations=None, merge=False):
         touched = {name}
         if relations is not None:
             for key, raw in relations.items():
-                d = assoc.upsert_relation(s, app, name, key, raw)
+                d, changed, old_endpoints = assoc.upsert_relation(
+                    s, app, name, key, raw)
                 touched.add(d["to_type"])
+                if changed:
+                    # Both endpoints: declaring one side creates the inverse on
+                    # the other, so both projected bodies can change (§5.6). A
+                    # re-pointed relation also strips the inverse from the old
+                    # target type, so its streams must reset too.
+                    affected.add(name)
+                    affected.add(d["to_type"])
+                    affected.update(old_endpoints)
             if not merge:
-                assoc.prune_forward_relations(s, app, name, set(relations.keys()))
+                dropped = assoc.prune_forward_relations(
+                    s, app, name, set(relations.keys()))
+                affected.update(dropped)
 
         # Field names and relation names share the object body namespace, so they
         # must not collide on any affected type.
         for t in touched:
             _assert_no_collisions(s, app, t)
+
+        if affected and db.interested(app, *affected):
+            db.stage_change({
+                "app": app,
+                "schema_op": {"op": "morph", "affected_types": sorted(affected)},
+            })
 
     return get_type_doc(app, name, required=True)
 
@@ -197,7 +220,16 @@ def delete_type(app, name):
 
         # Drop relationships (and their edges) where this type is an endpoint;
         # this also clears any edges from this type's objects to neighbors.
-        assoc.delete_relations_touching_type(s, app, name)
+        endpoints = assoc.delete_relations_touching_type(s, app, name)
         s.delete_object_schema(app, name)
+
+        # This type's streams end; neighbors that lost a relation reset (§5.6).
+        affected = {name} | endpoints
+        if db.interested(app, *affected):
+            db.stage_change({
+                "app": app,
+                "schema_op": {"op": "delete_type", "type": name,
+                              "affected_types": sorted(affected)},
+            })
 
     return {"deleted": name, "objects_removed": len(guids)}
